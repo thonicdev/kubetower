@@ -1,0 +1,45 @@
+# Changelog
+
+Every release of KubeTower, newest first. Versions are bare semver tags
+(`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
+built from its tag.
+
+## 0.1.0 — first public release
+
+### The console
+
+- **One binary, two profiles.** A desktop window on the clusters in your
+  kubeconfig (Windows, macOS, Linux), or a shared console inside a cluster
+  behind OpenID Connect single sign-on (`--incluster`).
+- **Your RBAC, enforced.** In a cluster, every read and every action is checked
+  against the signed-in person's own permissions and recorded in an audit log.
+- **Safe by construction.** The Go back end is the only Kubernetes client; no
+  credential reaches the browser. Every write shows a dry run first.
+- **Everything in one place.** Every kind, custom resources included; logs,
+  shells, port-forwards, metrics, Helm releases, several clusters at once.
+- **No telemetry.** The only call the desktop makes on its own is a check for a
+  newer release (`KT_UPDATE_CHECK=off` turns it off).
+
+### Extras, off by default, switched on per cluster
+
+Argo CD (Delivery Center, Flux included), Cert Manager, DNS, Event
+Intelligence, JVM Inspector, KubeAdjust, KubeCron, Network Inspector, Pod
+Debugging, Postgres (CNPG), Redis viewer, Security Center. See
+[`docs/EXTRAS.md`](docs/EXTRAS.md).
+
+### Distribution
+
+- Windows setup and zip, macOS disk images (Apple silicon and Intel), Linux
+  `.deb`, `.rpm`, `.AppImage` and archives, every file listed in
+  `checksums.txt`.
+- Container image `ghcr.io/thonicdev/kubetower:0.1.0`, installed through the
+  [Helm chart](https://github.com/thonicdev/kubetower-helm-charts). It carries
+  no Claude Code binary.
+- The Windows and macOS builds are not code-signed yet:
+  [`docs/INSTALL.md`](docs/INSTALL.md) says how to check a download.
+
+### License
+
+GNU AGPL-3.0-only for the whole product, extras included. Copyright (C) 2026
+The KubeTower Authors. Contributions are open to anyone; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
