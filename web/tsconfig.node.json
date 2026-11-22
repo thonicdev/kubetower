@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    // vite.config.ts imports scripts/third-party-notices.ts by its full name:
+    // Vite's native config loader wants the extension, and nothing here emits.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["vite.config.ts", "eslint.config.js", "scripts"]
+}

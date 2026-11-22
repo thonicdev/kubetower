@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# The quick half of `task ci`, before a push leaves this clone: under a minute
+# on what the push changes. Opt-in (`task hooks:install`); `git push --no-verify`
+# skips it.
+#
+#   - commitlint and public-check on the commits pushed;
+#   - public-check on the lines the branch adds (the full tree scan is
+#     `task ci`'s, over a minute);
+#   - gofmt on the changed Go files, and `go test` on their packages;
+#   - the typecheck, when the front end changed.
+#
+# It checks what is committed, not the working tree: that is what is pushed.
+
+set -uo pipefail
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+zero=0000000000000000000000000000000000000000
+fail=0
+note() { printf 'pre-push: %s\n' "$*"; }
+bad() { note "$*"; fail=1; }
+
+while read -r _ local_sha _ remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # a deletion pushes nothing
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    from=$(git merge-base origin/main "$local_sha" 2>/dev/null) || { note "no merge base with origin/main: skipped"; continue; }
+  else
+    from=$remote_sha
+  fi
+  range="$from..$local_sha"
+  [ -n "$(git rev-list "$range")" ] || continue
+  base=$(git merge-base origin/main "$local_sha" 2>/dev/null || echo "$from")
+
+  # Commits.
+  if [ -x node_modules/.bin/commitlint ]; then
+    npx --no-install commitlint --from "$from" --to "$local_sha" >/dev/null 2>&1 \
+      || bad "commitlint refuses a commit in $range: npx commitlint --from $from --to $local_sha --verbose"
+  else
+    note "commitlint is not installed here (npm install --no-save @commitlint/cli @commitlint/config-conventional): commits unchecked"
+  fi
+  bash test/public-check.sh commits "$range" >/dev/null || bad "a commit message in $range names something private"
+
+  # What the branch adds.
+  git diff "$base" "$local_sha" -- . | sed -n 's/^+//p' | grep -v '^++ ' \
+    | bash test/public-check.sh message "the lines this branch adds" >/dev/null \
+    || bad "a line this branch adds names something private: git diff $base $local_sha | sed -n 's/^+//p' | bash test/public-check.sh message diff"
+
+  mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "$base" "$local_sha")
+  go_files=() packages=() web=no
+  for f in "${changed[@]}"; do
+    case "$f" in
+      boundary/*) ;; # its own module: task ci
+      *.go) go_files+=("$f"); packages+=("./$(dirname "$f")") ;;
+    esac
+    case "$f" in web/*.ts|web/*.tsx|web/*/tsconfig*.json|web/tsconfig*.json|web/package.json) web=yes ;; esac
+  done
+
+  if [ ${#go_files[@]} -gt 0 ]; then
+    unformatted=""
+    for f in "${go_files[@]}"; do
+      git show "$local_sha:$f" | "$(go env GOROOT)/bin/gofmt" -l 2>/dev/null | grep -q . && unformatted+=" $f"
+    done
+    [ -z "$unformatted" ] || bad "not gofmt'd:$unformatted"
+    mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
+    out=$(go test -count=1 "${packages[@]}" 2>&1) || { echo "$out" | tail -30; bad "go test failed on the changed packages"; }
+  fi
+  if [ "$web" = yes ]; then
+    out=$(cd web && ${PNPM:-corepack pnpm} run typecheck 2>&1) || { echo "$out" | tail -30; bad "the front end does not typecheck"; }
+  fi
+done
+
+if [ "$fail" != 0 ]; then
+  note "refused. Fix it, or push anyway with git push --no-verify (CI and task ci still check)."
+  exit 1
+fi
+exit 0

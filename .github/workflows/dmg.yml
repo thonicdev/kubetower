@@ -1,0 +1,333 @@
+# The macOS disk images: one `.dmg` per
+# architecture, each holding `KubeTower.app`, a link to /Applications, and the
+# KubeTower icon on the mounted volume. Called by release.yml on a tag and by
+# ci.yml's full tier, run by hand, so a branch proves the job that a tag runs: the same
+# file, the same pinned tool, the same read-back. It publishes nothing; the
+# images leave as a workflow artifact, and only release.yml's draft job puts
+# them on a (draft) release.
+#
+# THE NAMES ARE THE DOWNLOAD PAGE'S. `kubetower-<version>-arm64.dmg` and
+# `kubetower-<version>-x64.dmg`, as kubetower-site's downloads.ts and
+# the release notes spell them: a button that points at a name the release
+# does not carry is a 404 on the page people download from. Two images and
+# not one universal one, decided by the operator on 2026-10-14: each is half
+# the size of a universal image, and it is what the page already offers.
+# `ktbuild -arch universal` stays buildable (ci.yml proves it) and does not
+# ship.
+#
+# THE TOOL IS libdmg-hfsplus, Mozilla's fork - how Firefox's macOS images are
+# made on Linux - built from source at a pinned commit, plus hfsprogs'
+# mkfs.hfsplus. hdiutil exists only on macOS. Compared on 2026-10-13 against
+# xorriso (a raw image, four times the download) and a Go ISO9660 writer
+# (loses the /Applications link and lower-case names).
+#
+# MAY RUN ON A SELF-HOSTED RUNNER, which persists between jobs, so the job installs its
+# build tools and libraries itself with apt, through the runners' passwordless
+# sudo, and builds the third-party tool under $RUNNER_TEMP, which the
+# runner cleans. The job holds no token scope at all: it downloads this run's artifact,
+# clones a public repository, and uploads an artifact, none of which needs
+# GITHUB_TOKEN, so a compromised build of a third-party tool has nothing here
+# to steal.
+#
+# WHAT IS IN EACH IMAGE, and nothing else:
+#
+#   KubeTower.app        written by the linux binary's `--bundle=DIR`, the one
+#                        writer `--install` uses on a Mac (installbundle.go),
+#                        then that architecture's darwin binary, taken from the
+#                        same .tar.gz a person can download, at
+#                        Contents/MacOS/kubetower.
+#   Applications         a symlink to /Applications, to drag the app onto.
+#   .VolumeIcon.icns     the bundle's own Contents/Resources/kubetower.icns,
+#                        copied, so the artwork has one source; with the
+#                        custom-icon Finder flag on the volume's root folder,
+#                        macOS draws it for the mounted volume in the Finder,
+#                        the sidebar and on the desktop. No window layout, no
+#                        background, no .DS_Store.
+#
+# UDZO (zlib), not UDBZ (bzip2), the other format the operator allowed. Measured
+# on 2026-10-14 on the arm64 image: 17.2 MB against 16.0 MB, 8 % more to
+# download; but on an M-series Mac the UDZO image attached in 1.0 s against
+# 2.1 s, and reading the binary out of it took 0.08 s against 0.85 s - paid on
+# every open from the image and on the drag to /Applications. It is also what
+# `hdiutil create -srcfolder` makes by default.
+#
+# SEALED AD HOC, NOT SIGNED, NOT NOTARIZED. Go's linker gives the darwin
+# binary an ad-hoc signature that promises sealed resources, and a bundle
+# nobody sealed then fails `codesign --verify` ("code has no resources but
+# signature indicates they must be present"): a quarantined download of that
+# is the "damaged" path, with no Open Anyway. So the bundle is sealed ad hoc
+# with rcodesign (apple-codesign) before the image is made - no certificate,
+# no identity, no Developer ID signing or notarization, decided by the operator
+# on 2026-10-14. Gatekeeper still refuses the app on its first open, as for
+# any unsigned app, and the README's "Unsigned builds" says what to do.
+
+name: dmg
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The version the binaries were stamped with, without the v"
+        required: true
+        type: string
+      artifact:
+        description: >-
+          This run's artifact holding kubetower_<version>_darwin_arm64.tar.gz,
+          kubetower_<version>_darwin_amd64.tar.gz and
+          kubetower_<version>_linux_amd64.tar.gz
+        required: true
+        type: string
+      retention-days:
+        description: "How long the images are kept as a workflow artifact"
+        required: false
+        type: number
+        default: 14
+    # The images' SHA-256, as this job computed them. A job output is set by
+    # this job's own steps and cannot be changed by any other job, so a caller
+    # checks the artifact it downloads against these rather than against a
+    # checksum that traveled in the artifact itself (release.yml's draft).
+    outputs:
+      sha256_arm64:
+        description: "SHA-256 of kubetower-<version>-arm64.dmg"
+        value: ${{ jobs.dmg.outputs.sha256_arm64 }}
+      sha256_x64:
+        description: "SHA-256 of kubetower-<version>-x64.dmg"
+        value: ${{ jobs.dmg.outputs.sha256_x64 }}
+
+permissions: {}
+
+jobs:
+  dmg:
+    name: the macos disk images
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    outputs:
+      sha256_arm64: ${{ steps.make.outputs.sha256_arm64 }}
+      sha256_x64: ${{ steps.make.outputs.sha256_x64 }}
+    permissions: {}
+    env:
+      VERSION: ${{ inputs.version }}
+      # Mozilla's libdmg-hfsplus, pinned by commit: a branch or tag is only as
+      # fixed as the account that owns it. ec239599 (2026-01-29) is the commit
+      # the comparison of 2026-10-13 measured. Moving it is a change to
+      # review like any other, with the read-back below as its test.
+      LIBDMG_REPO: https://github.com/mozilla/libdmg-hfsplus.git
+      LIBDMG_SHA: ec239599c1f234a4e01ae3fe51214d0c77e5baa3
+      # rcodesign, the release binary of apple-codesign 0.29.0 (2024-11-29),
+      # pinned by version and by the SHA-256 of its archive, which matches the
+      # .sha256 file and the checksum list its release publishes beside it. A
+      # different file under the same name fails the check below.
+      # Not named RCODESIGN_*: rcodesign reads every such variable as its own
+      # configuration and refuses an unknown key ("configuration file error").
+      APPLE_CODESIGN_VERSION: 0.29.0
+      APPLE_CODESIGN_SHA256: dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002
+    steps:
+      # mkfs.hfsplus from the distribution's archive; the compiler, cmake and the headers
+      # libdmg links against. Installed first, since the check below lists
+      # cmake, cc and c++.
+      - name: Install hfsprogs, the build tools and libdmg's build dependencies
+        run: |
+          set -eu
+          # apt-get update takes the lists' lock, which DPkg::Lock::Timeout does
+          # not wait on: another job on this VM may hold it for a moment.
+          refresh() {
+            for try in 1 2 3; do
+              sudo apt-get -o DPkg::Lock::Timeout=300 update -qq && return 0
+              [ "$try" = 3 ] && return 1
+              sleep 20
+            done
+          }
+          # LC_ALL=C: a runner with a French locale prints "Candidat".
+          installable() {
+            LC_ALL=C apt-cache policy hfsprogs | grep -qE 'Candidate: [^(]'
+          }
+          refresh
+          # hfsprogs is in Ubuntu's universe component, which a runner's apt
+          # sources may leave out: enable it and look again before giving up.
+          . /etc/os-release
+          if ! installable && [ "${ID:-}" = ubuntu ]; then
+            echo "hfsprogs has no install candidate on $RUNNER_NAME: enabling universe"
+            if ! command -v add-apt-repository >/dev/null; then
+              sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends software-properties-common >/dev/null
+            fi
+            sudo add-apt-repository -y -n universe
+            refresh
+          fi
+          if ! installable; then
+            echo "::error::hfsprogs cannot be installed on runner $RUNNER_NAME (${PRETTY_NAME:-unknown system}): its apt sources offer no version of it. On that runner, enable the component that carries hfsprogs (universe on Ubuntu) or install hfsprogs, then re-run this job."
+            exit 1
+          fi
+          sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends build-essential cmake hfsprogs zlib1g-dev libbz2-dev libssl-dev >/dev/null
+          # /usr/sbin, where Debian puts it, is not on every runner's PATH.
+          echo /usr/sbin >> "$GITHUB_PATH"
+          PATH="$PATH:/usr/sbin" command -v mkfs.hfsplus
+
+      # See release.yml's verify job: every job checks the host's tools first,
+      # and names every missing one in a single error.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: git cmake make cc c++ sudo apt-get curl tar file grep dd du cut cp mkdir rm sha256sum
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them; this job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+
+      # The version reaches every shell below through env, never `${{ }}`, and
+      # is held to a version's shape before it becomes part of a file name.
+      - name: The version is a version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a version (MAJOR.MINOR.PATCH[-pre])"
+            exit 1
+          fi
+
+      - name: Build libdmg-hfsplus at the pinned commit
+        run: |
+          set -eu
+          git init -q "$RUNNER_TEMP/libdmg"
+          cd "$RUNNER_TEMP/libdmg"
+          git fetch -q --depth 1 "$LIBDMG_REPO" "$LIBDMG_SHA"
+          git -c advice.detachedHead=false checkout -q FETCH_HEAD
+          got=$(git rev-parse HEAD)
+          if [ "$got" != "$LIBDMG_SHA" ]; then
+            echo "::error::fetched $got, not the pinned $LIBDMG_SHA"
+            exit 1
+          fi
+          # -w: OpenSSL 3 deprecation warnings by the hundred, none of them
+          # about code this job runs (FileVault). Errors still print.
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-w >/dev/null
+          cmake --build build --target hfsplus dmg-bin -j "$(nproc)" >/dev/null
+          echo "$RUNNER_TEMP/libdmg/build/hfs" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/libdmg/build/dmg" >> "$GITHUB_PATH"
+          echo "libdmg-hfsplus $got built"
+
+      - name: Fetch rcodesign at the pinned version and checksum
+        run: |
+          set -eu
+          name="apple-codesign-${APPLE_CODESIGN_VERSION}-x86_64-unknown-linux-musl"
+          dir="$RUNNER_TEMP/rcodesign"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/$name.tar.gz" \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${APPLE_CODESIGN_VERSION}/$name.tar.gz"
+          echo "$APPLE_CODESIGN_SHA256  $dir/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$dir/$name.tar.gz" -C "$dir" "$name/rcodesign"
+          echo "$dir/$name" >> "$GITHUB_PATH"
+          "$dir/$name/rcodesign" --version
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: in
+
+      # One image per architecture. Each step reads back what it wrote before
+      # the next one builds on it: the darwin binary's architecture, the
+      # bundle's version, and - from the finished .dmg, extracted again - the
+      # three entries at the volume's root.
+      - name: Make the images, then read each one back
+        id: make
+        run: |
+          set -euo pipefail
+          mkdir -p linux out
+          # The bundle writer runs on this host: the linux/amd64 binary of the
+          # same build, so its Info.plist says the same version.
+          tar -xzf "in/kubetower_${VERSION}_linux_amd64.tar.gz" -C linux ./kubetower
+          for pair in arm64:arm64:arm64 x64:amd64:x86_64; do
+            IFS=: read -r name goarch macho <<< "$pair"
+            stage="stage-$name"
+            app="$stage/KubeTower.app"
+            dmg="out/kubetower-${VERSION}-${name}.dmg"
+            rm -rf "$stage"; mkdir -p "$stage"
+
+            # `--bundle` fails, by design, on a bundle missing its icon.
+            linux/kubetower --bundle="$PWD/$stage"
+            tar -xzf "in/kubetower_${VERSION}_darwin_${goarch}.tar.gz" -C "$app/Contents/MacOS" ./kubetower
+            chmod 755 "$app/Contents/MacOS/kubetower"
+            kind=$(file -b "$app/Contents/MacOS/kubetower")
+            case "$kind" in
+              "Mach-O 64-bit "*"$macho"*) echo "ok   $name: $kind" ;;
+              *) echo "::error::$name's binary is '$kind', not a $macho Mach-O"; exit 1 ;;
+            esac
+            if ! grep -A1 '<key>CFBundleShortVersionString</key>' "$app/Contents/Info.plist" | grep -qF "<string>$VERSION</string>"; then
+              echo "::error::$app/Contents/Info.plist does not say version $VERSION"
+              exit 1
+            fi
+
+            # Sealed ad hoc, after the binary is in place and before anything
+            # is copied out of the bundle: no certificate, so no identity. Read
+            # back from the signature itself - `rcodesign verify` refuses an
+            # ad-hoc signature (it wants a CMS blob) - as the bundle id, the
+            # ad-hoc flag, and the resource seal that was missing.
+            rcodesign sign "$app" >/dev/null
+            sig=$(rcodesign print-signature-info "$app")
+            for want in "identifier: dev.thonicdev.kubetower" "flags: CodeSignatureFlags(ADHOC)" "path: Contents/_CodeSignature/CodeResources"; do
+              if ! grep -qF "$want" <<< "$sig"; then
+                echo "::error::$app's signature lacks '$want' after rcodesign sign"
+                exit 1
+              fi
+            done
+            echo "ok   $name: bundle sealed ad hoc"
+
+            # The volume icon is the bundle's icon, copied rather than kept
+            # twice in the tree.
+            cp "$app/Contents/Resources/kubetower.icns" "$stage/.VolumeIcon.icns"
+
+            # An HFS+ volume with room for the payload and its catalog: the
+            # payload plus a tenth, plus 8 MB. dmg compresses the free space
+            # away, so the margin costs nothing in the download.
+            mb=$(du -sm "$stage" | cut -f1)
+            hfs="$RUNNER_TEMP/$name.hfs"
+            dd if=/dev/zero of="$hfs" bs=1M count=$(( mb + mb / 10 + 8 )) status=none
+            mkfs.hfsplus -v KubeTower "$hfs" >/dev/null
+            # The order is Mozilla's, and it is forced: `addall` follows
+            # symlinks, and /Applications does not exist on Linux, so the link
+            # is made inside the volume after the copy.
+            hfsplus "$hfs" addall "$stage" >/dev/null
+            hfsplus "$hfs" symlink /Applications /Applications
+            # kHasCustomIcon on the root folder: what makes macOS draw
+            # .VolumeIcon.icns for the volume (the `C` of SetFile -a).
+            hfsplus "$hfs" attr / C >/dev/null
+            dmg -c zlib build "$hfs" "$dmg" >/dev/null
+            rm -f "$hfs"
+
+            # Read back from the image itself, not from the staging directory.
+            dmg extract "$dmg" "$RUNNER_TEMP/check.hfs" >/dev/null
+            root=$(hfsplus "$RUNNER_TEMP/check.hfs" ls /)
+            rm -f "$RUNNER_TEMP/check.hfs"
+            for want in KubeTower.app Applications .VolumeIcon.icns; do
+              if ! grep -qF "$want" <<< "$root"; then
+                echo "::error::$dmg has no $want at its root:"
+                echo "$root"
+                exit 1
+              fi
+            done
+            echo "ok   $dmg: KubeTower.app, Applications, .VolumeIcon.icns"
+            echo "sha256_$name=$(sha256sum "$dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo "### macOS disk images, $VERSION"
+            echo
+            echo '| image | size | sha256 |'
+            echo '|---|---|---|'
+            for f in out/*.dmg; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
+            echo
+            echo "Unsigned and not notarized. Built with libdmg-hfsplus $LIBDMG_SHA."
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -l out
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-dmg-${{ inputs.version }}
+          path: out/*.dmg
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+          # A re-run of this job replaces the images it made before.
+          overwrite: true

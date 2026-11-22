@@ -1,0 +1,12 @@
+#!/bin/sh
+# The AppImage's entry point. The runtime mounts (or, with
+# --appimage-extract-and-run, extracts) the AppDir and runs this file with the
+# arguments the AppImage was given, and APPDIR set to where the AppDir is.
+#
+# It only hands over: every argument as it came, in order, to the binary, which
+# is static and needs no library path. So `--app`, `--version` and `--install`
+# reach kubetower exactly as they would reach the binary from the tar.gz.
+# exec, so the binary is the process the runtime waits on and receives its
+# signals directly.
+here=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+exec "$here/usr/bin/kubetower" "$@"

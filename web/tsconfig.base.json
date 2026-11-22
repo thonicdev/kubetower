@@ -1,0 +1,35 @@
+{
+  // TypeScript 5.9, deliberately, and not the 7.0 native port.
+  // `typescript-eslint@8` declares `typescript: ">=4.8.4 <6.1.0"`, so adopting
+  // 7.0 today means giving up the lint boundary this tree requires - the
+  // `no-restricted-globals` fence around the one network module, and
+  // `react/no-danger`. The fence is worth more than the compiler's speed, and
+  // the swap is one line here once typescript-eslint supports 7.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "moduleDetection": "force",
+    "useDefineForClassFields": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+
+    // Vite transpiles file by file and never type-checks. Anything that needs
+    // whole-program knowledge to erase is therefore a build-time trap rather
+    // than a style question.
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}

@@ -1,0 +1,23 @@
+1:
+
+Usage:
+  Non-class:      4.03 MB capacity,   492.03 KB ( 12%) used,     3.54 MB ( 88%) free+waste,     1.19 KB ( <1%) overhead. 
+      Class:    396.00 KB capacity,    43.24 KB ( 11%) used,   352.07 KB ( 89%) free+waste,   704 bytes ( <1%) overhead. 
+       Both:      4.41 MB capacity,   535.27 KB ( 12%) used,     3.89 MB ( 88%) free+waste,     1.88 KB ( <1%) overhead. 
+
+Virtual space:
+  Non-class space:        8.00 MB reserved,       4.25 MB ( 53%) committed 
+      Class space:        1.00 GB reserved,     512.00 KB ( <1%) committed 
+             Both:        1.01 GB reserved,       4.75 MB ( <1%) committed 
+
+Chunk freelists:
+   Non-Class:  0 bytes
+       Class:  0 bytes
+        Both:  0 bytes
+
+MaxMetaspaceSize: unlimited
+CompressedClassSpaceSize: 1.00 GB
+Initial GC threshold: 20.80 MB
+Current GC threshold: 20.80 MB
+CDS: on
+

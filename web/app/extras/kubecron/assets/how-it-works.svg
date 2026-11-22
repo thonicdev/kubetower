@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" width="720" height="220" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+  <title id="t">How KubeCron reads run history</title>
+  <desc id="d">Inside the cluster, the KubeCron collector watches CronJob runs and keeps them in SQLite. KubeTower finds the collector by its Service label and reads its read-only API through a port-forward.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a93a3"/>
+    </marker>
+  </defs>
+
+  <rect x="10" y="10" width="470" height="200" rx="14" fill="#8a93a3" fill-opacity="0.08" stroke="#8a93a3" stroke-dasharray="6 5"/>
+  <text x="26" y="34" font-size="13" fill="#8a93a3" font-weight="600">Your cluster</text>
+
+  <rect x="30" y="56" width="150" height="58" rx="10" fill="#4f8ff7" fill-opacity="0.14" stroke="#4f8ff7"/>
+  <text x="105" y="81" font-size="14" text-anchor="middle" fill="#4f8ff7" font-weight="600">CronJobs</text>
+  <text x="105" y="100" font-size="11" text-anchor="middle" fill="#8a93a3">Jobs vanish in minutes</text>
+
+  <rect x="30" y="134" width="150" height="58" rx="10" fill="#8a93a3" fill-opacity="0.10" stroke="#8a93a3"/>
+  <text x="105" y="159" font-size="13" text-anchor="middle" fill="#8a93a3" font-weight="600">Pods &amp; logs</text>
+  <text x="105" y="178" font-size="11" text-anchor="middle" fill="#8a93a3">read while they exist</text>
+
+  <rect x="270" y="80" width="190" height="88" rx="10" fill="#2fb171" fill-opacity="0.14" stroke="#2fb171"/>
+  <text x="365" y="106" font-size="14" text-anchor="middle" fill="#2fb171" font-weight="600">KubeCron collector</text>
+  <text x="365" y="125" font-size="11" text-anchor="middle" fill="#8a93a3">mode=server · read-only RBAC</text>
+  <text x="365" y="142" font-size="11" text-anchor="middle" fill="#8a93a3">keeps runs, logs, samples</text>
+  <text x="365" y="158" font-size="10" text-anchor="middle" fill="#8a93a3">label kubecron.io/collector=true</text>
+
+  <path d="M182 86 C 225 86, 230 110, 268 112" fill="none" stroke="#8a93a3" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <path d="M182 163 C 225 163, 230 140, 268 138" fill="none" stroke="#8a93a3" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="226" y="74" font-size="10" text-anchor="middle" fill="#8a93a3">watches</text>
+
+  <rect x="560" y="80" width="150" height="88" rx="10" fill="#a06cf0" fill-opacity="0.14" stroke="#a06cf0"/>
+  <text x="635" y="114" font-size="14" text-anchor="middle" fill="#a06cf0" font-weight="600">KubeTower</text>
+  <text x="635" y="134" font-size="11" text-anchor="middle" fill="#8a93a3">KubeCron page</text>
+  <text x="635" y="150" font-size="10" text-anchor="middle" fill="#8a93a3">finds it, no URL to set</text>
+
+  <path d="M558 124 L 463 124" fill="none" stroke="#8a93a3" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="511" y="114" font-size="10" text-anchor="middle" fill="#8a93a3">port-forward</text>
+  <text x="511" y="140" font-size="10" text-anchor="middle" fill="#8a93a3">GET /api/v1</text>
+</svg>

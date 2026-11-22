@@ -1,0 +1,20 @@
+[
+  { "name": "prod", "path": "/c/prod" },
+  { "name": "kubernetes-admin@kubernetes", "path": "/c/kubernetes-admin@kubernetes" },
+  {
+    "name": "arn:aws:eks:eu-west-1:123456789012:cluster/prod",
+    "path": "/c/arn:aws:eks:eu-west-1:123456789012:cluster%2Fprod"
+  },
+  {
+    "name": "team@arn:aws:eks:eu-west-1:1:cluster/prod",
+    "path": "/c/team@arn:aws:eks:eu-west-1:1:cluster%2Fprod"
+  },
+  { "name": "cluster--prod", "path": "/c/cluster--prod" },
+  { "name": "prod one", "path": "/c/prod%20one" },
+  { "name": "team#1?prod%", "path": "/c/team%231%3Fprod%25" },
+  { "name": "a;b,c", "path": "/c/a%3Bb%2Cc" },
+  { "name": "$&+=", "path": "/c/$&+=" },
+  { "name": "!'()*", "path": "/c/%21%27%28%29%2A" },
+  { "name": "~-_.", "path": "/c/~-_." },
+  { "name": "café", "path": "/c/caf%C3%A9" }
+]

@@ -1,0 +1,96 @@
+# The .deb and the .rpm, both from this one description, built by nfpm
+# (packages.sh says why nfpm and which one). Read with the repository root as
+# the working directory, so the relative sources below are the committed files;
+# the binary and the license files come from KT_PKG_STAGE, the release archive
+# packages.sh unpacked there - the archive's bytes, not a second build. nfpm
+# reads a variable in a content's src only where that entry says `expand: true`.
+#
+# KT_PKG_VERSION is the tag, such as 0.1.0 or 0.1.0-rc.1. version_schema
+# semver splits a pre-release off and each packager writes it the way its
+# version comparison sorts before the release: 0.1.0~rc.1 in a .deb,
+# 0.1.0~rc.1-1 in an .rpm. With a hyphen kept as the tag spells it, rc.1 would
+# sort after 0.1.0 and an upgrade to the release would be refused as a
+# downgrade.
+
+name: kubetower
+arch: amd64
+platform: linux
+version: ${KT_PKG_VERSION}
+version_schema: semver
+section: admin
+priority: optional
+maintainer: KubeTower <https://github.com/thonicdev/kubetower/issues>
+vendor: KubeTower
+homepage: https://github.com/thonicdev/kubetower
+license: AGPL-3.0-only
+description: |-
+  A Kubernetes console that runs on your own machine.
+  KubeTower opens in a browser window and talks to your clusters through your
+  own kubeconfig. Start it from the applications menu, or run kubetower.
+
+# The console opens in the browser, through xdg-open.
+depends:
+  - xdg-utils
+
+contents:
+  - src: ${KT_PKG_STAGE}/kubetower
+    expand: true
+    dst: /usr/bin/kubetower
+    file_info:
+      mode: 0755
+  - src: packaging/linux/kubetower.desktop
+    dst: /usr/share/applications/kubetower.desktop
+    file_info:
+      mode: 0644
+  # The bitmap the binary itself embeds and the PWA serves, used where it lies
+  # rather than copied: one artwork, one file.
+  - src: internal/web/static/pwa/icon-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/kubetower.png
+    file_info:
+      mode: 0644
+
+  # The license and the notices, which the AGPL asks to travel with the binary,
+  # where each family looks for them. Debian: /usr/share/doc/<package>/ (Debian
+  # Policy 12.5). Fedora and RHEL: /usr/share/licenses/<package>/, marked as
+  # license files (%license), which rpm installs even where documentation is
+  # left out (tsflags=nodocs, as in the fedora container image) - a %doc there
+  # would be dropped.
+  - src: ${KT_PKG_STAGE}/LICENSE
+    expand: true
+    dst: /usr/share/doc/kubetower/LICENSE
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${KT_PKG_STAGE}/LICENSING.md
+    expand: true
+    dst: /usr/share/doc/kubetower/LICENSING.md
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${KT_PKG_STAGE}/THIRD_PARTY_NOTICES.txt
+    expand: true
+    dst: /usr/share/doc/kubetower/THIRD_PARTY_NOTICES.txt
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${KT_PKG_STAGE}/LICENSE
+    expand: true
+    dst: /usr/share/licenses/kubetower/LICENSE
+    type: license
+    packager: rpm
+    file_info:
+      mode: 0644
+  - src: ${KT_PKG_STAGE}/LICENSING.md
+    expand: true
+    dst: /usr/share/licenses/kubetower/LICENSING.md
+    type: license
+    packager: rpm
+    file_info:
+      mode: 0644
+  - src: ${KT_PKG_STAGE}/THIRD_PARTY_NOTICES.txt
+    expand: true
+    dst: /usr/share/licenses/kubetower/THIRD_PARTY_NOTICES.txt
+    type: license
+    packager: rpm
+    file_info:
+      mode: 0644

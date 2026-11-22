@@ -1,0 +1,292 @@
+# The organization's rules, checked by a machine: no machine attribution in
+# the history (R1), Conventional Commits on the messages and the title (R2),
+# and nothing published that names what a reader cannot open (public-*). This
+# is a PRODUCT repository and is exempt from none of them.
+name: guards
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  # R6 requires every change to reach main through a pull request, and this
+  # plan cannot enforce that: branch protection answers 403 here. So R6 is
+  # discipline, and a direct push would otherwise arrive with no check at all -
+  # which is the one case where an unenforced rule looks enforced. It runs
+  # after the commit rather than before it; that is what the gap costs.
+  push:
+    branches: [main]
+
+# A pull request's newer push cancels its older run; anything else is grouped
+# by commit and never canceled (ci.yml says why). The same lines in every
+# workflow here.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: R1 - no machine attribution
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    # Every job has a timeout: without one a hung job holds a runner
+    # for GitHub's default of six hours.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The range differs by event and no single expression covers both:
+      # base_ref is empty on a push, event.before is empty on a pull request.
+      # Getting that wrong produces a job that cannot pass rather than one that
+      # fails honestly.
+      - name: Establish the commit range
+        id: range
+        env:
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE" ]; then
+            from="origin/$BASE"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            from="$BEFORE"
+          else
+            from=""
+          fi
+          echo "from=$from" >> "$GITHUB_OUTPUT"
+          if [ -z "$from" ]; then
+            echo "no previous ref to compare against - nothing in range"
+          else
+            echo "range: $from..HEAD"
+            git log --oneline "$from..HEAD"
+          fi
+
+      - name: Refuse machine attribution in the commit range
+        if: steps.range.outputs.from != ''
+        env:
+          FROM: ${{ steps.range.outputs.from }}
+        run: |
+          if git log --format='%B' "$FROM..HEAD" \
+             | grep -inE 'co-authored-by:.*(claude|anthropic)|generated with .*claude'; then
+            echo "::error::R1 - machine attribution in a commit message"
+            exit 1
+          fi
+          echo "no machine attribution in any commit message"
+
+      # R1's third clause: no non-human commit author. Refused by name rather
+      # than by a "looks like a bot" rule, because renovate[bot] and
+      # dependabot[bot] are wanted here and a rule broad enough to catch an
+      # assistant catches them too. What it cannot name, it prints - a human
+      # reading the run is the second half of this check.
+      #
+      # **No fixed path under /tmp.** The list was `tee /tmp/who`, and a runner
+      # sharing its host with another user found that user's /tmp/who there:
+      # "tee: /tmp/who: Permission non accordée" failed R1 once. It
+      # is kept in a variable, and pipefail makes a failed `git log` fail the
+      # step rather than read as nobody.
+      - name: Refuse a machine as author or committer, and report every identity
+        if: steps.range.outputs.from != ''
+        env:
+          FROM: ${{ steps.range.outputs.from }}
+        run: |
+          set -o pipefail
+          who=$(git log --format='%an <%ae>%n%cn <%ce>' "$FROM..HEAD" | sort -u)
+          printf '%s\n' "$who"
+          if printf '%s\n' "$who" | grep -inE '(claude|anthropic)'; then
+            echo "::error::R1 - a machine is named as author or committer"
+            exit 1
+          fi
+
+  commits:
+    name: R2 - conventional commits
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      - name: Lint the commit range
+        env:
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE" ]; then
+            from="origin/$BASE"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            from="$BEFORE"
+          else
+            echo "no previous ref to compare against - nothing to lint"
+            exit 0
+          fi
+          npx commitlint --from "$from" --to HEAD --verbose
+
+  pr-title:
+    name: R2 - conventional PR title
+    # A push has no pull request, so this job has no subject at all. Without
+    # the guard it lints an empty string and fails on every direct commit.
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      # Without this the config file is absent and commitlint fails on every
+      # title, valid ones included - "Please add rules to your
+      # commitlint.config.js". A job that cannot pass is not a check.
+      # Two levels, so that the pull request's head commit - the merge ref's
+      # second parent - is here to be read (the single-commit check below).
+      # Nothing else in this job reads history: commitlint is given the title.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
+      # A squash merge takes the PR title as the commit subject, so a repository
+      # that lints only commits has an unenforced convention that looks
+      # enforced. Runs on `edited` too: a title changed after a green check is
+      # otherwise never re-checked.
+      #
+      # And the squash appends " (#NNNN)" to the title, so a title commitlint
+      # passes can land a subject it refuses: one pull request's title was 94
+      # characters, its subject on `main` 101, over header-max-length's 100,
+      # and that red run on `main` cannot be fixed - a commit there is not
+      # amended. 100 - len(" (#NNNN)") = 92, so a title may be 92 characters
+      # at most, whatever its number is today. Counted by node as commitlint
+      # counts (a JavaScript string's length), not by the shell, whose count
+      # depends on the locale.
+      #
+      # **A one-commit pull request squashes under its commit's header, not
+      # its title**: this repository's squash_merge_commit_title is
+      # COMMIT_OR_PR_TITLE. commitlint lets that
+      # header reach 100, and with " (#NNNN)" it lands at 107. So when the pull
+      # request is one commit, that commit's header is held to 92 as well. With
+      # two or more, GitHub takes the title, which is checked above. The
+      # setting is the operator's, and this does not depend on it changing.
+      - name: Lint the pull-request title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          TITLE_MAX: "92"
+          COMMITS: ${{ github.event.pull_request.commits }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # GitHub runs this under `bash -e` without pipefail, so a `git show`
+          # that failed inside a pipe would read as an empty header, "0
+          # characters, within 92", and pass.
+          set -o pipefail
+          fail=0
+          check() {
+            WHAT="$1" TEXT="$2" WHY="$3" node -e '
+              const { WHAT: what, TEXT: text, WHY: why } = process.env, max = Number(process.env.TITLE_MAX);
+              if (text.length > max) {
+                console.log(`::error::${what} is ${text.length} characters, over ${max}: ${why}, and the ` +
+                  `commit subject on main must fit commitlint header-max-length of 100. ` +
+                  `Shorten it by ${text.length - max}.`);
+                process.exit(1);
+              }
+              console.log(`${what} is ${text.length} characters, within ${max}`);
+            ' || fail=1
+          }
+          check "the pull-request title" "$TITLE" \
+            'a squash merge appends " (#NNNN)" to it'
+          if [ "$COMMITS" = "1" ]; then
+            # **Refused, never passed, when it cannot be read**: an unread
+            # header is an unchecked squash subject, not a short one.
+            if ! header=$(git show -s --format=%B "$HEAD_SHA" | sed -n 1p) || [ -z "$header" ]; then
+              echo "::error::the head commit $HEAD_SHA of this one-commit pull request could not be read, so its header - the squash subject - is unchecked. Re-run the job; if it fails again, the checkout no longer fetches the pull request's head."
+              fail=1
+            else
+              check "the header of this pull request's only commit" "$header" \
+                'GitHub squashes a one-commit pull request under that header, not the title, and appends " (#NNNN)"'
+            fi
+          else
+            echo "$COMMITS commits: the squash takes the title"
+          fi
+          [ "$fail" = 0 ]
+          printf '%s' "$TITLE" | npx commitlint --verbose
+
+  # Nothing here may cite what a stranger cannot open: the organization's
+  # private repositories and documents, the identifiers of its private
+  # registers, or the prototype this console was migrated from. The repository
+  # is to be published with its history, so the tree and every message that
+  # reaches `main` are what a reader gets. A rule only a reader enforces is a
+  # comment, so it is a job - the same script and the same three scans as the
+  # chart repository's.
+  #
+  # EXPECTED RED until the tree is reworded. When this job was added the tree
+  # still held such references in hundreds of lines, and the pull requests
+  # rewording them are separate. It is not made advisory: a guard marked
+  # `continue-on-error` reads green on the day it matters. Red here means
+  # "references left", and the log lists each one with its file and line.
+  public-tree:
+    name: public - no private reference in the tree
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # First the proof that it can fail: a planted file, file name, commit
+      # message and description must each be refused, and a squash that only
+      # closes an issue must not be.
+      - name: The check refuses what it is meant to refuse
+        run: bash test/public-check.sh --self-test
+      # Every tracked file, this workflow and the script included. Nothing is
+      # excluded: the script spells none of the names it refuses. The patterns
+      # the operator does not want in the tree at all come from a repository
+      # variable; when it is unset only the built-in list runs.
+      - name: No private reference in the tree
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ secrets.PUBLIC_CHECK_EXTRA }}
+        run: bash test/public-check.sh tree
+
+  public-text:
+    name: public - no private reference in the title, description or commits
+    # The title and description exist only on a pull request; the commit range
+    # is the pull request's. On `main` the squash's message is that
+    # description, already scanned here.
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      # The whole history, because the commit messages are scanned.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # This repository squash-merges, so the title and description are the
+      # commit that lands on `main` - the most public text of the change, and
+      # the one a reviewer reads least carefully. A line that only closes an
+      # issue is the one place a private issue may be named.
+      #
+      # Through `env:` and never `${{ }}` inside `run:`: a description is
+      # somebody else's text, and interpolated into a script it is code. The
+      # workflow runs again on `edited`, because a description changed after a
+      # green check is otherwise never read.
+      - name: No private reference in the title or description
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ secrets.PUBLIC_CHECK_EXTRA }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          rc=0
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" \
+            | bash test/public-check.sh message "pull request description" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::the pull request's title or description names something private, and a squash merge would put it on main. Edit it; the check runs again on the edit"
+          fi
+          exit $rc
+      # The branch's commit messages do not reach `main`, but they stay
+      # readable on the pull request for good.
+      - name: No private reference in a commit message
+        env:
+          PUBLIC_CHECK_EXTRA: ${{ secrets.PUBLIC_CHECK_EXTRA }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          rc=0
+          bash test/public-check.sh commits "origin/$BASE..HEAD" || rc=$?
+          if [ $rc -eq 1 ]; then
+            echo "::error::a commit message above names something private. Reword it in a new branch and pull request: a pushed commit is not rewritten here"
+          fi
+          exit $rc

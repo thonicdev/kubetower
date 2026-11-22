@@ -1,0 +1,18 @@
+<!--
+  KubeTower application icon — the one Windows puts in the taskbar once the site
+  is installed.
+
+  This file is the single source of truth: the PNG sizes Chromium insists on
+  (192 and 512) are rasterised from it with the rsvg-convert commands of the
+  Dockerfile's icons stage, and checked in. ICONS.md says why they are checked
+  in and how they are kept from drifting from this drawing.
+
+  A deck of three plates, in the Kubernetes blue, on a slate ground.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="KubeTower">
+  <rect width="512" height="512" rx="112" fill="#101828"/>
+  <!-- Drawn bottom plate first: the ones after it overlap and read as a stack. -->
+  <path d="M256 249 L406 324 L256 399 L106 324 Z" fill="#1d47a6"/>
+  <path d="M256 181 L406 256 L256 331 L106 256 Z" fill="#3b7ae8"/>
+  <path d="M256 113 L406 188 L256 263 L106 188 Z" fill="#6ea0ff"/>
+</svg>

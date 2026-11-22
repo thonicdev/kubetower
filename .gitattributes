@@ -1,0 +1,44 @@
+# Line endings are a property of the repository, not of the machine that cloned
+# it. Git for Windows ships `core.autocrlf = true` in its *system* gitconfig, so
+# without these a Windows checkout rewrites files on the way in and the working
+# tree stops being byte-identical to what is committed.
+#
+# Two things break when that happens, and neither is obvious from the symptom:
+#
+#   - `gofmt` emits LF and compares byte for byte, so one CRLF source file
+#     reports as unformatted on every line - and a whole tree can light up red
+#     with nobody having misformatted anything.
+#
+#   - Any test that hashes a file compares against a value recorded on a Linux
+#     machine. Eighteen carriage returns in one SVG are enough to change a
+#     SHA-256, which reads as a corrupted asset rather than as a checkout.
+#
+# `*.svg` is on this list deliberately: it is the extension people forget,
+# because it does not look like source.
+
+* text=auto
+
+*.go       text eol=lf
+*.mod      text eol=lf
+*.sum      text eol=lf
+*.md       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.json     text eol=lf
+*.js       text eol=lf
+*.jsx      text eol=lf
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.css      text eol=lf
+*.html     text eol=lf
+*.svg      text eol=lf
+*.sh       text eol=lf
+Dockerfile text eol=lf
+*.nsi      text eol=lf
+
+*.png      binary
+*.jpg      binary
+*.ico      binary
+*.icns     binary
+*.woff     binary
+*.woff2    binary

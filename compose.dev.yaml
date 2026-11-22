@@ -1,0 +1,222 @@
+# KubeTower — the packaged back end, for development.
+#
+# # What this file is for, and what it is not
+#
+# **It is not the fast loop.** The fast loop is two host processes and no Docker
+# at all: `task dev` runs `go run ./cmd/kubetower` beside Vite, a Go change costs
+# a two-second restart and a CSS change costs nothing. `docs/DEVELOPMENT.md` §2.
+#
+# This file answers the other question — *does it still work once it is
+# packaged* — and that question is worth a file of its own because four of the
+# failures this project has paid for exist **only** inside a container and are
+# invisible on the host:
+#
+#   * a bind-mounted single file arriving as an empty directory from a repository
+#     on a network share;
+#   * the AWS CLI from AWS being glibc-only against an Alpine/musl image;
+#   * `~/.aws` mounted read-only, which works until an SSO session expires and
+#     then takes every EKS cluster at once;
+#   * a listener on the container's own loopback, which Docker cannot route a
+#     published port to — the mapping exists, `docker compose ps` shows it, and
+#     a dial from the host is refused.
+#
+# None of those can be caught by running the binary on the machine that built it.
+#
+# # Why the name is compose.dev.yaml
+#
+# `compose.yaml` is the Compose Specification's own canonical name and
+# `docker-compose.yml` is its documented legacy spelling, so a new file takes the
+# modern one. The `.dev` is load-bearing twice over:
+#
+#   * a bare `docker compose up` **will not pick this file up**, which is what we
+#     want — this is not the shipped container and must never be mistaken for it.
+#     Every command names it with `-f`;
+#   * `internal/launch/envwiring_test.go` treats `docker-compose.yml` and
+#     `docker/docker-compose.yml` as a **pair**, skipping when neither exists and
+#     failing when exactly one does. Taking either of those two names for a
+#     development file would turn that gate red on a full checkout. See
+#     docs/DEVELOPMENT.md §7.
+#
+# It is still held to the gate's rule — every KT_ variable the code reads is
+# forwarded below, because a variable the process reads and the compose file does
+# not pass is a knob that appears to work and never arrives.
+
+name: kubetower-dev
+
+services:
+  kubetower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Pinned in the Dockerfile and overridable from .env. Empty builds an
+        # image with no Claude Code in it at all.
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION-2.1.226}
+    image: kubetower:dev
+
+    # **`no`, and not `unless-stopped`.**
+    #
+    # The shipped container restarts, because a console that has fallen over at
+    # three in the morning should come back. Here the opposite is true: a crash
+    # is the finding. A restarting container replaces the stack trace you were
+    # about to read with a fresh start-up log, and the loop that follows is one
+    # where the interesting output has already scrolled past.
+    restart: "no"
+
+    ports:
+      # Loopback on the host side, always. This process holds administrator
+      # credentials for production clusters; the container is a boundary against
+      # the network, not a reason to put the console on it.
+      - "127.0.0.1:${KT_PORT:-5823}:5823"
+      # The port-forward range, published as itself because the binary allocates
+      # each forward's local port out of it and the browser dials the host.
+      - "127.0.0.1:${KT_FORWARD_PORTS:-30000-30031}:${KT_FORWARD_PORTS:-30000-30031}"
+
+    environment:
+      # Every interface, and only here. The binary defaults to loopback so that
+      # running it on a laptop does not expose it; inside a container that
+      # reasoning inverts, because Docker cannot route a published port to a
+      # socket bound to the container's own loopback. Written here as well as in
+      # the image so that an operator reading this file sees where it listens
+      # without opening the Dockerfile.
+      KT_LISTEN: ":5823"
+
+      # A list, with the container's separator and the container's paths. Point
+      # it at several files by naming them here, colon-separated — they are
+      # already mounted, because HOST_KUBE_DIR arrives as a whole directory.
+      KUBECONFIG: /home/kubetower/.kube/config
+
+      # --- the front door ------------------------------------------------
+      #
+      # **`:-` and not `:?`, deliberately, and it does not soften anything.**
+      #
+      # An empty KT_PASSWORD_HASH does not start an unauthenticated console.
+      # `internal/auth.New` refuses an empty hash and `cmd/kubetower` turns that
+      # refusal into `log.Fatalf`. What an empty value selects is the *other*
+      # source: the binary draws a 20-character password from crypto/rand on
+      # first run, prints it once, and keeps only its bcrypt hash in the state
+      # volume. Read it out of `docker compose -f compose.dev.yaml logs`.
+      #
+      # `:?` (refuse when unset) would force every developer to
+      # produce a bcrypt hash by hand and walk straight into the `$`-doubling
+      # trap documented in .env.example — and the reliable outcome of a first run
+      # that fails on a credential incantation is somebody looking for the flag
+      # that turns the check off. There is no such flag, and there must not be.
+      KT_USER: ${KT_USER:-admin}
+      KT_PASSWORD_HASH: ${KT_PASSWORD_HASH:-}
+      KT_SESSION_SECRET: ${KT_SESSION_SECRET:-}
+      KT_SESSION_TTL: ${KT_SESSION_TTL:-}
+      KT_SESSION_MAX: ${KT_SESSION_MAX:-}
+      KT_LOG_FOLLOW_MAX: ${KT_LOG_FOLLOW_MAX:-}
+
+      # --- single sign-on: not here, on purpose ---------------------------
+      #
+      # KT_OIDC_* and KT_AUTH_LOCAL_ACCOUNT are not forwarded. This file runs
+      # the desktop profile, and the process refuses to start with an issuer
+      # and no --incluster: the desktop serves a local shell, a node
+      # shell and the assistant as this process, and an identity provider would
+      # hand them to everybody it accepts. Single sign-on is exercised through
+      # the chart, which runs the server profile.
+
+      # --- several replicas and the store they share ----------------------
+      #
+      # Several replicas and the store they share. Empty here, where there is
+      # one process; see .env.example for what each one does.
+      KT_REPLICATED: ${KT_REPLICATED:-}
+      KT_VALKEY_ADDR: ${KT_VALKEY_ADDR:-}
+      KT_VALKEY_USERNAME: ${KT_VALKEY_USERNAME:-}
+      KT_VALKEY_PASSWORD: ${KT_VALKEY_PASSWORD:-}
+
+      # --- clusters -------------------------------------------------------
+      KT_READONLY_CLUSTERS: ${KT_READONLY_CLUSTERS:-}
+      KT_FORWARD_PORTS: ${KT_FORWARD_PORTS:-30000-30031}
+      KT_IN_CONTAINER: ${KT_IN_CONTAINER:-}
+      KT_EXTRAS: ${KT_EXTRAS:-}
+      KT_EXTRA_SETTINGS: ${KT_EXTRA_SETTINGS:-}
+      KT_ARGOCD_TOKEN_SECRET: ${KT_ARGOCD_TOKEN_SECRET:-}
+      KT_KUBECRON_COLLECTOR: ${KT_KUBECRON_COLLECTOR:-}
+      KT_KUBECRON_TOKEN_SECRET: ${KT_KUBECRON_TOKEN_SECRET:-}
+      KT_KUBECRON_TOKEN_KEY: ${KT_KUBECRON_TOKEN_KEY:-}
+      KT_ARGOCD_SERVER_SERVICE: ${KT_ARGOCD_SERVER_SERVICE:-}
+      KT_ARGOCD_SERVER_NAME: ${KT_ARGOCD_SERVER_NAME:-}
+      KT_NODE_SHELL_IMAGE: ${KT_NODE_SHELL_IMAGE:-}
+
+      # --- EKS ------------------------------------------------------------
+      #
+      # Both are read by KubeTower itself and not only inherited by the `aws`
+      # binary: aws-sdk-go-v2 in internal/ekstoken reads them, so they decide
+      # which credentials the server authenticates with.
+      AWS_CONFIG_FILE: /home/kubetower/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/kubetower/.aws/credentials
+      KT_AWS_EXEC: ${KT_AWS_EXEC:-}
+      # The read-only re-mount of the host's assume-role cache, so the Health
+      # page can name a corrupt entry it must never itself write.
+      KT_HOST_AWS_CACHE: /host-aws-cache
+
+      # --- Claude ---------------------------------------------------------
+      CLAUDE_CONFIG_DIR: /home/kubetower/.claude
+      KT_CLAUDE_READONLY: ${KT_CLAUDE_READONLY:-true}
+      KT_CLAUDE_PERMISSION_MODE: ${KT_CLAUDE_PERMISSION_MODE:-}
+
+      # --- state and diagnostics ------------------------------------------
+      KT_STATE_DIR: /var/lib/kubetower
+      KT_STATE_PERSISTENT: ${KT_STATE_PERSISTENT:-}
+      KT_ARCHIVE: ${KT_ARCHIVE:-}
+      KT_ARCHIVE_LOGS: ${KT_ARCHIVE_LOGS:-}
+      KT_ARCHIVE_RETENTION_DAYS: ${KT_ARCHIVE_RETENTION_DAYS:-}
+      KT_DIAG: ${KT_DIAG:-}
+
+    volumes:
+      # **Read-only, and it stays read-only.** KubeTower reads the file that
+      # describes your clusters and never writes it. A console that could rewrite
+      # where its own credentials point is a console whose blast radius includes
+      # the next session.
+      - ${HOST_KUBE_DIR:?set HOST_KUBE_DIR in .env}:/home/kubetower/.kube:ro
+
+      # Read-write on purpose: the AWS CLI renews the SSO session token inside
+      # ~/.aws/sso/cache, and read-only that renewal fails the moment a session
+      # expires — taking every EKS cluster at once, with an error that names
+      # none of this.
+      - ${HOST_AWS_DIR:?set HOST_AWS_DIR in .env}:/home/kubetower/.aws
+
+      # A volume over one directory *inside* the bind mount above, so the
+      # container stops sharing the assume-role cache with the host. Two
+      # concurrent writers of that directory is what corrupts an entry, and the
+      # corruption's whole error message is a 40-character hash.
+      - aws-cache:/home/kubetower/.aws/cli/cache
+      # ...and the host's own copy, read-only, so the home can still name a
+      # broken entry (`GET /api/health`'s notices) without becoming a writer.
+      - ${HOST_AWS_DIR:?set HOST_AWS_DIR in .env}/cli/cache:/host-aws-cache:ro
+
+      # The state directory: hotbars, column layouts, the archive — and
+      # credentials.json, which holds the drawn password's bcrypt hash and the
+      # session key. Delete this volume and the next start draws a new password.
+      - state:/var/lib/kubetower
+      - claude-home:/home/kubetower/.claude
+
+    # Clusters declared on 127.0.0.1 — docker-desktop, kind, minikube, k3d —
+    # mean the host's loopback and not the container's. The binary rewrites them
+    # to host.docker.internal, which only resolves because of this line.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      # /kt-healthz answers before there is a session, or the check reads the
+      # login page as a failure and restarts a process that is working. It is
+      # also able to *fail*: degraded means the kubeconfig no longer reads, or
+      # not one context answered its last probe. Some clusters unreachable is
+      # still 200 — that is the ordinary state of a laptop.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5823/kt-healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# Named rather than bind-mounted, all three. A bind mount into this tree would
+# put container-owned files inside a synced directory and inside the git working
+# tree at once; a named volume lives in Docker's own storage and is removed with
+# `docker compose -f compose.dev.yaml down -v`.
+volumes:
+  state:
+  claude-home:
+  aws-cache:

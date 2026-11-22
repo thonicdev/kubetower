@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=KubeTower
+GenericName=Kubernetes console
+Comment=A Kubernetes console that runs on your own machine
+Exec=kubetower --app
+Icon=kubetower
+Terminal=false
+Categories=Development;Monitor;
+Keywords=kubernetes;kubectl;cluster;
+StartupNotify=true

@@ -1,0 +1,209 @@
+# Geometry. What a red cross here means: something moved on screen - a
+# different sentence from ci.yml's "you broke something", which is why this is
+# a workflow of its own.
+#
+# WHY IT EXISTS. Vitest runs in jsdom, which lays nothing out, so no unit test
+# can see a pixel; three geometry defects of 2026-09-16 passed the whole suite. `web/measure/` mounts the real components with the
+# real stylesheet in a real engine against synthetic data, and every assertion
+# is a number with a tolerance - no screenshot diffing. `measure/main.tsx`
+# states what it cannot catch.
+#
+# WHEN (decided 2026-10-29): on a pull request and a push to main that touch
+# web/ or this file, and by hand. A Go-only change cannot move a pixel, so the
+# `paths` filter leaves it out; ci.yml's checks still report on every pull
+# request, so a run skipped here never leaves one looking unchecked.
+
+name: layout
+
+on:
+  pull_request:
+    paths: ['web/**', '.github/workflows/layout.yml']
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/layout.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run; anything else is grouped
+# by commit and never canceled (ci.yml says why).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  layout:
+    name: the six geometry assertions
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    # Every job has a timeout. The last five green runs took 3 to 9
+    # minutes (2026-10-09/10); the margin is for a cold browser install.
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      # **First, before anything else runs: refuse a root runner.** Every step
+      # below runs as the runner's user - the checkout, the installs, the
+      # browser's system packages - so on a root runner all of them would run
+      # as root before the test step could object. Two reasons, neither about
+      # tidiness:
+      #
+      #   - the layout test is not to run as root, whichever runner takes it.
+      #     A self-hosted runner registered as root under the same labels as
+      #     the others would otherwise take this job unnoticed;
+      #   - the test step hands the browser back to "the runner's own user"
+      #     with `setpriv --reuid=$(id -u)`, which on a root runner is uid 0
+      #     again: the test would run as root.
+      #
+      # `working-directory: .` because the job's default, `web`, does not
+      # exist until the checkout below has run.
+      - name: refuse a root runner
+        working-directory: .
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::this runner runs as root; the layout test must not (${RUNNER_NAME:-this runner}: id -u is 0, and this job runs as an ordinary user)"
+            exit 1
+          fi
+          echo "${RUNNER_NAME:-this runner} runs as uid $(id -u)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Node 24 and pnpm through corepack, not pnpm/action-setup: the
+      # runner's own npm can be broken on a self-hosted runner (.github/actions/setup-web).
+      - uses: ./.github/actions/setup-web
+      - run: pnpm install --frozen-lockfile
+
+      # The browser, cached on the resolved version rather than on a range.
+      # `@playwright/test` is declared with a caret, so a floating patch would
+      # silently miss a cache keyed on the declared string and download 150MB on
+      # every run without anything saying so.
+      #
+      # **And on where a restore lands.** actions/cache archives a path relative
+      # to the workspace and extracts it relative to the restoring runner's
+      # workspace, so an entry is right only for a runner whose browser directory
+      # sits at the same place relative to its workspace. Runners under one
+      # label can have two shapes - one as `runner` (HOME=/home/runner) in
+      # /opt/actions-runner-N/_work, another as root (HOME=/root) one directory
+      # deeper elsewhere. An entry saved on the first and restored on the second
+      # lands in /home/home/runner/.cache/ms-playwright, reports a hit, skips
+      # the install, and every test fails on a browser Playwright looks for
+      # under /root/.cache. The key holds for any set of runners: two runners
+      # share an entry exactly when a restore lands where each of them looks.
+      #
+      # `realpath -s`: the path is computed as actions/cache computes it, with
+      # node's path.relative(), which does not resolve symlinks. Without `-s`,
+      # a HOME or a workspace reached through a symlink would key the entry on a
+      # path the cache never uses. `runner.arch` in the key, because a browser
+      # built for one architecture is no browser on another.
+      #
+      # PLAYWRIGHT_BROWSERS_PATH is set here once, explicitly, so that the cache,
+      # the install and the test - which runs under sudo, below - name one
+      # directory rather than each deriving it from whatever HOME it was given.
+      - name: Which Playwright is installed, and where its browser goes
+        id: pw
+        run: |
+          set -eu
+          echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+          browsers="$HOME/.cache/ms-playwright"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$browsers" >> "$GITHUB_ENV"
+          rel=$(realpath -s -m --relative-to="$GITHUB_WORKSPACE" "$browsers")
+          echo "the browser lives in $browsers; actions/cache stores it as $rel"
+          echo "where=$(printf '%s' "$rel" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.where }}
+      # On a hit as on a miss: a hit restores the browser but not the system
+      # libraries, which are not under ~/.cache, and the install is a no-op when
+      # the browser is already where PLAYWRIGHT_BROWSERS_PATH says. So a restore
+      # that did not put it there costs a download rather than a red run - the
+      # failure above passed the cache step and failed every test.
+      # `--only-shell` is the headless shell and not full Chromium: this path has
+      # no head, and the smaller download is most of what this job costs.
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      # The check. It starts its own Vite server on 5847 and needs nothing else:
+      # no cluster, no secret, no password. Nothing in this workflow reads a
+      # secret, and a workflow with no secret is one a compromised dependency
+      # cannot steal from.
+      #
+      # **In a network namespace of its own, holding only a loopback**.
+      # Self-hosted runners may share a VM, and Chromium aborts
+      # every request in flight - loopback included - with ERR_NETWORK_CHANGED
+      # whenever an interface on the host gains or loses an address: Docker
+      # creating a bridge network next door is enough. The suite (layoutkit.ts)
+      # reloads an interrupted scene three times, and three reloads in 1.6 s
+      # have all been interrupted, twice in a row. A namespace with no
+      # interface but `lo` gets no such event, whatever runs beside it.
+      # Measured with Docker creating and removing bridge networks back to
+      # back on the same host: on the host's namespace 4 runs
+      # of 4 went red (6 to 12 of the 19 tests interrupted three times over);
+      # in a namespace of its own, by this very step, 4 of 4 passed 19 of 19.
+      #
+      # It also makes 5847 this job's own: two layout jobs on the VM used to
+      # collide on it ("http://127.0.0.1:5847/?scene=list is already used"),
+      # and each now has a loopback nobody else can bind.
+      #
+      # sudo for unshare and `ip`, then straight back to the runner's own user
+      # for the test: nothing it writes is owned by root, and it runs as before
+      # but for the network it can see. Nothing in the suite needs one - every
+      # answer is fulfilled by the suite in web/measure/ and the browser is already
+      # installed.
+      #
+      # **The uid is checked twice more here, after the job's first step.**
+      # "Back to the runner's own user" is `setpriv --reuid=$(id -u)`, and on a
+      # root runner that is uid 0 again, so the test would run as root. The
+      # first step refuses such a runner before anything runs; this step checks
+      # the uid it will pass on, and prints and checks it again inside the
+      # namespace, where the test runs - that line of the log is what the test
+      # actually ran as, not what it was meant to.
+      #
+      # **The environment is passed by name, from nothing (`env -i`), and not
+      # left to sudo.** What sudo keeps differs by implementation: classic sudo
+      # (1.9.13) keeps the caller's environment under `-E`, sudo-rs ignores
+      # `-E`, and each resets a different list. A test that passed on one runner
+      # and looked for its browser in another HOME on the next was the result.
+      # So the namespace gets exactly these, whichever sudo runs it: HOME, PATH
+      # (pnpm and node are on it), CI, the browser's path set above, PNPM_HOME,
+      # COREPACK_HOME (where setup-web put pnpm: without it corepack fetches
+      # pnpm again, from inside a namespace that has no network), and LANG,
+      # which the browser takes its locale from.
+      - name: pnpm run test:layout, in a network namespace of its own
+        run: |
+          set -eu
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::this runner runs as root; the layout test must not (${RUNNER_NAME:-this runner}: id -u is 0, so setpriv would hand the test uid 0)"
+            exit 1
+          fi
+          sudo -n true || { echo "FAIL this job runs the browser in a network namespace of its own (unshare --net), which needs passwordless sudo on the runner"; exit 1; }
+          echo "$(sudo -V 2>&1 | head -n 1); the test runs as uid $(id -u), HOME=$HOME, browser in $PLAYWRIGHT_BROWSERS_PATH"
+          sudo -n env -i \
+            "HOME=$HOME" \
+            "PATH=$PATH" \
+            "CI=${CI:-true}" \
+            "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" \
+            "PNPM_HOME=${PNPM_HOME:-}" \
+            "COREPACK_HOME=$COREPACK_HOME" \
+            "COREPACK_ENABLE_DOWNLOAD_PROMPT=0" \
+            "LANG=${LANG:-}" \
+            unshare --net -- sh -c '
+            set -e
+            ip link set lo up
+            echo "interfaces this test can see: $(ip -o link show | cut -d: -f2 | tr -d " " | tr "\n" " ")"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups -- sh -c "
+              echo \"inside the namespace the test runs as uid \$(id -u), gid \$(id -g)\"
+              [ \"\$(id -u)\" -ne 0 ] || { echo \"::error::the layout test would run as root inside its namespace; it must not\"; exit 1; }
+              exec pnpm run test:layout
+            "
+          ' _ "$(id -u)" "$(id -g)"
+
+      # Only on a failure, and it is the one thing a number cannot give you: what
+      # it looked like when the number moved.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: layout-failure
+          path: web/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,0 +1,5 @@
+7:
+Started recording 1. The result will be written to:
+
+/tmp/kubetower-jfr-0123456789abcdef.jfr
+

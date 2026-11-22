@@ -1,0 +1,6 @@
+1:
+VM Arguments:
+jvm_args: -XX:NativeMemoryTracking=summary -Dspring.datasource.password=hunter2 -Xmx512m -Dapp.name=shop 
+java_command: D --db.password=hunter2
+java_class_path (initial): /w
+Launcher Type: SUN_STANDARD

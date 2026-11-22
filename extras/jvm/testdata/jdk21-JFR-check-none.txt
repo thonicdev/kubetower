@@ -1,0 +1,4 @@
+7:
+No available recordings.
+
+Use jcmd 7 JFR.start to start a recording.

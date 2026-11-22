@@ -1,0 +1,997 @@
+# Correctness. What a red cross here means: you broke something.
+#
+# WHAT RUNS WHEN (decided 2026-10-29):
+#
+#   pull request,     the fast tier: gofmt, vet, go test -race, the contract
+#   push to main      from outside, and the front end's lint, typecheck, tests
+#                     and build. About six to eight minutes of the pool.
+#                     A pull request whose diff touches what only the image
+#                     build reads (detect's IMAGE_INPUTS) also runs the
+#                     `docker build`. layout.yml and smoke.yml run beside this
+#                     only where their paths moved; security.yml (govulncheck)
+#                     runs on both events.
+#   full: weekly,     the fast tier plus every target cross-compiled, the
+#   or by hand        Windows setup wizard, the macOS disk images, the Linux
+#                     .deb, .rpm and AppImage and the docker build - what a tag
+#                     would build. Weekly on main, Sunday
+#                     02:00 UTC (03:00 in Paris in winter, 04:00 in summer), and
+#                     by hand with `gh workflow run ci -f full=true --ref <branch>`.
+#   tag               release.yml, which builds all of that again from the tag,
+#                     scans the image with trivy before pushing it, and refuses
+#                     a commit with no green run of this workflow.
+#
+# The weekly run is the only schedule: it finds a target, the setup, the disk
+# images or the image broken by a merge before a tag does. A superseded
+# pull-request run is canceled; a run on main never is, so every merge keeps
+# its own complete verdict.
+#
+# `detect` runs first and writes into the run summary which gates ran and which
+# did not, because a skipped gate must never read as a passing one. Nothing in
+# this file holds a secret or publishes anything; that is release.yml.
+
+name: ci
+
+on:
+  pull_request:
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+  schedule:
+    # The full tier, weekly, on the default branch: Sunday 02:00 UTC, which is
+    # 03:00 in Paris in winter and 04:00 in summer, outside working hours.
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the full tier (cross-compile, setup, disk images, docker build) on this ref"
+        type: boolean
+        default: false
+
+# Least privilege. Nothing here writes: no release, no package, no commit.
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run. Anything else is grouped
+# by commit, so a merge to main is never canceled - not even while pending,
+# which a shared group would do to the middle one of three quick merges.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # What does this commit actually contain? Always runs, and says so out loud.
+  # ---------------------------------------------------------------------------
+  detect:
+    name: what is in the tree
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    # Every job has a timeout: without one a hung job holds a runner
+    # of the pool for GitHub's default of six hours.
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.d.outputs.go }}
+      contract: ${{ steps.d.outputs.contract }}
+      web: ${{ steps.d.outputs.web }}
+      image: ${{ steps.d.outputs.image }}
+      full: ${{ steps.d.outputs.full }}
+    env:
+      # The full tier: the weekly schedule, or a dispatch asking for it. Never
+      # a push or a pull request.
+      FULL: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full == true) }}
+      # What only the image build reads, so a pull request touching one of
+      # them runs the docker build: every file the Dockerfile copies by name,
+      # the front end's package manifests, lockfile, Vite entry and config
+      # (the console stage builds them on Alpine), the OpenAPI document it
+      # checks the schema against, the PWA's SVGs, manifest and service worker
+      # (rasterized and embedded), cmd/ktnotices (it writes the notices in the
+      # image) and the license files the runtime stage copies. Go and
+      # TypeScript sources reach the image through `COPY . .` and are proved
+      # by the go and web jobs on every pull request, so they are not here.
+      IMAGE_INPUTS: '^((.*/)?Dockerfile[^/]*|\.dockerignore|go\.(mod|sum)|web/(ui/)?package\.json|web/pnpm-(lock|workspace)\.yaml|web/(index\.html|vite\.config\.ts)|api/openapi\.yaml|internal/web/static/pwa/.+|cmd/ktnotices/.+|LICENSE|LICENSING\.md)$'
+      EVENT: ${{ github.event_name }}
+      # The pull request's base, to tell whether it touches what the image is
+      # built from. Empty on every other event.
+      BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: d
+        name: Detect and report
+        run: |
+          set -eu
+          go=no; contract=no; web=no; docker=no
+          [ -f go.mod ] && go=yes
+          # The second module, detected on its own: a nested module is excluded
+          # from the parent's `./...`, so the Go gate can be green with it never
+          # built.
+          [ -f boundary/go.mod ] && contract=yes
+          [ -f web/package.json ] && web=yes
+          [ -f Dockerfile ] && docker=yes
+          full=no; [ "$FULL" = "true" ] && full=yes
+          # The docker build: on the full tier, and on a pull request whose diff
+          # touches what the image is built from. A diff that cannot be taken is
+          # answered by building, never by skipping.
+          image=no; why="not asked for: no pull request touching the image's inputs, and not the full tier"
+          if [ $docker = yes ]; then
+            if [ $full = yes ]; then
+              image=yes; why="full tier"
+            elif [ "$EVENT" = pull_request ]; then
+              if git fetch -q --depth=1 origin "$BASE" && changed=$(git diff --name-only "$BASE" HEAD); then
+                if grep -qE "$IMAGE_INPUTS" <<< "$changed"; then
+                  image=yes; why="this pull request touches the image's inputs"
+                else
+                  why="this pull request touches none of the image's inputs"
+                fi
+              else
+                echo "::warning::could not diff the pull request against $BASE, so the image is built anyway"
+                image=yes; why="the pull request could not be diffed, so built anyway"
+              fi
+            fi
+          fi
+          { echo "go=$go"; echo "contract=$contract"; echo "web=$web"; echo "image=$image"; echo "full=$full"; } >> "$GITHUB_OUTPUT"
+          tier="fast: tests and builds"
+          [ $full = yes ] && tier="full (weekly or by hand): tests, builds, every target, the setup, the disk images, the image"
+          ran() { [ "$1" = yes ] && echo ran || echo "**did not run** - $2"; }
+          {
+            echo "### What this run checked"
+            echo
+            echo "**Tier: $tier.**"
+            echo
+            echo "| Gate | so it |"
+            echo "|---|---|"
+            echo "| Go (\`go.mod\`) | $(ran $go 'no go.mod') |"
+            echo "| The contract from outside (\`boundary/go.mod\`) | $(ran $contract 'nothing proved the extension contract compiles outside the core module') |"
+            echo "| Front end (\`web/package.json\`) | $(ran $web 'no web/package.json') |"
+            echo "| Windows-only tests | **did not run** - no Windows runner in CI; run \`task test\` on Windows |"
+            echo "| Image (\`docker build\`) | $(ran $image "$why") |"
+            echo "| Every target, the Windows setup, the macOS disk images | $(ran $full 'fast tier; release.yml builds them from the tag, or run `gh workflow run ci -f full=true`') |"
+            echo
+            echo "A gate that did not run has proved nothing."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "go=$go web=$web image=$image full=$full"
+
+  # ---------------------------------------------------------------------------
+  # The correctness gate.
+  # ---------------------------------------------------------------------------
+  go:
+    name: gofmt, vet, test -race, the contract from outside
+    needs: detect
+    if: needs.detect.outputs.go == 'yes'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    # 29 min on 2026-10-09, 24 of them moving the cache that `cache: false`
+    # below no longer moves.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          # From go.mod, which pins the toolchain. Two places naming a Go version
+          # is two places to forget. `check-latest: false` matters: the point of
+          # a pin is to build with the compiler the image ships, not with
+          # whatever is newest today.
+          go-version-file: go.mod
+          check-latest: false
+          # **Not GitHub's cache, on purpose**. The pool's runners keep
+          # GOMODCACHE and GOCACHE in the runner user's home, which persists
+          # between jobs, so the toolchain already finds a warm cache on disk.
+          # setup-go's own cache restored a 4.9 GB tarball of it on top (19 min)
+          # and saved it again (5 min) on every job, and two such entries put the
+          # repository over its 10 GB cache cap, evicting the image's build
+          # cache with them. What GitHub's cache holds here now is the image's
+          # layers (the `image` job) and pnpm's store.
+          cache: false
+
+      # Cheapest first, so a trivial mistake does not wait behind three minutes
+      # of race-instrumented tests.
+      #
+      # `gofmt -l` prints the offending files and exits 0, so the exit code has
+      # to be built from the output - the exact shape of mistake this file is
+      # about. Its answer is also a function of the toolchain, so a version bump
+      # can turn this red with nobody having misformatted anything: that is the
+      # bump needing `gofmt -w`, not a false positive.
+      #
+      # It needs `*.go text eol=lf` in .gitattributes to run clean. gofmt emits
+      # LF and compares byte for byte, so a single CRLF source file reports as
+      # unformatted on every line.
+      #
+      # **The toolchain's gofmt, by path, and not whichever `gofmt` is first on
+      # PATH.** On a hosted runner the two are the same binary. On a self-hosted
+      # one they need not be: the machine may carry a distribution Go of its
+      # own, whose older gofmt can refuse a file the toolchain set up here
+      # formats cleanly. The answer is a function of the
+      # toolchain, as the paragraph above says; so ask the toolchain.
+      - name: gofmt
+        run: |
+          gofmt="$(go env GOROOT)/bin/gofmt"
+          echo "using $gofmt ($(go version))"
+          unformatted=$("$gofmt" -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # The Windows test files: `go test` runs on Linux only, and the full
+      # tier's cross-compilation builds no test, so nothing else compiles them.
+      # vet type-checks every package with its tests.
+      - name: go vet, Windows, tests compiled
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet ./...
+
+      # The one gate a developer's own machine may physically not be able to run.
+      # The detector needs cgo; on a host with CGO_ENABLED=0 and no C compiler,
+      # `go test -race` prints "-race requires cgo" and exits 2 - which is
+      # indistinguishable from a clean run to anything reading stdout. A tree can
+      # therefore go a long time with the detector having never run against it,
+      # while everyone believes it has. This is the run that does not depend on
+      # anybody remembering.
+      #
+      # `-count=1` defeats the test cache: a cached pass says nothing about the
+      # detector, which is the entire point.
+      # **A real Valkey for the shared store's contract test.** Without one
+      # `TestValkeyKeepsTheContract` skipped on every run, a green tick over the
+      # one store several replicas actually use. The image is the chart's own
+      # pin, digest included, and Renovate moves it here as it does there
+      # (renovate.json's customManagers; until 2026-10-10 it could not see an
+      # env value).
+      #
+      # **Started here on the host network, not as a `services:` container.**
+      # A self-hosted runner may be a VM - dockerd on the local unix socket, no
+      # DOCKER_HOST, several runners not in containers, as an ordinary user in
+      # the docker group - whose firewall cuts it off from every private range
+      # except its own Docker bridges. A service container is published through
+      # docker-proxy onto a per-job bridge, and on such a VM neither the
+      # published port on 127.0.0.1, the gateway, nor the bridge address
+      # answered PING - the TCP connect was accepted and nothing came back.
+      # `--network host` puts Valkey on the VM's own loopback, which nothing
+      # filters, bound to 127.0.0.1 only. Several runners may share the VM, so the port
+      # is drawn per job and checked free, and the container is named after the
+      # run and the runner and removed in an always() step. It has a password,
+      # drawn per job, so the wrong-password test runs too.
+      #
+      # Under CI the contract test fails rather than skips when no address
+      # reaches it, so this cannot quietly go missing again.
+      - name: start valkey on the host network
+        env:
+          VALKEY_IMAGE: valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+        run: |
+          name="kt-valkey-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_NAME}"
+          password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::add-mask::$password"
+          echo "KT_CI_VALKEY_NAME=$name" >> "$GITHUB_ENV"
+          port=""
+          for try in $(seq 1 20); do
+            candidate=$(( 20000 + RANDOM % 20000 ))
+            if ! timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/$candidate" 2>/dev/null; then
+              port=$candidate; break
+            fi
+          done
+          [ -n "$port" ] || { echo "FAIL no free port for valkey on this runner"; exit 1; }
+          docker run -d --name "$name" --network host "$VALKEY_IMAGE" \
+            valkey-server --bind 127.0.0.1 --port "$port" --requirepass "$password" \
+            --save "" --appendonly no >/dev/null
+          for i in $(seq 1 30); do
+            if docker exec "$name" valkey-cli -h 127.0.0.1 -p "$port" -a "$password" --no-auth-warning ping 2>/dev/null | grep -q PONG &&
+               timeout 3 bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$1" && printf "AUTH %s\r\nPING\r\n" "$2" >&3 && IFS= read -r -t 2 a <&3 && IFS= read -r -t 2 b <&3 && [[ $b == +PONG* ]]' _ "$port" "$password"; then
+              echo "ok   valkey answers PONG at 127.0.0.1:$port, from the runner itself"
+              echo "KT_TEST_VALKEY_ADDR=127.0.0.1:$port" >> "$GITHUB_ENV"
+              echo "KT_TEST_VALKEY_PASSWORD=$password" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "FAIL valkey did not answer PONG at 127.0.0.1:$port within 30s"
+          docker logs "$name" 2>&1 | tail -20
+          exit 1
+
+      # `-p 2`: without it go test runs one race-instrumented binary per CPU at
+      # once, and the race detector multiplies each one's memory several times.
+      # On 2026-10-07 that got `internal/access` SIGKILLed at 49 s twice, and the
+      # runner service stopped with it, so nothing ran until it was restarted by
+      # hand. Two at a time costs wall clock, not coverage.
+      - name: go test -race
+        run: go test -race -p 2 -count=1 ./...
+
+      # The two tests that need the Valkey above, by name and verbose, so the
+      # log carries their PASS lines rather than a package's `ok` - and a SKIP
+      # is a failure here, because under CI it means the Valkey was not reached.
+      - name: the valkey tests ran against valkey
+        run: |
+          out=$(go test -race -count=1 -v -run 'TestValkeyKeepsTheContract|TestAWrongValkeyPasswordRefusesToStart'             ./internal/sharedstate/ ./internal/launch/ 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | grep -E '^(=== RUN|--- |    --- |ok|FAIL|PASS)'
+          if echo "$out" | grep -q -- '--- SKIP'; then
+            echo "FAIL a valkey test skipped under CI"; exit 1
+          fi
+          for want in 'TestValkeyKeepsTheContract' 'TestAWrongValkeyPasswordRefusesToStart'; do
+            echo "$out" | grep -q -- "^--- PASS: $want " || { echo "FAIL $want did not pass"; exit 1; }
+          done
+
+      # The contract, from the only side that can prove anything about it.
+      #
+      # **`./...` above walked straight past this module and said nothing.** A
+      # nested module is excluded from the parent's package pattern, by design,
+      # so every command in this job so far has been blind to `boundary/`. A
+      # second module that nothing runs is a file that reads as a gate and is
+      # not one - which is the class `docs/DEFINITION-OF-DONE.md` section 9
+      # calls worse than absent.
+      #
+      # It is steps in this job rather than a job of its own on purpose: the
+      # runners are few, and a separate job pays a checkout, a
+      # toolchain setup and a cache round trip to run two commands that need
+      # what this job already has on disk.
+      #
+      # Since the start-up moved into `app.Run`, this also starts the whole
+      # console from here, hands it the consumer, and asks its router for the
+      # consumer's route on a cluster where it is ticked and one where it is
+      # not - the seam every extension, in `extras/` or in another module, is
+      # mounted through.
+      - name: the extension contract compiles from outside the core module
+        if: needs.detect.outputs.contract == 'yes'
+        working-directory: boundary
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+      # And the other direction, which is the one that rots quietly.
+      #
+      # Nothing in the core imports the consumer today. The cheapest way to make
+      # `boundary/`'s tests pass after a contract change would be to reach back
+      # across the cut - and that would leave this gate green while deleting the
+      # property it exists to hold. So the core's own dependency graph is asked,
+      # rather than trusted.
+      - name: the core does not import the boundary module
+        if: needs.detect.outputs.contract == 'yes'
+        run: |
+          set -eu
+          if go list -deps ./cmd/kubetower | grep '^boundary\.kubetower\.invalid'; then
+            echo "cmd/kubetower imports the boundary module, which exists to be outside the core rather than in it."
+            exit 1
+          fi
+          echo "cmd/kubetower does not reach boundary.kubetower.invalid"
+
+      # The extras are packages of this module, not repositories of their own.
+      # That an extra imports no internal/ package is a Go test,
+      # extras/boundary_test.go, so `go test -race ./...` above already ran it.
+      # What is left here are the two properties the repository-split check
+      # kept, rewritten for an extras tree that now exists on purpose: no
+      # Redis, Postgres or MySQL driver reaches the binary (a viewer's driver
+      # would be linked into every build), and no import names a
+      # `kubetower-extra*` module, which would be a private repository a clone
+      # cannot fetch.
+      - name: no database driver and no kubetower-extra module in the build
+        run: |
+          set -eu
+          if go list -deps ./cmd/kubetower | grep -E 'go-redis|go-sql-driver'; then
+            echo "FAIL a database driver reaches cmd/kubetower"; exit 1
+          fi
+          # One exception, the Postgres (CNPG) extra's SQL door: pgx's
+          # connection package and what it links, nothing else of pgx (no
+          # pool, no type registry). That only extras/cnpg imports it is
+          # extras/redis/driver_test.go, a Go test run above.
+          if go list -deps ./cmd/kubetower | grep -E 'pgx' \
+             | grep -vxE 'github.com/jackc/pgx/v5/(pgconn|pgconn/ctxwatch|pgconn/internal/bgreader|pgproto3|internal/iobufpool|internal/pgio)'; then
+            echo "FAIL a part of pgx other than pgconn reaches cmd/kubetower"; exit 1
+          fi
+          echo "ok   no database driver in cmd/kubetower's graph but pgconn"
+          if go list -deps -test ./... | grep -i 'kubetower-extra'; then
+            echo "FAIL an import names a kubetower-extra module"; exit 1
+          fi
+          echo "ok   no kubetower-extra import anywhere in the module"
+
+      # Whatever happened above: the container is this job's, and a VM shared
+      # by several runners keeps what nobody removes.
+      - name: remove valkey
+        if: always()
+        run: |
+          if [ -n "${KT_CI_VALKEY_NAME:-}" ]; then
+            docker rm -f "$KT_CI_VALKEY_NAME" >/dev/null 2>&1 || true
+            if docker ps -a --format '{{.Names}}' | grep -qx "$KT_CI_VALKEY_NAME"; then
+              echo "FAIL $KT_CI_VALKEY_NAME is still there"; exit 1
+            fi
+            echo "ok   $KT_CI_VALKEY_NAME removed"
+          else
+            echo "no valkey was started by this job"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Does it still compile for the machines nobody here owns?
+  # ---------------------------------------------------------------------------
+  platforms:
+    name: cross-compile every published target
+    needs: [detect, go, web]
+    # Full tier only: on a tag, release.yml builds every target itself.
+    #
+    # After `web`, whose console it embeds (below), but not only after a green
+    # one: a lint failure there says nothing about whether every target links,
+    # and the download fails by name when the console was not built.
+    if: ${{ !cancelled() && needs.go.result == 'success' && needs.detect.outputs.go == 'yes' && needs.detect.outputs.full == 'yes' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # The host's own cache; see the `go` job.
+          cache: false
+      # The console the web job built, into web/dist/ui, because a stamped
+      # build ships and cmd/ktbuild refuses one without it.
+      # Until then this job linked the placeholder, and the disk images the dmg
+      # job made from it opened on "The front end is not in this binary".
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-${{ github.run_number }}
+          path: web
+      # As release.yml's archives job does, so the binaries embed the notices
+      # and the hand-off below carries them beside the license, as an archive
+      # does: the Linux packages install all three.
+      - name: Third-party notices
+        run: |
+          set -eu
+          go run ./cmd/ktnotices -npm web/build/third-party-npm.json -o web/dist/ui/THIRD_PARTY_NOTICES.txt
+          test -s web/dist/ui/THIRD_PARTY_NOTICES.txt || {
+            echo "::error::cmd/ktnotices wrote an empty THIRD_PARTY_NOTICES.txt"
+            exit 1
+          }
+
+      # One job with a loop rather than a five-entry matrix: a matrix pays
+      # checkout and setup-go five times to save nothing, since these share a
+      # module cache and take seconds once it is warm.
+      #
+      # **Through cmd/ktbuild, the tool release.yml and `task build:api` call**,
+      # with a version and a date stamped exactly as a tag would stamp them: a
+      # build that differs from the one that ships is a gate on the wrong thing.
+      # Until 2026-10-10 this job copied release.yml's flags by hand, and the
+      # Taskfile had none of them. The tool links Windows
+      # `-H windowsgui` - load-bearing: it selects the Windows subsystem so a
+      # Start-menu shortcut does not sit in front of a console window, and its
+      # other half is console_windows.go's AttachConsole - and then reads each
+      # Windows binary back: GUI subsystem, and the stamped version in the
+      # resource Explorer shows, which it regenerates for the build the way a
+      # tag does (go-winres, fetched once) and puts back afterwards.
+      #
+      # The Windows setup is not built here: it needs makensis, which the pool
+      # does not have preinstalled, so the `setup` job below installs it and
+      # builds it.
+      # And every other command under cmd/ is compiled for every target as well, as this job did before
+      # the tool: the tool builds only cmd/kubetower, and devwatch and
+      # devpassword are used on Windows, where nothing else compiles them.
+      #
+      # What this catches that nothing else does: a platform-specific file that
+      # stops compiling. Installers, native windows, clipboards and shortcuts are
+      # all build-tagged per platform, and a developer can compile a third of
+      # them by hand.
+      - name: go build, every target, through cmd/ktbuild
+        id: build
+        run: |
+          set -u
+          rc=0
+          out="$RUNNER_TEMP/platforms"
+          version="0.0.0-ci.$GITHUB_RUN_NUMBER"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          stamp=(-version "$version" -built "$(date -u +%Y-%m-%d)")
+          for target in windows/amd64 darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            if go run ./cmd/ktbuild -os "$os" -arch "$arch" "${stamp[@]}" -o "$out/$os-$arch/kubetower"; then
+              echo "ok   $target"
+            else
+              echo "FAIL $target"; rc=1
+            fi
+            if CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o /dev/null ./cmd/...; then
+              echo "ok   $target ./cmd/..."
+            else
+              echo "FAIL $target ./cmd/..."; rc=1
+            fi
+          done
+          # The macOS universal binary: both
+          # darwin slices in one fat Mach-O, written by ktbuild itself - lipo
+          # exists only on macOS - and read back before it says ok.
+          if go run ./cmd/ktbuild -os darwin -arch universal "${stamp[@]}" -o "$out/darwin-universal/kubetower"; then
+            echo "ok   darwin/universal"
+          else
+            echo "FAIL darwin/universal"; rc=1
+          fi
+          # The tool puts the committed resource object back after each Windows
+          # build; a tree left modified means it did not.
+          if ! git diff --exit-code --stat -- internal/launch/rsrc_windows_amd64.syso; then
+            echo "FAIL cmd/ktbuild left the Windows resource object modified"; rc=1
+          fi
+          # What the dmg, appimage and packages jobs below take: the three
+          # binaries they need, packed as release.yml's archives pack them -
+          # with LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt beside each
+          # binary - under the same names, so dmg.yml, appimage.yml and
+          # linux-packages.yml read one shape whichever workflow called them.
+          mkdir -p "$RUNNER_TEMP/dmg-in"
+          for t in darwin-arm64 darwin-amd64 linux-amd64; do
+            cp LICENSE LICENSING.md web/dist/ui/THIRD_PARTY_NOTICES.txt "$out/$t/" || rc=1
+            tar -czf "$RUNNER_TEMP/dmg-in/kubetower_${version}_${t%-*}_${t#*-}.tar.gz" -C "$out/$t" . || rc=1
+          done
+          rm -rf "$out"
+          exit $rc
+      # A day, not a fortnight: it exists only for the next job, and the
+      # repository's artifact storage is a quota on this plan.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dmg-in-${{ steps.build.outputs.version }}
+          path: ${{ runner.temp }}/dmg-in/*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+          # A re-run of this job replaces its own hand-off.
+          overwrite: true
+
+  # ---------------------------------------------------------------------------
+  # The macOS disk images, made exactly as a tag makes them, without a tag.
+  # ---------------------------------------------------------------------------
+  # release.yml calls the same dmg.yml on the archives of a tag; here it is fed
+  # the platforms job's binaries, so a full run by hand proves the job a release
+  # depends on before anybody types a tag. The images are kept for a day as a
+  # workflow artifact, to be mounted on a Mac by whoever wants to look.
+  # On the pool, as on a tag: dmg.yml says why.
+  dmg:
+    name: macos disk images
+    needs: [detect, platforms]
+    if: needs.detect.outputs.go == 'yes' && needs.detect.outputs.full == 'yes'
+    permissions: {}
+    uses: ./.github/workflows/dmg.yml
+    with:
+      version: ${{ needs.platforms.outputs.version }}
+      artifact: dmg-in-${{ needs.platforms.outputs.version }}
+      retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # The Linux AppImage, made and run exactly as a tag makes it.
+  # ---------------------------------------------------------------------------
+  # release.yml calls the same appimage.yml on the Linux amd64 archive of a
+  # tag; here it is fed the platforms job's hand-off, as dmg is, so a full run
+  # by hand proves the job a release depends on before anybody types a tag.
+  # There is no checksum file in the hand-off, so `sums` is not passed.
+  appimage:
+    name: linux appimage
+    needs: [detect, platforms]
+    if: needs.detect.outputs.go == 'yes' && needs.detect.outputs.full == 'yes'
+    # The checkout of this private repository, for build.sh and the files it
+    # packs.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/appimage.yml
+    with:
+      version: ${{ needs.platforms.outputs.version }}
+      artifact: dmg-in-${{ needs.platforms.outputs.version }}
+      retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # The Windows setup wizard.
+  # ---------------------------------------------------------------------------
+  setup:
+    name: build the windows setup wizard
+    needs: [detect, web]
+    # Full tier only: on a tag, release.yml builds the setup itself, around
+    # the Windows archive's binary. A pull request that changes packaging/ or
+    # cmd/ktbuild/ is proved by a full run by hand on its branch.
+    #
+    # After `web`, because the setup wraps the console that job built,
+    # taken as an artifact rather than built again. Not
+    # only after a green one: a lint failure there says nothing about the
+    # setup, and the download fails by name when the console was not built.
+    if: ${{ !cancelled() && needs.detect.outputs.go == 'yes' && needs.detect.outputs.full == 'yes' }}
+    # The setup is built by makensis, which neither a hosted runner nor a
+    # self-hosted one need ship: the job installs it itself with apt through
+    # the runner's passwordless sudo, in the step below. This job holds no
+    # write scope, so it may run on a self-hosted runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    env:
+      # A floor, not a pin: the pool's runners are not one OS - one is Debian 12
+      # (nsis 3.08), another Ubuntu (3.10) - so no apt version exists on all of
+      # them. The setup's own checks below hold the result.
+      NSIS_MIN: "3.08"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # Off, although this runner starts empty: the repository's cache sits
+          # near its 10 GB cap, and a module download is cheaper than
+          # pushing the pool's own caches out of it.
+          cache: false
+      - name: Install NSIS
+        run: |
+          set -eu
+          # The pool's runners are a non-root VM with passwordless sudo, and the
+          # job installs what it needs itself: the distribution's makensis, at
+          # least NSIS_MIN, and nothing when the runner already has one.
+          have() { makensis -VERSION 2>/dev/null | sed 's/^v//'; }
+          new_enough() { [ -n "$1" ] && [ "$(printf '%s\n%s\n' "$NSIS_MIN" "$1" | sort -V | head -1)" = "$NSIS_MIN" ]; }
+          if new_enough "$(have)"; then
+            echo "makensis v$(have) is already installed"
+          else
+            # apt-get update takes the lists' lock, which DPkg::Lock::Timeout does
+            # not wait on: another job on this VM may hold it for a moment.
+            for try in 1 2 3; do
+              sudo apt-get -o DPkg::Lock::Timeout=300 update -qq && break
+              [ "$try" = 3 ] && exit 1
+              sleep 20
+            done
+            sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends nsis >/dev/null
+            if ! new_enough "$(have)"; then
+              echo "::error::makensis is '$(have)', older than NSIS_MIN $NSIS_MIN, on this runner's OS. apt-cache policy nsis says:"
+              apt-cache policy nsis
+              exit 1
+            fi
+          fi
+          # The setup is opened with 7z further down.
+          if ! command -v 7z >/dev/null 2>&1; then
+            sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends p7zip-full >/dev/null
+          fi
+          echo "makensis $(makensis -VERSION)"
+          command -v 7z
+      # The console the web job built, and the list of npm packages it bundled,
+      # into web/, where `pnpm run build` wrote them.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-${{ github.run_number }}
+          path: web
+      # As release.yml's archives job does, so the setup carries
+      # THIRD_PARTY_NOTICES.txt and the binary embeds and serves it.
+      - name: Third-party notices
+        run: |
+          set -eu
+          go run ./cmd/ktnotices -npm web/build/third-party-npm.json -o web/dist/ui/THIRD_PARTY_NOTICES.txt
+          test -s web/dist/ui/THIRD_PARTY_NOTICES.txt || {
+            echo "::error::cmd/ktnotices wrote an empty THIRD_PARTY_NOTICES.txt"
+            exit 1
+          }
+      # Through cmd/ktbuild, as release.yml and `task build:setup` build it, with
+      # a version stamped as a tag would: it refuses a tree with no console,
+      # builds the windows/amd64 binary and reads it back for the console, runs
+      # makensis on packaging/windows/kubetower.nsi with warnings as errors, and
+      # reads the result back - a PE file, a GUI program, and the version in its
+      # own resource section.
+      - name: Build the setup through cmd/ktbuild
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/setup/kubetower-setup.exe"
+          go run ./cmd/ktbuild -os windows -arch amd64 -setup \
+            -version "0.0.0-ci.$GITHUB_RUN_NUMBER" -built "$(date -u +%Y-%m-%d)" -o "$out"
+          ls -l "$out"
+          sha256sum "$out"
+          # The tool puts the committed resource object back after the build;
+          # a tree left modified means it did not.
+          git diff --exit-code --stat -- internal/launch/rsrc_windows_amd64.syso
+      # The setup itself, opened rather than trusted: 7-Zip reads an NSIS
+      # payload, and the kubetower.exe it would install is read back for the
+      # console with the same check cmd/ktbuild ran before wrapping it. This is
+      # the check that would have refused a setup without the console. The
+      # listing is asserted name by name: the setup installs each of the four
+      # files, and THIRD_PARTY_NOTICES.txt is optional to ktbuild without -stage.
+      - name: The setup installs a binary that embeds the console
+        run: |
+          set -eu
+          x="$RUNNER_TEMP/setup-payload"
+          list=$(7z l "$RUNNER_TEMP/setup/kubetower-setup.exe")
+          echo "$list"
+          for f in kubetower.exe LICENSE LICENSING.md THIRD_PARTY_NOTICES.txt; do
+            awk '{print $NF}' <<< "$list" | grep -qxF "$f" || { echo "::error::the setup does not install $f"; exit 1; }
+          done
+          7z x -y -bd -o"$x" "$RUNNER_TEMP/setup/kubetower-setup.exe" >/dev/null
+          exe=$(find "$x" -name kubetower.exe -type f)
+          [ "$(printf '%s\n' "$exe" | grep -c .)" = 1 ] || { echo "::error::the setup holds no single kubetower.exe: '$exe'"; exit 1; }
+          go run ./cmd/ktbuild -check-console "$exe"
+      # For a person to click through on Windows before a merge: the setup this
+      # run built, kept a week. Readable only by whoever can read this
+      # repository, and never attached to a release - that is release.yml's.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-setup-0.0.0-ci.${{ github.run_number }}
+          path: ${{ runner.temp }}/setup/kubetower-setup.exe
+          retention-days: 7
+          if-no-files-found: error
+          # A re-run of this job replaces the setup it made before.
+          overwrite: true
+      # The ktbuild tests that skip where makensis is missing, run where it is
+      # not - and told to fail rather than skip, so a skip here cannot read as
+      # a pass.
+      - name: The setup's own tests, with makensis present
+        env:
+          KT_REQUIRE_MAKENSIS: "1"
+        run: go test -count=1 -v -run 'Setup|Makensis|Script' ./cmd/ktbuild
+
+  # ---------------------------------------------------------------------------
+  # The Linux .deb and .rpm, made and installed exactly as a tag makes them.
+  # ---------------------------------------------------------------------------
+  # release.yml calls the same linux-packages.yml on the Linux amd64 archive of
+  # a tag; here it is fed the platforms job's hand-off, as dmg is, so a full run
+  # by hand proves the job a release depends on before anybody types a tag.
+  # There is no checksum file in the hand-off, so `sums` is not passed.
+  packages:
+    name: linux packages
+    needs: [detect, platforms]
+    if: needs.detect.outputs.go == 'yes' && needs.detect.outputs.full == 'yes'
+    # The checkout of this private repository, for the packaging files.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-packages.yml
+    with:
+      version: ${{ needs.platforms.outputs.version }}
+      artifact: dmg-in-${{ needs.platforms.outputs.version }}
+      retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # The front end.
+  # ---------------------------------------------------------------------------
+  web:
+    name: front end - lint, typecheck, build
+    needs: detect
+    if: needs.detect.outputs.web == 'yes'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Node 24 and pnpm through corepack, not pnpm/action-setup: the
+      # runner's own npm can be broken on a self-hosted runner (.github/actions/setup-web).
+      - uses: ./.github/actions/setup-web
+      # --frozen-lockfile so a lockfile that disagrees with package.json fails
+      # here rather than resolving to something nobody has run.
+      - id: install
+        run: pnpm install --frozen-lockfile
+      # EVERY CHECK BELOW RUNS WHETHER OR NOT THE ONE BEFORE IT PASSED, as long
+      # as the install did. The job still fails if any of them fails - GitHub
+      # fails a job on any failed step - so this changes what is *reported*,
+      # never what passes. Before 2026-09-22 a failed step skipped every step
+      # after it, and a flaky test on `main` at ef59013 therefore also hid
+      # whether the front end built and whether the package installed: both
+      # read `skipped`, for a push that nobody could then call built.
+      - run: pnpm run lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      - run: pnpm run typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # The styling rule is two find commands, and without this step it is a
+      # comment. They
+      # refuse any stylesheet that is not the theme, and any HTML that is not
+      # Vite's entry - third-party CSS is imported from its package, never
+      # vendored (`scripts/check-styles.mjs` says why). The rule has to hold
+      # on the first component, because adopting it at the fortieth is a
+      # rewrite of forty.
+      - run: pnpm run check:styles
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # `ui/src/api/schema.ts` is generated from `api/openapi.yaml` and
+      # committed, because the app compiles against it and a build step between
+      # editing a component and seeing a type error is one somebody will skip.
+      # A committed generated file is a file that can be stale, and a stale one
+      # is the second copy of the contract that generating it was meant to
+      # prevent. This regenerates and compares; it never writes.
+      - run: pnpm run check:api
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # Before the build, so a failing assertion is not reported as a build
+      # that happened to succeed. It no longer stops the build from running:
+      # the job is red either way, and a red job that also says whether the
+      # build worked is worth more than one that does not know.
+      - run: pnpm run test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      - id: build
+        run: pnpm run build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # The extras' pages are in this bundle, each a lazy chunk named
+      # after its page. cmd/kubetower's TestTheBundleCarriesTheExtrasPages asks
+      # the same of the embedded bundle, and skips in the go job, which builds
+      # no front end; this is where a bundle always exists. A menu entry whose
+      # chunk is missing lands on the console's "no extension answers here".
+      - name: the bundle carries the extras' pages
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          for page in DeliveryCenter KubeCron; do
+            n=$(find dist/ui/assets -maxdepth 1 -name "${page}-*.js" | wc -l)
+            [ "$n" -eq 1 ] || { echo "FAIL dist/ui/assets holds $n $page chunks, want 1"; exit 1; }
+            echo "ok   $page: $(find dist/ui/assets -maxdepth 1 -name "${page}-*.js")"
+          done
+      # The console this job just built, for the jobs that embed it: `setup`
+      # and `platforms` link binaries that ship, and cmd/ktbuild refuses those
+      # without web/dist/ui/index.html. One build, linted
+      # and tested above, rather than a second pnpm toolchain in each of them.
+      # The npm list is what cmd/ktnotices merges into THIRD_PARTY_NOTICES.txt.
+      # Only on the full tier, which has a job to take it, and kept as long as
+      # the setup, so a `gh run rerun --failed` of setup or platforms still
+      # finds it. At about 300 KB, a day saves nothing beside the setup's 12 MB.
+      - name: hand the console to the jobs that embed it
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && needs.detect.outputs.full == 'yes' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: console-${{ github.run_number }}
+          path: |
+            web/dist/ui
+            web/build/third-party-npm.json
+          retention-days: 7
+          if-no-files-found: error
+          # A re-run of this job replaces its own hand-off.
+          overwrite: true
+
+  # ---------------------------------------------------------------------------
+  # The image. Built, never pushed.
+  # ---------------------------------------------------------------------------
+  image:
+    name: docker build
+    needs: detect
+    # The loop that catches a container-only failure, where it can
+    # happen: a pull request touching the image's inputs, and the full tier
+    # (detect decides). release.yml builds, runs and scans the image it ships.
+    if: needs.detect.outputs.image == 'yes'
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    # The image and the container are this run's own. The pool's runners share
+    # one docker daemon, and on 2026-11-01 the first weekly full tier loaded
+    # `kubetower:ci` and, three minutes later, `docker run` no longer found it:
+    # a fixed name is everybody's, so another job could
+    # remove it, overwrite it with its own build, or hold the container name.
+    # Named after the run and the attempt, like valkey's container above, and
+    # removed by this job in an always() step at the end.
+    env:
+      KT_CI_IMAGE: kubetower:ci-${{ github.run_id }}-${{ github.run_attempt }}
+      KT_CI_CONTAINER: kt-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Worth a runner even where the Dockerfile repeats vet and test inside
+      # itself: a public repository is cloned by people whose first act is
+      # `docker build`, and a Dockerfile that is broken on its own is a broken
+      # first impression nobody here would hit.
+      #
+      # push: false - built and thrown away. Nothing in this workflow has a
+      # registry credential, and adding one would put a push on the same trigger
+      # as a pull request from a fork.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.KT_CI_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # An image that builds and cannot start is a green tick over a broken
+      # artifact. This asks the binary about itself and nothing else - no
+      # cluster, no kubeconfig, no port, no state directory. It names no
+      # edition: there is none since 2026-10-22, and the line opening with
+      # `kubetower ` is what is asked of it.
+      - name: the image runs
+        run: |
+          set -eu
+          # A missing image is said as such: `docker run` would otherwise go
+          # looking for it on Docker Hub and answer "pull access denied".
+          if ! docker image inspect "$KT_CI_IMAGE" >/dev/null 2>&1; then
+            echo "FAIL $KT_CI_IMAGE, loaded by the build step, is no longer in the daemon"
+            docker image ls
+            exit 1
+          fi
+          line=$(docker run --rm --pull never "$KT_CI_IMAGE" --version)
+          echo "$line"
+          case "$line" in
+            "kubetower "*) ;;
+            *) echo "FAIL the image does not answer --version"; exit 1 ;;
+          esac
+          # And Claude Code cannot replace itself at run time: the Dockerfile
+          # pins it by checksum, and DISABLE_AUTOUPDATER is what keeps that pin
+          # true inside a running container.
+          env=$(docker image inspect --format '{{json .Config.Env}}' "$KT_CI_IMAGE")
+          case "$env" in
+            *'"DISABLE_AUTOUPDATER=1"'*) echo "ok   DISABLE_AUTOUPDATER=1 is in the image's environment" ;;
+            *) echo "FAIL the image does not set DISABLE_AUTOUPDATER=1: $env"; exit 1 ;;
+          esac
+
+      # And an image that runs `--version` and cannot serve is the same green
+      # tick over the same broken artifact, one step later. This starts the
+      # container as it ships - tini, the unprivileged user, the state volume,
+      # KT_LISTEN=:5823 - with a kubeconfig naming a cluster that does not
+      # exist, and asks /kt-healthz from the host through the published port.
+      # 200 or 503 both mean the listener is up on every interface and the
+      # first run drew its password into the volume; connection refused is the
+      # container-loopback trap compose.dev.yaml describes, and no answer at all
+      # is a process that did not start. Measured 2026-09-18 on the built image:
+      # 200 in 2 s. The log is printed whatever happened, because on a failure
+      # it is the only thing worth reading.
+      - name: the image serves
+        run: |
+          set -u
+          tmp=$(mktemp -d)
+          cat > "$tmp/config" <<'EOF'
+          apiVersion: v1
+          kind: Config
+          current-context: nowhere
+          clusters:
+            - name: nowhere
+              cluster: { server: https://127.0.0.1:1 }
+          users:
+            - name: nowhere
+              user: { token: not-a-token }
+          contexts:
+            - name: nowhere
+              context: { cluster: nowhere, user: nowhere }
+          EOF
+          # 755 on the directory and not only 644 on the file: mktemp makes it
+          # 700 for the runner's user, and the container reads it as uid 100.
+          # The first run of this step (2026-09-18) failed exactly there -
+          # "/home/kubetower/.kube could not be listed (permission denied)" -
+          # which is the bind-mount-permissions failure an operator with a 700
+          # ~/.kube meets, and the console named it. Docker Desktop had hidden
+          # it locally: its mounts arrive world-readable.
+          chmod 755 "$tmp"
+          chmod 644 "$tmp/config"
+          docker run -d --pull never --name "$KT_CI_CONTAINER" \
+            -v "$tmp:/home/kubetower/.kube:ro" \
+            -e KUBECONFIG=/home/kubetower/.kube/config \
+            "$KT_CI_IMAGE" --unattended >/dev/null
+          # Asked over the bridge, from a second container, with the image's
+          # own wget - the compose healthcheck's command - against the
+          # container's address and not a published port. The first form,
+          # `-p 127.0.0.1:5823:5823` and curl from the runner, answered nothing
+          # on the pool while the log said `listening on :5823`: a published
+          # port lands on the loopback of whatever runs dockerd, which on a
+          # runner that is itself a container is not the runner. The bridge
+          # address is the same wherever dockerd is, and a process bound to the
+          # container's own loopback does not answer on it either - so this
+          # still catches the trap the step exists for.
+          ip=""
+          for i in $(seq 1 30); do
+            ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$KT_CI_CONTAINER" 2>/dev/null || true)
+            [ -n "$ip" ] && break
+            sleep 1
+          done
+          code=000
+          # The last status the console actually answered, kept across misses:
+          # resetting `code` is what makes the loop retry, and it also threw
+          # away the 421 that named the cause.
+          last=000
+          for i in $(seq 1 30); do
+            code=$(docker run --rm --pull never --entrypoint wget "$KT_CI_IMAGE" -q -S -O /dev/null -T 2 "http://$ip:5823/kt-healthz" 2>&1 | sed -n 's/^ *HTTP\/[0-9.]* \([0-9]*\).*/\1/p' | head -1)
+            [ "$code" = 200 ] || [ "$code" = 503 ] && break
+            [ -n "$code" ] && last=$code
+            code=000
+            sleep 1
+          done
+          echo "--- container log:"
+          docker logs "$KT_CI_CONTAINER" 2>&1 | tail -30
+          echo "--- container address: ${ip:-none}"
+          docker rm -f "$KT_CI_CONTAINER" >/dev/null 2>&1
+          rm -rf "$tmp"
+          echo "--- /kt-healthz answered $code after ${i}s"
+          if [ "$code" = 200 ] || [ "$code" = 503 ]; then
+            echo "ok   the image serves"
+          else
+            echo "FAIL the image did not answer on the published port (last status $last)"; exit 1
+          fi
+
+      # Whatever happened above: the image and the container are this run's,
+      # and a daemon shared by several runners keeps what nobody removes. Only
+      # these two names - never a prune, which would take other runs' images.
+      - name: remove the image
+        if: always()
+        run: |
+          set -u
+          # A daemon that does not answer cannot say the image is gone: an
+          # inspect that fails for that reason is not "no such image".
+          if ! docker info >/dev/null 2>&1; then
+            echo "FAIL the docker daemon does not answer, so whether $KT_CI_IMAGE is left is unknown"; exit 1
+          fi
+          # Absent already (a build that failed, or the step above removed the
+          # container) is fine; what stays is read back below.
+          docker rm -f "$KT_CI_CONTAINER" >/dev/null 2>&1 || true
+          docker image rm "$KT_CI_IMAGE" >/dev/null 2>&1 || true
+          rc=0
+          if docker ps -a --format '{{.Names}}' | grep -qx "$KT_CI_CONTAINER"; then
+            echo "FAIL $KT_CI_CONTAINER is still there"; rc=1
+          fi
+          # Inside the if: the step's shell is `bash -e`, so a bare failing
+          # assignment would end it before the answer is read.
+          if out=$(docker image inspect "$KT_CI_IMAGE" 2>&1); then
+            echo "FAIL $KT_CI_IMAGE is still in the daemon"; rc=1
+          elif printf '%s' "$out" | grep -qi 'no such image'; then
+            echo "ok   $KT_CI_IMAGE is not left on the runner"
+          else
+            echo "FAIL could not tell whether $KT_CI_IMAGE is left: $out"; rc=1
+          fi
+          exit $rc
