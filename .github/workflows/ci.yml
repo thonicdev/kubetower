@@ -255,7 +255,9 @@ jobs:
         env:
           VALKEY_IMAGE: valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
         run: |
-          name="kt-valkey-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_NAME}"
+          # A hosted runner's name has spaces ("GitHub Actions 1000002868"),
+          # which a container name refuses: keep only what docker allows.
+          name="kt-valkey-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(printf '%s' "$RUNNER_NAME" | tr -c 'a-zA-Z0-9_.-' '-')"
           password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
           echo "::add-mask::$password"
           echo "KT_CI_VALKEY_NAME=$name" >> "$GITHUB_ENV"
