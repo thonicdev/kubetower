@@ -1,0 +1,190 @@
+# The Linux AppImage: `kubetower-<version>-x86_64.AppImage`, one file that runs
+# on any x86_64 Linux without installing anything. Called by release.yml on a
+# tag and by ci.yml's full tier, run by hand, so a branch proves the job that a
+# tag runs: the same file, the same pinned tool, the same read-back. It
+# publishes nothing; the image leaves as a workflow artifact, and only
+# release.yml's draft job puts it on a (draft) release.
+#
+# THE NAME IS THE DOWNLOAD PAGE'S. `kubetower-<version>-x86_64.AppImage`, as
+# the download page spells it: a button that points at a name the release does
+# not carry is a 404 on the page people download from. amd64 only, unsigned,
+# and with no update information or zsync file.
+#
+# NOT A SECOND BUILD. The AppDir is made around the binary of the
+# `kubetower_<version>_linux_amd64.tar.gz` the caller hands over - on a tag the
+# archives job's own archive, checked against that job's checksums first - with
+# the archive's LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt beside it.
+# packaging/linux/appimage/build.sh does the whole of it and reads the result
+# back; this file pins the tool and runs it.
+#
+# THE TOOL is appimagetool, pinned by version and by the SHA-256 of its release
+# asset - never the "continuous" release, whose file changes under one name.
+# appimagetool fetches the type-2 runtime it prepends from that same moving
+# release unless it is given one, so the runtime is pinned and checked the same
+# way and passed with --runtime-file. Both checks run before either file is
+# executed.
+#
+# NO FUSE NEEDED. appimagetool is itself an AppImage, and the pool's runners
+# need not have FUSE: it runs with APPIMAGE_EXTRACT_AND_RUN=1, and the result
+# is read back with --appimage-extract-and-run, the way a person on a system
+# without FUSE runs it.
+#
+# ON THE POOL, holding `contents: read` and nothing else: the checkout of this
+# repository for build.sh and the files it packs. The rest - this run's
+# artifact, two public release assets, the upload - needs no scope, and the
+# checkout keeps no credential, so a compromised third-party tool finds no
+# token on disk.
+
+name: appimage
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The version the binaries were stamped with, without the v"
+        required: true
+        type: string
+      artifact:
+        description: >-
+          This run's artifact holding kubetower_<version>_linux_amd64.tar.gz,
+          with LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt beside the
+          binary
+        required: true
+        type: string
+      ref:
+        description: >-
+          The commit to take build.sh, AppRun, the desktop entry and the icon
+          from: release.yml's tagged sha. Empty is the caller's own commit.
+        required: false
+        type: string
+        default: ""
+      sums:
+        description: >-
+          The SHA-256 of the artifact's checksums.txt, as the job that wrote it
+          computed it (release.yml's archives job). When set, the archive is
+          checked against it before anything is built on it; ci.yml's hand-off
+          carries no checksum file.
+        required: false
+        type: string
+        default: ""
+      retention-days:
+        description: "How long the image is kept as a workflow artifact"
+        required: false
+        type: number
+        default: 14
+    # The image's SHA-256, as this job computed it. A job output is set by
+    # this job's own steps and cannot be changed by any other job, so a caller
+    # checks the artifact it downloads against it rather than against a
+    # checksum that traveled in the artifact itself (release.yml's draft).
+    outputs:
+      sha256:
+        description: "SHA-256 of kubetower-<version>-x86_64.AppImage"
+        value: ${{ jobs.appimage.outputs.sha256 }}
+
+permissions: {}
+
+jobs:
+  appimage:
+    name: the linux appimage
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    outputs:
+      sha256: ${{ steps.make.outputs.sha256 }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      # appimagetool 1.9.1 (2025-11-18), the x86_64 asset, pinned by version
+      # and by the SHA-256 GitHub reports for that asset. A different file
+      # under the same name fails the check in build.sh.
+      APPIMAGETOOL_VERSION: 1.9.1
+      APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+      # The type-2 runtime appimagetool prepends: release 20251108 of
+      # AppImage/type2-runtime, runtime-x86_64, pinned the same way.
+      APPIMAGE_RUNTIME_VERSION: "20251108"
+      APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+    steps:
+      # See release.yml's verify job: every job checks the host's tools first,
+      # and names every missing one in a single error.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: curl tar file install ln cmp stat sha256sum grep cut du mktemp uname
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them; this job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+
+      # The version reaches every shell below through env, never `${{ }}`, and
+      # is held to a version's shape before it becomes part of a file name.
+      - name: The version is a version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a version (MAJOR.MINOR.PATCH[-pre])"
+            exit 1
+          fi
+
+      # build.sh and the two files it packs (AppRun, the desktop entry, the
+      # icon) are read from the commit, never from the artifact.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: in
+
+      # The archive is checked before anything is built on it, against a hash
+      # that did not travel with it, as release.yml's setup job checks the
+      # Windows zip.
+      - name: The archive matches the checksums of the job that made it
+        if: inputs.sums != ''
+        env:
+          SUMS: ${{ inputs.sums }}
+        run: |
+          set -eu
+          if ! [[ "$SUMS" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the sums input is '$SUMS', not a SHA-256"
+            exit 1
+          fi
+          tgz="kubetower_${VERSION}_linux_amd64.tar.gz"
+          cd in
+          echo "$SUMS  checksums.txt" | sha256sum --check --strict
+          line=$(grep -F "  ./$tgz" checksums.txt) || { echo "::error::checksums.txt does not list $tgz"; exit 1; }
+          sha256sum --check --strict <<< "$line"
+
+      - name: Make the AppImage, then read it back
+        id: make
+        run: |
+          set -euo pipefail
+          packaging/linux/appimage/build.sh "in/kubetower_${VERSION}_linux_amd64.tar.gz" "$VERSION" out
+          image="out/kubetower-${VERSION}-x86_64.AppImage"
+          sha=$(sha256sum "$image" | cut -d' ' -f1)
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Linux AppImage, $VERSION"
+            echo
+            echo '| image | size | sha256 |'
+            echo '|---|---|---|'
+            echo "| \`$(basename "$image")\` | $(du -h "$image" | cut -f1) | \`$sha\` |"
+            echo
+            echo "Unsigned, no update information. Packed by appimagetool $APPIMAGETOOL_VERSION with type2-runtime $APPIMAGE_RUNTIME_VERSION."
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -l out
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-appimage-${{ inputs.version }}
+          path: out/kubetower-${{ inputs.version }}-x86_64.AppImage
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+          # A re-run of this job replaces the image it made before.
+          overwrite: true

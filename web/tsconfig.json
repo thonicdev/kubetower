@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    // In this repository the app always compiles against @kubetower/ui's
+    // *source*, never its built declarations: one tree, one type-check, no
+    // build step between editing the shell and seeing the error.
+    // The extras in app/extras/ are in this tree and compile the same way.
+    // The package is published nowhere, so this is the only way anything
+    // compiles against it.
+    "paths": {
+      "@kubetower/ui": ["./ui/src/index.ts"]
+    }
+  },
+  "include": ["app", "ui/src"]
+}

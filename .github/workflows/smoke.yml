@@ -1,0 +1,506 @@
+# The browser path against a real console. What a red cross here means: a pull
+# request broke something an operator meets in the first minute - signing in, a
+# list, the drawer, its tabs, the verbs - on a running console.
+#
+# WHEN (decided 2026-10-29): on a pull request that touches anything a page or
+# a verb of the browser path goes through, and by hand. No schedule. ci.yml's
+# checks still report on every pull request, so a run skipped by the `paths`
+# filter never leaves one looking unchecked.
+#
+# THE PATHS ARE DERIVED, not guessed: every package of this module that the
+# smoke's binaries link, directly or as a dependency, from
+#   go list -deps ./internal/web ./internal/api ./app ./cmd/kubetower \
+#     ./cmd/ktbuild ./cmd/ktnotices ./cmd/devpassword
+# filtered on this module, each written as its directory glob (<dir>/**; a
+# package under one already listed, such as extras/argocd/drift, is covered by
+# its parent's glob). Through cmd/kubetower that brings in the extras,
+# schedule and svcgroup. Plus the specs and the front end (web/**), the
+# contract (api/openapi.yaml) and go.mod/go.sum. cmd/ktbuild's
+# TestSmokeWatchesWhatTheConsoleImports runs the same command and fails when a
+# package it names is not covered below.
+#
+# NO SECRET, NO REAL CLUSTER. The cluster is kind, made by this run under its
+# own name and deleted at its end whatever happened. The password is drawn for
+# the run, masked at once, hashed with cmd/devpassword, and exported inside the
+# e2e step only. No trace is recorded (a trace holds the session cookie), and
+# before anything is uploaded every file and log is searched for the password
+# and the cookie - raw, UTF-16 and base64 - and a hit refuses the upload.
+# cmd/ktbuild's workflows_test.go holds this file to all of it.
+#
+# THE BINARY, NEVER THE DEV SERVER, built in `task build`'s order (build:web,
+# build:notices, build:api through cmd/ktbuild), spelt out because no runner
+# has Task. If Taskfile.yaml's `build` changes, change the step below with it.
+#
+# ON THE POOL, sharing its VM: one cluster and one console port per run, one
+# smoke run on the pool at a time (a second kind changes the host's interfaces
+# under this run's browser: ERR_NETWORK_CHANGED), a cluster a killed run left
+# older than two hours is deleted by the next, and the VM's Docker, disk and
+# memory are checked first. The Claude terminal case is skipped (no `claude`
+# on the runners) and the summary names it.
+
+name: smoke
+
+on:
+  pull_request:
+    paths:
+      - 'api/openapi.yaml'
+      - 'app/**'
+      - 'cmd/devpassword/**'
+      - 'cmd/ktbuild/**'
+      - 'cmd/ktnotices/**'
+      - 'cmd/kubetower/**'
+      - 'extension/**'
+      - 'extras/argocd/**'
+      - 'extras/cnpg/**'
+      - 'extras/dns/**'
+      - 'extras/events/**'
+      - 'extras/jvm/**'
+      - 'extras/kubeadjust/**'
+      - 'extras/kubecron/**'
+      - 'extras/netinspect/**'
+      - 'extras/pending/**'
+      - 'extras/redis/**'
+      - 'extras/certmanager/**'
+      - 'extras/security/**'
+      - 'internal/access/**'
+      - 'internal/actions/**'
+      - 'internal/api/**'
+      - 'internal/apiraw/**'
+      - 'internal/archive/**'
+      - 'internal/audit/**'
+      - 'internal/auth/**'
+      - 'internal/binpath/**'
+      - 'internal/changes/**'
+      - 'internal/cluster/**'
+      - 'internal/columns/**'
+      - 'internal/consolekinds/**'
+      - 'internal/customresources/**'
+      - 'internal/detail/**'
+      - 'internal/devenv/**'
+      - 'internal/edit/**'
+      - 'internal/ekstoken/**'
+      - 'internal/extras/**'
+      - 'internal/forward/**'
+      - 'internal/health/**'
+      - 'internal/helm/**'
+      - 'internal/hotbars/**'
+      - 'internal/identity/**'
+      - 'internal/kindprefs/**'
+      - 'internal/kindref/**'
+      - 'internal/kubeletstats/**'
+      - 'internal/launch/**'
+      - 'internal/logs/**'
+      - 'internal/metrics/**'
+      - 'internal/nameplates/**'
+      - 'internal/nodeshell/**'
+      - 'internal/overview/**'
+      - 'internal/peversion/**'
+      - 'internal/prereq/**'
+      - 'internal/recorder/**'
+      - 'internal/registry/**'
+      - 'internal/resources/**'
+      - 'internal/sharedstate/**'
+      - 'internal/shellenv/**'
+      - 'internal/statefile/**'
+      - 'internal/terminal/**'
+      - 'internal/update/**'
+      - 'internal/web/**'
+      - 'safego/**'
+      - 'schedule/**'
+      - 'svcgroup/**'
+      - 'textutil/**'
+      - 'web/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/smoke.yml'
+  workflow_dispatch:
+
+# Least privilege. Nothing here writes to the repository.
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run; anything else is grouped
+# by commit and never canceled (ci.yml says why).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: the browser path against a kind cluster
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    # One smoke run on the pool at a time, whatever its ref. Runners share a
+    # VM two by two, and Chromium aborts every request in flight, loopback
+    # included, when Docker adds or removes an interface on the host
+    # (ERR_NETWORK_CHANGED, measured in layout.yml): a second run's `kind
+    # create cluster` beside this one's browser would turn it red. Queued,
+    # not canceled: the workflow's own group already cancels a superseded run.
+    concurrency:
+      group: smoke-on-the-pool
+      cancel-in-progress: false
+    # Every job has a timeout: a hung job would hold a runner of the
+    # pool for GitHub's default of six hours.
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Named, so every run: line gets `-o pipefail`: the e2e step pipes the
+        # browser path through tee, and without it a red path would read green.
+        shell: bash
+    env:
+      # This run's own cluster, so two runs on one VM never meet; the teardown
+      # deletes it by this name. Its kubeconfig context is kind-<name>.
+      KIND_CLUSTER: kt-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+      # Pinned, and checked against the release's own checksum below. The node
+      # image is the one this kind release was built and tested with, by digest
+      # as kind's release notes ask.
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      KIND_NODE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    steps:
+      # SMOKE is the one directory for everything this job writes outside the
+      # checkout: the password, the console's state and log, the kubeconfig,
+      # the report. Under RUNNER_TEMP, which is wiped at the end of the job, and
+      # set here because a job-level env: cannot read the runner context.
+      - name: Start the clock, and the directory this job writes to
+        run: |
+          set -eu
+          echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "SMOKE=$RUNNER_TEMP/smoke" >> "$GITHUB_ENV"
+          install -d -m 0700 "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke/state"
+          echo "this run's cluster is $KIND_CLUSTER"
+
+      # The pool's VM is shared and small: ask it before
+      # spending ten minutes on a run it cannot hold, and say which it lacks.
+      - name: What this VM has free
+        run: |
+          set -eu
+          docker info --format 'docker {{.ServerVersion}}, {{.NCPU}} CPUs' || { echo "::error::Docker does not answer on this runner, and kind needs it"; exit 1; }
+          disk=$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print int($4/1048576)}')
+          docker_disk=$(df -Pk "$(docker info --format '{{.DockerRootDir}}')" | awk 'NR==2 {print int($4/1048576)}')
+          memory=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+          echo "free: $disk GB under RUNNER_TEMP, $docker_disk GB for Docker, $memory MB of memory"
+          short=""
+          [ "$disk" -ge 4 ] || short="$short under 4 GB free under RUNNER_TEMP;"
+          [ "$docker_disk" -ge 4 ] || short="$short under 4 GB free for Docker (kind's node image and its containers);"
+          [ "$memory" -ge 1500 ] || short="$short under 1.5 GB of memory available (kind, the console and a browser);"
+          if [ -n "$short" ]; then
+            echo "::error::this VM is short of room for the smoke path:$short free some on the runner VM or move the job to a larger one"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # Off, although this runner starts empty: the repository's cache sits
+          # near its 10 GB cap; see ci.yml's setup job.
+          cache: false
+
+      # Node 24 and pnpm through corepack, not pnpm/action-setup: the
+      # runner's own npm can be broken on a self-hosted runner (.github/actions/setup-web).
+      - uses: ./.github/actions/setup-web
+
+      - name: Install kind ${{ env.KIND_VERSION }}, checked against its checksum
+        run: |
+          set -eu
+          curl -fsSL -o "$RUNNER_TEMP/kind" "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  $RUNNER_TEMP/kind" | sha256sum --check --strict
+          install -D -m 0755 "$RUNNER_TEMP/kind" "$RUNNER_TEMP/bin/kind"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/kind" version
+
+      # Its own kubeconfig file, so nothing here reads or writes the runner's
+      # ~/.kube, and the console is handed exactly one cluster. First, the
+      # clusters a killed run left behind: a kt-smoke-* node container older
+      # than two hours - four times this job's timeout - belongs to no run
+      # still going, and holds disk the next run needs.
+      - name: Create the kind cluster
+        run: |
+          set -eu
+          now=$(date +%s)
+          for left in $(kind get clusters 2>/dev/null | grep '^kt-smoke-' || true); do
+            created=$(docker inspect -f '{{.Created}}' "$left-control-plane" 2>/dev/null || true)
+            [ -n "$created" ] || continue
+            age=$(( now - $(date -d "$created" +%s) ))
+            if [ "$age" -gt 7200 ]; then
+              echo "deleting $left, left by a run that ended $((age / 60)) minutes ago without its teardown"
+              # Its own throwaway kubeconfig, so the runner's ~/.kube is not
+              # touched, and a failure is said rather than failing this run:
+              # the leftover is somebody else's.
+              kind delete cluster --name "$left" --kubeconfig "$SMOKE/sweep.kubeconfig" ||
+                echo "::warning::$left could not be deleted; it is left for the next run"
+            fi
+          done
+          kind create cluster --name "$KIND_CLUSTER" --image "$KIND_NODE" \
+            --kubeconfig "$SMOKE/kind.kubeconfig" --wait 180s
+
+      - name: pnpm install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # `task build`'s order, and why it matters: //go:embed takes whatever is
+      # in web/dist when the Go build runs, and an empty dist builds a binary
+      # that serves "UI not built" without an error.
+      - name: Build the binary with the SPA embedded (build:web, build:notices, build:api)
+        run: |
+          set -eu
+          (cd web && pnpm build)
+          go run ./cmd/ktnotices -npm web/build/third-party-npm.json -o web/dist/ui/THIRD_PARTY_NOTICES.txt
+          go run ./cmd/ktbuild -o "$RUNNER_TEMP/kubetower"
+          "$RUNNER_TEMP/kubetower" --version
+
+      # The bundle exists here and nowhere else in CI's Go jobs, so this is
+      # where cmd/kubetower's test of it runs rather than skipping: the
+      # extras' chunks are embedded and served.
+      # KT_REQUIRE_BUNDLE=1 makes a missing bundle a failure, not a skip.
+      - name: The embedded bundle carries the extras' pages
+        env:
+          KT_REQUIRE_BUNDLE: '1'
+        run: go test -count=1 -run 'TestTheBundleCarriesTheExtrasPages' -v ./cmd/kubetower
+
+      # The headless shell, not full Chromium: the path has no head.
+      - name: Install the browser
+        working-directory: web
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+
+      # The word is masked before anything else is done with it, so a line that
+      # printed it by mistake would show ***. It is written to a 0600 file in
+      # SMOKE and handed to two steps: devpassword here, on its standard input,
+      # and the e2e step below, which exports it for itself. The hash and a
+      # session key go to console.env, which the next step loads.
+      - name: Draw this run's password, mask it, hash it
+        run: |
+          set -eu
+          umask 077
+          word=$(openssl rand -hex 24)
+          echo "::add-mask::$word"
+          printf '%s' "$word" > "$SMOKE/password"
+          printf "KT_STATE_DIR='%s'\n" "$SMOKE/state" > "$SMOKE/console.env"
+          printf '%s\n' "$word" | go run ./cmd/devpassword -env "$SMOKE/console.env"
+          grep -q '^KT_PASSWORD_HASH=' "$SMOKE/console.env" || { echo "::error::devpassword wrote no KT_PASSWORD_HASH"; exit 1; }
+
+      # Bound to loopback (the default, said here so it is not left to it), in a
+      # fresh state directory, on the kind kubeconfig alone. --unattended: nobody
+      # is in front of this machine. --no-window: open nothing. It runs in the
+      # background until the teardown step stops it.
+      - name: Start the console, and wait for /kt-healthz
+        run: |
+          set -eu
+          set -a
+          . "$SMOKE/console.env"
+          set +a
+          # The port, drawn by the kernel for this run and bound at once: a
+          # fixed one is what a second run on the VM would already hold, and
+          # one drawn steps earlier is one kind may have taken since.
+          port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+          CONSOLE="http://127.0.0.1:$port"
+          echo "CONSOLE=$CONSOLE" >> "$GITHUB_ENV"
+          echo "this run's console is $CONSOLE"
+          export KUBECONFIG="$SMOKE/kind.kubeconfig" KT_LISTEN="127.0.0.1:$port"
+          nohup "$RUNNER_TEMP/kubetower" --unattended --no-window > "$SMOKE/console.log" 2>&1 &
+          echo $! > "$SMOKE/console.pid"
+          for _ in $(seq 1 90); do
+            if curl -fsS "$CONSOLE/kt-healthz"; then
+              echo
+              echo "the console answers on $CONSOLE"
+              exit 0
+            fi
+            kill -0 "$(cat "$SMOKE/console.pid")" 2>/dev/null || { echo "::error::the console exited before it answered"; cat "$SMOKE/console.log"; exit 1; }
+            sleep 1
+          done
+          echo "::error::the console did not answer /kt-healthz within 90 s"
+          cat "$SMOKE/console.log"
+          exit 1
+
+      # The only step that holds KT_E2E_PASSWORD, and it holds it in its own
+      # shell: not in an `env:` block, which the log prints for every step.
+      # KT_E2E_TRACE=off: no trace, because every trace of a signed-in test
+      # holds the session cookie. KT_E2E_SESSION_VALUES is where global setup
+      # writes that cookie for the search below.
+      - name: pnpm e2e, against the console and the kind cluster
+        id: e2e
+        working-directory: web
+        env:
+          KT_E2E_URL: ${{ env.CONSOLE }}
+          KT_E2E_CLUSTER: kind-${{ env.KIND_CLUSTER }}
+          KT_E2E_TRACE: 'off'
+          KT_E2E_SESSION_VALUES: ${{ runner.temp }}/smoke/session-values
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/smoke/report.json
+        run: |
+          set -eu
+          KT_E2E_PASSWORD=$(cat "$SMOKE/password")
+          export KT_E2E_PASSWORD
+          status=0
+          pnpm e2e --reporter=list,json 2>&1 | tee "$SMOKE/e2e.log" || status=$?
+          # The ::add-mask:: lines global setup printed are for the runner, which
+          # has read them. The copy of the output kept for the search below would
+          # otherwise hold, in those lines alone, the cookie they mask, and the
+          # search would find it there. Only those lines go.
+          sed -i '/^::add-mask::/d' "$SMOKE/e2e.log"
+          exit "$status"
+
+      # No secret in the uploaded evidence, checked rather than trusted: every file the upload below could
+      # send, the inside of any zip among them, the report and both logs, for
+      # the password and the session cookie. Each is looked for raw, as UTF-16
+      # and as base64 at each of the three alignments. The search is first shown
+      # to find every one of those forms inside a zip made for the purpose, so a
+      # search that can find nothing does not pass. Its exit status is the
+      # step's: one exit, on whether anything was found.
+      - name: Search every artifact and log for the password and the session
+        id: scan
+        if: always()
+        run: |
+          set -eu
+          [ -s "$SMOKE/password" ] || { echo "no password was drawn, so there is nothing to search for"; exit 0; }
+          python3 - "$SMOKE/password" "$SMOKE/session-values" web/test-results "$SMOKE/report.json" "$SMOKE/e2e.log" "$SMOKE/console.log" <<'PY'
+          import base64, io, math, os, sys, zipfile
+
+          def utf16(word):
+              return word.decode('latin-1').encode('utf-16-le')
+
+          def forms(word):
+              out = {word, utf16(word)}
+              for k in range(3):
+                  enc = base64.b64encode(b'\0' * k + word)
+                  out.add(enc[math.ceil(4 * k / 3):(4 * (k + len(word))) // 3])
+              return out
+
+          needles = [('the password', open(sys.argv[1], 'rb').read())]
+          assert needles[0][1], 'empty password'
+          if os.path.isfile(sys.argv[2]):
+              needles += [('the session cookie', v) for v in open(sys.argv[2], 'rb').read().split() if v]
+          else:
+              print('no session values were written (global setup opened no session): searching for the password alone')
+          patterns = [(what, form) for what, word in needles for form in forms(word)]
+
+          def hits(name, data):
+              found = [(name, what) for what, form in patterns if form in data]
+              if data[:4] == b'PK\x03\x04':
+                  with zipfile.ZipFile(io.BytesIO(data)) as z:
+                      for member in z.namelist():
+                          found += hits(f'{name}!{member}', z.read(member))
+              return found
+
+          wraps = [lambda w: w, utf16] + [lambda w, k=k: base64.b64encode(b'ab'[:k] + w) for k in range(3)]
+          for what, word in needles:
+              for n, wrap in enumerate(wraps):
+                  probe = io.BytesIO()
+                  with zipfile.ZipFile(probe, 'w', zipfile.ZIP_DEFLATED) as z:
+                      z.writestr('trace.trace', b'{"value":"' + wrap(word) + b'"}')
+                  assert ('probe.zip!trace.trace', what) in hits('probe.zip', probe.getvalue()), f'the search cannot find {what} in form {n}'
+
+          found, files = [], 0
+          for root in sys.argv[3:]:
+              paths = [root] if os.path.isfile(root) else [
+                  os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs]
+              for path in paths:
+                  files += 1
+                  found += hits(path, open(path, 'rb').read())
+          print(f'searched {files} files, zips opened, for {len(needles)} secrets in {len(patterns)} forms: {len(found)} hits')
+          for path, what in sorted(set(found)):
+              print(f'::error::{what} is in {path}')
+          sys.exit(1 if found else 0)
+          PY
+
+      # Only on a failure, and only once the search above has passed: what the
+      # page looked like, and error-context.md. No trace (KT_E2E_TRACE=off). The
+      # path is one the search above was given, never wider.
+      - if: failure() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-failure
+          path: web/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Say what ran
+        if: always()
+        run: |
+          set -eu
+          report="$SMOKE/report.json"
+          elapsed=$(( $(date +%s) - STARTED ))
+          {
+            echo "### The browser path against a kind cluster"
+            echo
+            echo "| | so the gate | cases |"
+            echo "|---|---|---|"
+            if [ -s "$report" ]; then
+              # Read with Node, which this job already runs the e2e with: the
+              # self-hosted pool's runners have no jq, and
+              # a summary step that fails on a passing run hides the result.
+              eval "$(node - "$report" <<'JS'
+              const stats = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8')).stats ?? {};
+              for (const [name, key] of [['passed', 'expected'], ['failed', 'unexpected'], ['flaky', 'flaky'], ['skipped', 'skipped']]) {
+                console.log(`${name}=${Number(stats[key] ?? 0)}`);
+              }
+          JS
+              )"
+              ran=$((passed + failed + flaky))
+              if [ "$ran" -gt 0 ]; then gate=ran; else gate='**ran nothing**'; fi
+              echo "| Smoke path (\`web/e2e\`, the built binary, kind \`$KIND_VERSION\`) | $gate | $ran run ($passed passed, $failed failed, $flaky flaky), $skipped skipped |"
+              echo
+              if [ "$skipped" -gt 0 ]; then
+                echo "**Skipped**, each with its reason:"
+                echo
+                node - "$report" <<'JS'
+              const report = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
+              const lines = [];
+              const walk = (node) => {
+                if (Array.isArray(node)) return node.forEach(walk);
+                if (node === null || typeof node !== 'object') return;
+                for (const spec of node.specs ?? []) {
+                  for (const test of spec.tests ?? []) {
+                    if (test.status !== 'skipped') continue;
+                    const notes = [...(test.annotations ?? []), ...(test.results ?? []).flatMap((r) => r.annotations ?? [])]
+                      .filter((a) => a.type === 'skip')
+                      .map((a) => a.description || 'no reason given');
+                    lines.push(`- ${spec.title}: ${[...new Set(notes.length ? notes : ['no reason given'])].sort().join('; ')}`);
+                  }
+                }
+                Object.values(node).forEach(walk);
+              };
+              walk(report);
+              console.log(lines.join('\n'));
+          JS
+                echo
+              fi
+            else
+              echo "| Smoke path (\`web/e2e\`) | **did not run** - no report; see the steps above | 0 |"
+              echo
+            fi
+            echo "Job wall time up to this step: ${elapsed} s."
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+          # A path that skipped every case has proved nothing, and must not
+          # read as a pass.
+          if [ -s "$report" ] && [ "$ran" -eq 0 ]; then
+            echo "::error::the browser path ran no case"
+            exit 1
+          fi
+
+      # Whatever happened above: stop the console, delete the cluster, remove
+      # the password and the session values. The console's log is printed on a
+      # failure, and only when the search above went through it and passed.
+      - name: Tear down the console and the kind cluster
+        if: always()
+        env:
+          SCAN: ${{ steps.scan.outcome }}
+        run: |
+          if [ -s "$SMOKE/console.pid" ]; then
+            kill "$(cat "$SMOKE/console.pid")" 2>&1 || true
+          fi
+          if [ "${{ job.status }}" != success ] && [ -s "$SMOKE/console.log" ]; then
+            if [ "$SCAN" = success ]; then
+              echo "--- the console's log, last 200 lines"
+              tail -n 200 "$SMOKE/console.log"
+            else
+              echo "the console's log is not printed: the search for the password and the session did not pass ($SCAN)"
+            fi
+          fi
+          rm -f "$SMOKE/password" "$SMOKE/session-values"
+          if command -v kind >/dev/null; then
+            kind delete cluster --name "$KIND_CLUSTER" --kubeconfig "$SMOKE/kind.kubeconfig"
+          fi
+          echo "clusters left on this VM: $(kind get clusters 2>&1 | tr '\n' ' ')"

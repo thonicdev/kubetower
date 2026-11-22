@@ -1,0 +1,17 @@
+node_modules/
+
+# The core SPA's build output. `web/dist/.gitkeep` is committed and must stay
+# committed: `//go:embed all:dist` on the Go side refuses to compile against a
+# directory that does not exist, so the placeholder is what lets a backend
+# contributor build and test without Node.
+dist/*
+!dist/.gitkeep
+
+# @kubetower/ui's library build. Nothing builds or reads it; kept ignored so a
+# stale copy in a working tree is never committed.
+ui/dist/
+
+# The npm half of the third-party notices, written by `pnpm build`
+# (scripts/third-party-notices.ts) outside dist/ so that it is not embedded.
+# Generated, like dist.
+build/

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KubeTower</title>
+
+    <!--
+      The icon, and what makes this installable as an application rather than a
+      tab. The SVG is the source of truth and the browser tab uses it directly;
+      the PNGs the manifest points at are rasterized from it at image build time,
+      so the taskbar icon cannot drift from the one in the tab.
+
+      Removing these lines removes the installable application with nothing
+      failing anywhere.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/kt-pwa/icon.svg" />
+    <link rel="apple-touch-icon" href="/kt-pwa/icon-192.png" />
+    <link rel="manifest" href="/kt-pwa/manifest.webmanifest" />
+    <meta name="theme-color" content="#326ce5" />
+    <meta name="application-name" content="KubeTower" />
+    <script>
+      // Registering the worker is what makes Chromium offer to install the site,
+      // so it gets its own window and its own taskbar icon. The worker caches
+      // nothing - see sw.js for why a Kubernetes console must not.
+      //
+      // The scope is `/` and the header that permits it is set by `pwa()` in
+      // internal/web/server.go. Both halves are required: a worker served from
+      // /kt-pwa/ defaults to controlling /kt-pwa/ and nothing else, which
+      // registers without complaint, controls no page, and never offers the
+      // install.
+      if ('serviceWorker' in navigator) {
+        addEventListener('load', () =>
+          navigator.serviceWorker.register('/kt-pwa/sw.js', { scope: '/' }).catch(() => {}),
+        );
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/app/main.tsx"></script>
+  </body>
+</html>

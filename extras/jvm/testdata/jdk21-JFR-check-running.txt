@@ -1,0 +1,3 @@
+7:
+Recording 1: name=kubetower-0123456789abcdef duration=5s maxsize=200.0MB (running)
+

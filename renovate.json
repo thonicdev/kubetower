@@ -1,0 +1,148 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Every branch Renovate pushes must be authored by a person, never a bot identity: guards.yml refuses machine-authored commits. Do not set a bot gitAuthor here.",
+    "The shape below keeps the queue short: a handful of grouped pull requests on Monday morning, rebased only when they conflict.",
+    "A release is proposed once it is three days old: long enough for a compromised or yanked publish to be noticed upstream, and never younger than pnpm's own minimumReleaseAge, which would refuse the lockfile update."
+  ],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "Europe/Paris",
+  "schedule": ["before 6am on monday"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "prConcurrentLimit": 6,
+  "prHourlyLimit": 0,
+  "rebaseWhen": "conflicted",
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "postUpdateOptions": ["gomodTidy"],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "description": "A security fix is not held until Monday, and it is a fix: it belongs in the release notes, where a chore does not appear. One day and not zero, because pnpm itself refuses a release younger than its own minimumReleaseAge (the exclude in web/pnpm-workspace.yaml is where that was met), and a lockfile update pnpm refuses is a red pull request.",
+    "schedule": ["at any time"],
+    "minimumReleaseAge": "1 day",
+    "semanticCommitType": "fix"
+  },
+  "customManagers": [
+    {
+      "description": "The Valkey image ci.yml's go job runs the shared-store contract test against: an env value, which no built-in manager reads, so until this it was the one image pin Renovate did not see. ci.yml says it is the chart's own pin, digest included; the chart's Renovate moves that one, and this moves this one, in the group below.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["VALKEY_IMAGE: (?<depName>valkey/valkey):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "The node shell's default image: a Go constant, which no built-in manager reads. Pinned by the multi-arch index digest because the pod it runs in is privileged with the node's / mounted; this keeps the tag and the digest moving together, in the alpine group below.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^internal/nodeshell/nodeshell\\.go$/"],
+      "matchStrings": ["const DefaultImage = \"(?<depName>alpine):(?<currentValue>[^@\"\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "config:recommended makes runtime dependencies `fix(deps)`. Here a dependency bump is a chore unless it is a security fix (vulnerabilityAlerts above): the release is cut by hand from a tag, and its notes should list what changed in KubeTower, not every patch upstream.",
+      "matchPackageNames": ["*"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "A major is a migration, not a bump. It waits on the Dependency Dashboard until somebody ticks it - except a GitHub Actions major, which the github actions rule below releases to its own pull request; the Node runtime major stays held by the last rule.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "@kubetower/ui's peer ranges were its contract with a consumer in another repository. The package is published nowhere since 2026-10-22, so they bind nothing outside this tree; they stay hand-moved so a bump never rewrites them as a side effect.",
+      "matchFileNames": ["web/ui/package.json"],
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    },
+    {
+      "description": "Every minor and patch of the console's npm packages, web/ and web/ui/ together, in one pull request. The app's dependencies and the ui package's devDependencies are the same packages at the same versions, and bumping one side alone is a pull request that fails the other side's typecheck.",
+      "groupName": "web dependencies",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "Every minor and patch of the Go modules, both go.mod files together, the AWS SDK included. The next rule is what makes boundary/go.mod follow the root.",
+      "groupName": "go dependencies",
+      "matchManagers": ["gomod"],
+      "matchDatasources": ["go"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": [
+        "boundary/go.mod replaces the root module with ../ and lists the root's dependencies as indirect, so a bump of a module the root uses leaves it untidy, and the gomodTidy post-update option only tidies the go.mod it edited: the Go job then stops at `go: updates to go.mod needed`. So every Go module update - grouped, security or approved major - tidies boundary/ once per branch, after the root's own tidy, and commits only boundary's two files.",
+        "Not indirect updates for boundary/go.mod: those would let boundary/ drift ahead of the root it replaces.",
+        "Renovate runs commands without a shell, hence workingDirTemplate rather than `cd boundary &&`; and its image installs Go only for a step that asks, hence installTools. A self-hosted Renovate must allow `go mod tidy` (allowedCommands), or the branch carries an artifact error instead of the tidy."
+      ],
+      "matchManagers": ["gomod"],
+      "matchDatasources": ["go"],
+      "postUpgradeTasks": {
+        "commands": ["go mod tidy"],
+        "workingDirTemplate": "boundary",
+        "fileFilters": ["boundary/go.mod", "boundary/go.sum"],
+        "executionMode": "branch",
+        "installTools": { "golang": {} }
+      }
+    },
+    {
+      "description": "The Go toolchain: the `toolchain` line of both go.mod files and the golang build image move together, or CI and the image build with two different compilers.",
+      "groupName": "go toolchain",
+      "matchDatasources": ["golang-version"]
+    },
+    {
+      "groupName": "go toolchain",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["golang"]
+    },
+    {
+      "description": "The `go` line of go.mod is not the compiler, it is the oldest Go that may build this module, for a contributor and for anything that imports it. Raising it is a decision about who can still build it, made by hand.",
+      "matchDatasources": ["golang-version"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
+      "description": "pnpm on its own. A pnpm major once changed the layout of a runner's shims and broke every `pnpm` call after it; a pnpm bump is read on its own, not inside forty others.",
+      "groupName": "pnpm",
+      "matchPackageNames": ["pnpm"]
+    },
+    {
+      "description": "The workflows' actions, majors included - a major here is usually a runtime change, and the pull request's own CI runs most of them. Not release.yml's: it only runs on a tag, so after merging this group, check the next release run. `dependencyDashboardApproval: false` is what \"majors included\" takes: the major rule above holds every major on the dashboard, and without this override an actions major waited there too. The Node major it would also release is held again by the last rule.",
+      "groupName": "github actions",
+      "matchManagers": ["github-actions"],
+      "dependencyDashboardApproval": false
+    },
+    {
+      "description": "Node: setup-node's node-version in the workflows (github-actions extracts it as depName `node`, from actions/node-versions), the image the console is built in, and @types/node. Three places naming one runtime, moved as one - after the actions rule, so that setup-node's version leaves that group for this one. Docker's node tag uses node versioning so that only LTS lines count as stable.",
+      "groupName": "node runtime",
+      "matchDepNames": ["node"]
+    },
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["node"],
+      "versioning": "node"
+    },
+    {
+      "groupName": "node runtime",
+      "matchPackageNames": ["@types/node"]
+    },
+    {
+      "description": "The Node major is a migration of the runtime, not a bump, and stays held on the dashboard: setup-node's node-version, the node image and @types/node, all three named `node` or `@types/node`. Last, after the actions rule, which released every other actions major and would otherwise release setup-node's node-version with them. @types/node is held with it: types ahead of the runtime describe APIs the runtime does not have.",
+      "matchDepNames": ["node", "@types/node"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Valkey, tag and digest together, as the chart's own `valkey image` group does it. Docker versioning keeps the -alpine3.24 suffix, so a move to a newer Alpine line is made by hand - in both repositories, since the CI pin is meant to be the chart's.",
+      "groupName": "valkey image",
+      "matchPackageNames": ["valkey/valkey"]
+    },
+    {
+      "description": "Alpine, wherever it is named: the Dockerfile's ALPINE_VERSION and the node shell's pinned default in internal/nodeshell. One pull request, because TestTheDefaultImageIsTheDockerfilesAlpine fails when the two tags differ.",
+      "groupName": "alpine image",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine"]
+    }
+  ]
+}

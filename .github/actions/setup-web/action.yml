@@ -1,0 +1,45 @@
+# Node 24 and the pnpm of web/package.json, with the pnpm store cached.
+#
+# NOT pnpm/action-setup. Its self-installer runs the `npm` next to the node
+# that runs the action - the runner's own, under externals.<version>/node24 -
+# and on a self-hosted runner at version 2.338.0 that npm failed before it
+# started: "Cannot find module '../lib/cli.js'". Nothing in this repository can
+# repair the runner's copy, so pnpm comes from corepack, on
+# the node setup-node installs, the way the Dockerfile and the Taskfile already
+# get it. The version stays in one place: `packageManager` in web/package.json.
+#
+# setup-node's own `cache: pnpm` needs pnpm before setup-node runs, which is
+# the order this replaces, so the store is cached here by the lockfile instead.
+#
+# Every directory is under runner.temp, wiped between runs: on a self-hosted
+# runner the home persists, and a shim left there by an earlier pnpm once
+# shadowed the new one on PATH.
+name: setup-web
+description: Node 24 and the pnpm of web/package.json, through corepack, with the pnpm store cached
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+    - id: pnpm
+      shell: bash
+      working-directory: web
+      env:
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      run: |
+        set -eu
+        bin="$RUNNER_TEMP/corepack-bin"
+        mkdir -p "$bin"
+        export COREPACK_HOME="$RUNNER_TEMP/corepack"
+        echo "COREPACK_HOME=$COREPACK_HOME" >> "$GITHUB_ENV"
+        echo "COREPACK_ENABLE_DOWNLOAD_PROMPT=0" >> "$GITHUB_ENV"
+        corepack enable --install-directory "$bin" pnpm
+        echo "$bin" >> "$GITHUB_PATH"
+        "$bin/pnpm" --version
+        echo "store=$("$bin/pnpm" store path --silent)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm.outputs.store }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-

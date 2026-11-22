@@ -1,0 +1,219 @@
+package redis
+
+import (
+	"net/http"
+	"sort"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/thonicdev/kubetower/extension"
+	"github.com/thonicdev/kubetower/svcgroup"
+)
+
+// A Service whose ports are neither named like a Redis nor on 6379 is still a
+// Redis when it says what it fronts: a StatefulSet of valkey/valkey behind a
+// port named `client` on 6380 is one. This file finds those, after the port
+// guess (looksLikeRedis) has had its say, and only for Services it took none
+// of.
+
+// evidenceName is the `app.kubernetes.io/name` values that say Redis.
+var evidenceName = map[string]bool{"redis": true, "valkey": true}
+
+// evidenceImage is the image names that say Redis, whatever the registry,
+// path, tag or digest: `valkey/valkey:8.1`, `docker.io/bitnami/redis`,
+// `redis@sha256:…`.
+var evidenceImage = map[string]bool{"redis": true, "valkey": true}
+
+// chosenPort is the port a Service's evidence picked, and why.
+type chosenPort struct {
+	Name string
+	Port int32
+	Why  string
+}
+
+// notAServerPort is a port that is never the server's, whatever the Service
+// says: an exporter, a Sentinel, the cluster bus, a web port.
+func notAServerPort(port corev1.ServicePort) bool {
+	name := strings.ToLower(strings.TrimSpace(port.Name))
+	switch {
+	case strings.Contains(name, "metrics"), strings.Contains(name, "exporter"), strings.Contains(name, "sentinel"),
+		strings.Contains(name, "bus"), strings.HasPrefix(name, "http"), strings.HasPrefix(name, "https"):
+		return true
+	case port.Port == 9121, port.Port == 26379, port.Port == 16379:
+		return true
+	case port.Protocol != "" && port.Protocol != corev1.ProtocolTCP:
+		return true
+	}
+	return false
+}
+
+// imageName is the last path segment of an image reference, without its tag
+// or digest.
+func imageName(image string) string {
+	image = strings.ToLower(image)
+	if at := strings.IndexByte(image, '@'); at >= 0 {
+		image = image[:at]
+	}
+	if slash := strings.LastIndexByte(image, '/'); slash >= 0 {
+		image = image[slash+1:]
+	}
+	if colon := strings.IndexByte(image, ':'); colon >= 0 {
+		image = image[:colon]
+	}
+	return image
+}
+
+// evidence picks, for each Service the port guess took nothing of, the one
+// port that is its Redis, by "namespace/name".
+//
+// From the Service's `app.kubernetes.io/name` (its labels, then its
+// selector), across the cluster; and, when pods is not nil (a read scoped to
+// one namespace), from a selected pod running a Redis image, whose container
+// port the Service port targets. A Service with several candidate ports and
+// nothing to tell them apart is left alone: a guess between two ports would
+// dial the wrong one.
+func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.Pod) map[string]chosenPort {
+	out := map[string]chosenPort{}
+	for i := range services {
+		service := &services[i]
+		key := service.Namespace + "/" + service.Name
+		if taken[key] || service.Spec.Type == corev1.ServiceTypeExternalName {
+			continue
+		}
+		var candidates []corev1.ServicePort
+		for _, port := range service.Spec.Ports {
+			if !notAServerPort(port) {
+				candidates = append(candidates, port)
+			}
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		if chosen, ok := byImage(service, candidates, pods); ok {
+			out[key] = chosen
+			continue
+		}
+		if len(candidates) != 1 {
+			continue
+		}
+		for _, labelled := range []map[string]string{service.Labels, service.Spec.Selector} {
+			if value := labelled["app.kubernetes.io/name"]; evidenceName[strings.ToLower(value)] {
+				out[key] = chosenPort{Name: candidates[0].Name, Port: candidates[0].Port,
+					Why: "it is labeled app.kubernetes.io/name=" + value}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// byImage is the candidate port a selected pod's Redis container listens on.
+func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*corev1.Pod) (chosenPort, bool) {
+	if pods == nil || len(service.Spec.Selector) == 0 {
+		return chosenPort{}, false
+	}
+	selector := labels.SelectorFromSet(service.Spec.Selector)
+	for _, pod := range pods {
+		if pod.Namespace != service.Namespace || !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		for _, container := range pod.Spec.Containers {
+			name := imageName(container.Image)
+			if !evidenceImage[name] {
+				continue
+			}
+			why := "its pod runs " + name
+			var hits []corev1.ServicePort
+			for _, port := range candidates {
+				if targets(port, container) {
+					hits = append(hits, port)
+				}
+			}
+			if len(hits) == 1 {
+				return chosenPort{Name: hits[0].Name, Port: hits[0].Port, Why: why}, true
+			}
+			if len(hits) == 0 && len(container.Ports) == 0 && len(candidates) == 1 {
+				// The container declares nothing: the one port there is.
+				return chosenPort{Name: candidates[0].Name, Port: candidates[0].Port, Why: why}, true
+			}
+		}
+	}
+	return chosenPort{}, false
+}
+
+// targets says whether the Service port reaches one of the container's ports:
+// by name for a named targetPort, by number otherwise (an unset targetPort is
+// the port itself).
+func targets(port corev1.ServicePort, container corev1.Container) bool {
+	target := port.TargetPort
+	if target.Type == intstr.String && target.StrVal != "" {
+		for _, cp := range container.Ports {
+			if cp.Name == target.StrVal {
+				return true
+			}
+		}
+		return false
+	}
+	number := target.IntVal
+	if number == 0 {
+		number = port.Port
+	}
+	for _, cp := range container.Ports {
+		if cp.ContainerPort == number {
+			return true
+		}
+	}
+	return false
+}
+
+// withEvidence adds, to what the port guess found, the port each Service's
+// evidence chose, with what is behind it as for any other, in Discover's
+// order (namespace, service, port).
+func withEvidence(found []svcgroup.Instance, services []corev1.Service, slices []discoveryv1.EndpointSlice, slicesRead bool, chosen map[string]chosenPort) []svcgroup.Instance {
+	if len(chosen) == 0 {
+		return found
+	}
+	for i := range services {
+		pick, ok := chosen[services[i].Namespace+"/"+services[i].Name]
+		if !ok {
+			continue
+		}
+		match := func(port corev1.ServicePort) (string, bool) {
+			return pick.Why, port.Name == pick.Name && port.Port == pick.Port
+		}
+		found = append(found, svcgroup.Discover(services[i:i+1], slices, slicesRead, match)...)
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		if found[i].Namespace != found[j].Namespace {
+			return found[i].Namespace < found[j].Namespace
+		}
+		if found[i].Service != found[j].Service {
+			return found[i].Service < found[j].Service
+		}
+		return found[i].Port < found[j].Port
+	})
+	return found
+}
+
+// podsIn lists one namespace's pods for the image evidence; nil when the
+// listing was refused, partial or could not be decoded, which leaves the
+// labels as the only evidence.
+func podsIn(r *http.Request, h extension.Host, cluster, namespace string) []*corev1.Pod {
+	page, err := h.List(r, cluster, extension.ListQuery{GVR: podsGVR, Namespace: namespace})
+	if err != nil || !page.Complete {
+		return nil
+	}
+	pods := make([]*corev1.Pod, 0, len(page.Items))
+	for i := range page.Items {
+		var pod corev1.Pod
+		if err := fromUnstructured(&page.Items[i], &pod); err != nil {
+			return nil
+		}
+		pods = append(pods, &pod)
+	}
+	return pods
+}

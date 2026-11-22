@@ -1,0 +1,10 @@
+{
+  // The browser path (`e2e/`) and its config, held to the same flags as the
+  // app. Neither tsconfig.json nor tsconfig.node.json includes them, so without
+  // this file `pnpm typecheck` would say nothing about this code.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["e2e", "playwright.config.ts"]
+}

@@ -1,0 +1,73 @@
+# What must never be committed, and why each line is here.
+#
+# This repository has already paid for the absence of one of these lines: a
+# `git add -A` after an install committed 6 366 files and the summary said
+# "1 file changed", because nobody looked.
+
+# ---------------------------------------------------------------------------
+# Credentials and machine-local configuration
+# ---------------------------------------------------------------------------
+# `.env` carries the password hash and the host paths to ~/.kube and ~/.aws. It
+# is the one file in the tree whose whole purpose is to differ per machine.
+#
+# `.env.example` is the opposite — it is the documentation — so it is excluded
+# from the exclusion explicitly, because `.env.*` would otherwise swallow it and
+# the omission would look deliberate rather than accidental.
+.env
+.env.*
+!.env.example
+
+# In case one is ever copied in to reproduce something.
+kubeconfig
+*.kubeconfig
+credentials.json
+*.pem
+*.key
+!**/testdata/**/*.pem
+!**/testdata/**/*.key
+
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+# `dist/` and built binaries are never committed.
+node_modules/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+/kubetower
+
+# Go test artifacts. `*.test` is a compiled binary, not a source file, and it
+# lands beside the package it was built from.
+*.test
+coverage.out
+coverage.html
+
+# ---------------------------------------------------------------------------
+# Editors and operating systems
+# ---------------------------------------------------------------------------
+# Not tidiness. A committed `.idea/` hands every contributor one person's
+# absolute paths, and a `.DS_Store` in a public repository is a directory
+# listing of somebody's machine.
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# A `go.work` points at absolute paths on one machine and silently changes what
+# `go build` resolves for anyone who checks it out.
+go.work
+go.work.sum
+
+# Playwright writes failures here: screenshots, traces, an error context.
+# Local by nature - they are about one run on one machine.
+web/test-results/
+web/playwright-report/
+
+# Private working notes, never part of the repository.
+*.local
+/docs/local/
+/.scratch/

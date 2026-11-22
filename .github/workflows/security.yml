@@ -1,0 +1,87 @@
+# Supply chain. What a red cross here means: upgrade something, or somebody
+# published an advisory. A different reaction from ci.yml's "you broke
+# something", so a different workflow.
+#
+# WHAT RUNS WHEN (decided 2026-10-29): govulncheck, on every pull
+# request and push to main, and nightly on main, since an advisory is published
+# on somebody else's calendar and no push will coincide with it. About a minute.
+# release.yml refuses a commit with no green run of this workflow.
+#
+# The image's own packages are scanned by trivy in release.yml, on the image it
+# is about to push and before the push; CodeQL was removed with that decision.
+# Nothing here holds a credential.
+
+name: security
+
+on:
+  pull_request:
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+  schedule:
+    # 06:00 UTC, daily, on the default branch: the advisory published overnight.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run; anything else is grouped
+# by commit and never canceled (ci.yml says why).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Go modules and the standard library.
+  # ---------------------------------------------------------------------------
+  govulncheck:
+    name: govulncheck
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON && fromJSON(vars.RUNS_ON) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # The pool keeps the Go caches on disk; GitHub's cache of them was
+          # 4.9 GB moved twice per job (ci.yml's `go` job says more).
+          cache: false
+      # govulncheck is reachability-aware: it reports an advisory only where the
+      # vulnerable symbol is actually called. That is why it is here and a
+      # generic dependency lister is not - a list of CVEs nobody can act on is
+      # how a security report comes to be skimmed.
+      #
+      # It also reports standard-library advisories against the *toolchain*, and
+      # those are answered by the pin in go.mod rather than by a module upgrade.
+      # Read which kind it is before changing anything: a host toolchain can
+      # report a couple of dozen stdlib advisories that never reach the shipped
+      # container at all, because the image builds on a different patch.
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
+
+      # **`./...` above walks straight past `boundary/`.** A nested module is
+      # excluded from the parent's package pattern by design - the trap ci.yml
+      # names at its own boundary step - so the root scan never sees the second
+      # module's dependencies. And they are not the root's: the
+      # boundary module resolves its own `require` list, so the version of a
+      # shared dependency it builds with can differ from the one the root scan
+      # vouched for.
+      #
+      # It runs whatever the step above concluded. A red core scan is no reason
+      # to withhold the boundary's answer, and a run that reported one module
+      # and stopped would read as having looked at both. `!cancelled()` rather
+      # than `always()`: a canceled run has nothing to report.
+      #
+      # It also re-reports any core advisory the boundary's code reaches through
+      # the `replace => ../`. That is the same finding twice, not a second
+      # problem: fix it in the core and both steps clear.
+      - name: govulncheck - the boundary module
+        if: ${{ !cancelled() && hashFiles('boundary/go.mod') != '' }}
+        working-directory: boundary
+        run: govulncheck ./...

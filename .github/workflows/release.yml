@@ -1,0 +1,1367 @@
+# A tag is the only thing anybody outside this repository receives. This is the
+# heavy tier (decided 2026-10-29): everything that is not run on each change -
+# every target, the Windows setup, the macOS disk images, the docker build and
+# its trivy scan - is built here, from the tag, before anything is published.
+# The same jobs run by hand with `gh workflow run ci -f full=true`.
+#
+# THE RELEASE IS A DRAFT and is never published here: publishing is a person's
+# act. THE IMAGE IS THE ONE EXCEPTION, because a Helm chart installs from a
+# registry: ghcr.io/<owner>/kubetower:<version>, no `latest`, never pushed over
+# an existing version tag.
+#
+# THE ORDER, each step a job of its own:
+#
+#   verify    the tag names a version, its commit is on main, and that commit
+#             already has a green ci run (its Go and front-end jobs) and a green
+#             security run (govulncheck). Reads only.
+#   archives  the console, the five archives (Windows amd64; Linux and macOS
+#             amd64 and arm64) through cmd/ktbuild, and the checksums.
+#   setup     the Windows setup wizard around the Windows zip's kubetower.exe,
+#             checked against the archives' checksums first.
+#   dmg       dmg.yml: one disk image per macOS architecture.
+#   packages  linux-packages.yml: the .deb and the .rpm around the Linux amd64
+#             archive's binary, checked against the archives' checksums first,
+#             and installed in a debian and a fedora container.
+#   appimage  appimage.yml: the x86_64 AppImage around the same binary,
+#             checked against the archives' checksums first, and run with
+#             --appimage-extract-and-run --version.
+#   image     builds the image once, asks it its version, scans it with trivy
+#             and pushes that image only if the scan passed; a re-run after its
+#             own push checks and scans the registry copy instead of building.
+#   draft     the draft release from the files above, each checked against the
+#             hash the job that made it computed.
+#
+# So a tag whose binaries, setup, disk images, Linux packages, AppImage or
+# image fail pushes nothing and drafts nothing, and any failure after the push
+# is recovered by re-running the failed jobs.
+#
+# WHERE: where the RUNS_ON_RELEASE variable says, on a GitHub-hosted runner when
+# it is unset (ci.yml's workflows test pins the expression). image and draft,
+# the two jobs holding a write scope, run there too. A self-hosted runner
+# persists, so the isolation is made by the job instead of by a discarded VM: each holds only its own permission, its
+# credential lives in a directory of its own under runner.temp (never the
+# runner user's home), and an always() step logs out, removes it and reads back
+# that it is gone. What a self-hosted runner cannot give is a VM no other job
+# shares: a job running beside these on the same runner VM runs as the same user.
+#
+# NOT YET: signing, a linux/arm64 image, a version derived from the history -
+# the tag is typed by a person. Every
+# archive, the setup and the image carry LICENSE, LICENSING.md and
+# THIRD_PARTY_NOTICES.txt (cmd/ktnotices).
+
+name: release
+
+on:
+  push:
+    # A release tag is bare semver - 0.1.0, 0.1.0-rc.4 - and never v0.1.0:
+    # the v is not part of a semantic version. A tag starting with anything
+    # but a digit does not start this workflow.
+    tags: ['[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+# Nothing at the workflow level. Each job names what it holds, and a job-level
+# block replaces this rather than adding to it.
+permissions: {}
+
+# Two runs of one tag would race on one draft and one image tag. The second
+# waits rather than canceling the first, which may be halfway through a push.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: the tag is a version on main, and its commit passed ci
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # To read ci.yml's and security.yml's runs for the tagged commit.
+      actions: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      version: ${{ steps.v.outputs.version }}
+      built: ${{ steps.v.outputs.built }}
+    steps:
+      # **Every job starts by checking the host's tools it calls**, and names
+      # every missing one in a single error. A self-hosted runner is a machine
+      # whose packages were installed by hand, and a job that discovers a
+      # missing tool one per attempt - `gh: command not found` here, then
+      # `zip: command not found` in archives, after verify has spent its
+      # minutes - costs a full run for each. No pull request runs
+      # this file, and actionlint cannot see a missing binary, so the check
+      # has to be the job's own first step - before the checkout, which falls
+      # back to a tarball without git and leaves the ancestry check below to
+      # fail in words that do not say why. Only what a `run:` line calls is
+      # listed; the tools an action installs (Go, Node, pnpm) are that
+      # action's. Installing them belongs to the VM's provisioning
+      # not to a release: fetching a pinned `gh` by
+      # checksum here would be the same step in three jobs, a version and a
+      # hash outside Renovate's reach, and a dependency on curl and tar in
+      # place of one on gh - and zip has no such release to fetch.
+      #
+      # The script is the same in every job; only TOOLS differs, and the remedy
+      # it names.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: git gh date
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them and installs none; install them on the runner VM through its provisioning, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A dispatch names a tag, and it is checked out *as* a tag: a branch
+          # name typed into the box resolves to nothing under refs/tags/ and the
+          # checkout fails, rather than building whatever that branch holds.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          # The version is derived from the tag, so the tag has to be here - and
+          # so does main, for the ancestry check below.
+          fetch-depth: 0
+
+      # Every draft's notes open with the unsigned-build notice, and draft has
+      # no checkout to read it from: it fetches the file at the tag. Checked
+      # here too, so a tag without it fails before anything is built.
+      - name: The unsigned-build notice is in the tree
+        run: |
+          set -eu
+          f=packaging/release-notes/unsigned.md
+          if [ ! -s "$f" ]; then
+            echo "::error::$f is missing or empty at this tag; every draft's notes open with it"
+            exit 1
+          fi
+          echo "ok   $f"
+
+      # **What is built is a tag, and the tag is on main.** R6 puts every change
+      # through a pull request, and the jobs below hold `packages: write` and
+      # `contents: write`: without this, a version tag pushed on any commit - a
+      # branch nobody reviewed, a local experiment - built and pushed a
+      # published image from it, the one artifact that skipped review. Checked
+      # before anything is built, so such a tag drafts nothing either.
+      #
+      # **The ref only ever reaches the shell through env.** It is a name a
+      # person chose, and `git check-ref-format "refs/tags/1\$(id)"` accepts
+      # it: interpolated into `run:` with `${{ }}`, it was executed by the shell
+      # with this job's token in reach. As a variable it is data, and it is then
+      # held to a version's shape before anything uses it as one.
+      #
+      # **The commit is passed on by its sha**, and every later job checks out
+      # that sha rather than the tag: a tag moved while this run is in progress
+      # cannot make the archives and the image two different commits.
+      #
+      # **The limit, stated rather than discovered.** The workflow that runs is
+      # the one at the tagged commit. A commit that rewrote this file can drop
+      # the check, and nothing in a file can stop that - tag protection is a
+      # ruleset, which this plan does not offer (R6). What this stops is a tag
+      # put on the wrong commit, and a name that runs code.
+      - name: The tag names a version, and its commit is on main
+        id: tag
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" = workflow_dispatch ]; then
+            tag="$INPUT_TAG"
+          else
+            case "$REF" in
+              refs/tags/*) tag="$REF_NAME" ;;
+              *) echo "::error::this workflow builds tags; it was started on $REF"; exit 1 ;;
+            esac
+          fi
+          # A version, and nothing a shell, a linker flag or an image tag could
+          # read as more than one: three numbers, an optional pre-release, and
+          # no v - a release tag is bare semver. A bash match and not grep:
+          # grep matches per line, and a dispatch input is not bound to one.
+          # cmd/ktbuild's workflow tests run this very block.
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            case "$tag" in
+              v[0-9]*) echo "::error::$tag is not a release tag: a release tag is bare semver, ${tag#v}, with no v; refusing to build it" ;;
+              *) echo "::error::$tag is not a version (MAJOR.MINOR.PATCH[-pre], such as 0.1.0 or 0.1.0-rc.4); refusing to build it" ;;
+            esac
+            exit 1
+          fi
+          # Resolved under refs/tags/ explicitly, so a branch of the same name
+          # cannot answer for it, and compared with what was checked out.
+          want=$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}") || {
+            echo "::error::$tag does not resolve to a tag in this repository"
+            exit 1
+          }
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$want" ]; then
+            echo "::error::checked out $head, but $tag is $want"
+            exit 1
+          fi
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::$tag is on $head, which is not on main - a release is cut from reviewed code only (R6)"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+          echo "$tag is $head, on main"
+
+      # **A tag only releases a commit that was proved, not one that merely
+      # merged**. This workflow builds every target, the setup, the disk
+      # images and the image itself, and scans the image before pushing it; what
+      # it does not run is the tests. Those are ci.yml's, on the push to main:
+      # a run counts only if it succeeded and its Go job and front-end job both
+      # succeeded in it, read from the run's jobs and not its trigger. A green
+      # security.yml run (govulncheck) on the same commit is the other half.
+      #
+      # An API that cannot be read is an error, never "no green run": the two
+      # are different answers and say so.
+      - name: The commit passed ci, and a security run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ids=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&status=success&per_page=50" --jq '.workflow_runs[].id')
+          tested=""
+          for id in $ids; do
+            n=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.conclusion == "success" and (.name == "gofmt, vet, test -race, the contract from outside" or .name == "front end - lint, typecheck, build"))] | length')
+            if [ "$n" = 2 ]; then tested=$id; break; fi
+          done
+          scan=$(gh api "repos/$REPO/actions/workflows/security.yml/runs?head_sha=$SHA&status=success&per_page=1" --jq '.workflow_runs[0].id // ""')
+          {
+            echo "### The tagged commit, before anything is built"
+            echo
+            echo "- \`$SHA\`"
+            echo "- ci: ${tested:+run $tested}${tested:-**none succeeded**}"
+            echo "- security: ${scan:+run $scan}${scan:-**none succeeded**}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # **What to run depends on why, and the newest run of each workflow on
+          # this commit says why:**
+          #
+          #   none       the commit changed only paths the workflow ignores, so
+          #              nothing ran. A dispatch runs on a branch's HEAD, never
+          #              on an older commit: prove main's HEAD and tag that.
+          #   failure    a flake, most often: re-running the failed jobs proves
+          #              this very commit.
+          #   cancelled  a run on main is not canceled by a later push, but can
+          #              be by hand: re-run it.
+          #
+          # Then this release's failed jobs are re-run; a new commit is a new tag.
+          advise() {
+            wf=$1
+            last=$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$SHA&per_page=1" \
+              --jq '.workflow_runs[0] // empty | "\(.id) \(.conclusion // .status)"')
+            id=${last%% *}; state=${last#* }
+            case "$state" in
+              "") echo "$wf never ran on $SHA. Run it on main's HEAD, and tag that commit once it is green:"
+                  echo "  gh workflow run $wf --ref main -R $REPO" ;;
+              failure|timed_out)
+                  echo "$wf run $id on $SHA ended in $state. If that was a flake, re-run its failed jobs:"
+                  echo "  gh run rerun $id --failed -R $REPO" ;;
+              cancelled)
+                  echo "$wf run $id on $SHA was canceled. Re-run it on this commit:"
+                  echo "  gh run rerun $id -R $REPO" ;;
+              success)
+                  echo "$wf run $id on $SHA succeeded without its Go and front-end jobs. Run it on main's HEAD, and tag that commit once it is green:"
+                  echo "  gh workflow run $wf --ref main -R $REPO" ;;
+              *)  echo "$wf run $id on $SHA is $state: wait for it." ;;
+            esac
+          }
+          if [ -z "$tested" ] || [ -z "$scan" ]; then
+            echo "::error::$SHA has no successful ci run and security run (ci: ${tested:-none}, security: ${scan:-none})."
+            [ -z "$tested" ] && advise ci.yml
+            [ -z "$scan" ] && advise security.yml
+            echo "Once both have succeeded on $SHA, re-run this release's failed jobs (a different commit needs a tag of its own):"
+            echo "  gh run rerun $GITHUB_RUN_ID --failed -R $REPO"
+            exit 1
+          fi
+          echo "ci run $tested and security run $scan both succeeded on $SHA"
+
+      - name: Establish the version from the tag
+        id: v
+        env:
+          # Through env, never `${{ }}` inside the script - see the check above.
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -eu
+          # The tag is bare semver (verify held it to that), so it is the version.
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          # Once, here, so the archives and the image carry the same date:
+          # `--version` on either says when it was built, and two answers for
+          # one release is a question nobody can settle afterwards. A date and
+          # not an instant, as internal/launch/version.go asks: the question it
+          # answers is "how old is this", not "which invocation".
+          echo "built=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "building $TAG"
+
+  archives:
+    name: build every target and archive it
+    needs: verify
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      # checksums.txt's own hash, which the draft checks the downloaded file
+      # against. An output and not a file: it does not travel in the artifact,
+      # so nothing that can reach the artifact can change both.
+      sums: ${{ steps.sums.outputs.sha256 }}
+    steps:
+      # See verify's first step. zip is the one the first run found missing.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: git zip tar gzip sha256sum find du cut wc cp mkdir rm cat sed
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them and installs none; install them on the runner VM through its provisioning, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          # Nothing below talks to the repository, and `pnpm install` runs
+          # third-party scripts that could read a token left in .git/config.
+          persist-credentials: false
+
+      # A tag on a tree with nothing to build is a mistake, and the failure mode
+      # of continuing is the worst one available: a published release whose
+      # assets are absent, which reads to a visitor as a broken download rather
+      # than as a release that should not exist. Refuse loudly instead.
+      - name: There has to be something to build
+        run: |
+          if [ ! -f go.mod ]; then
+            echo "::error::no go.mod - a tag on a tree with no build is a mistake"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # The pool keeps the module and build caches in the runner user's
+          # home between jobs; restoring a 4.9 GB copy of them from GitHub's
+          # cache, and saving it again, was most of every Go job's wall clock
+          # and what pushed the repository over its 10 GB cache cap.
+          cache: false
+      # The module and build caches this job compiles from are made for it.
+      # The pool keeps the runner user's ~/go/pkg/mod and ~/.cache/go-build
+      # between jobs, any job on the machine may write to them, and Go does
+      # not check a cached entry again when it reuses it: one altered entry
+      # would be linked into every binary below, and the checksums would hash
+      # it faithfully. So GOMODCACHE and GOCACHE are fresh directories under
+      # this job's temp, every module is checked against go.sum before the
+      # first build, and the last step removes both.
+      - name: Go builds from caches made for this job
+        run: |
+          set -eu
+          root="$RUNNER_TEMP/go-$GITHUB_JOB"
+          if [ -e "$root" ]; then chmod -R u+w "$root"; rm -rf "$root"; fi
+          mkdir -p "$root/mod" "$root/build"
+          {
+            echo "GOMODCACHE=$root/mod"
+            echo "GOCACHE=$root/build"
+            echo "GOFLAGS=-mod=readonly"
+          } >> "$GITHUB_ENV"
+      - name: Every module is the one go.sum names
+        run: |
+          set -eu
+          case "$(go env GOMODCACHE)" in "$RUNNER_TEMP"/*) ;; *) echo "::error::GOMODCACHE is $(go env GOMODCACHE), not under RUNNER_TEMP"; exit 1 ;; esac
+          case "$(go env GOCACHE)" in "$RUNNER_TEMP"/*) ;; *) echo "::error::GOCACHE is $(go env GOCACHE), not under RUNNER_TEMP"; exit 1 ;; esac
+          go mod download
+          go mod verify
+
+      # Every archive carries the license, because the AGPL requires it to travel
+      # with the binary and a download is exactly where it stops traveling.
+      # Without this the five archives ship no console.
+      #
+      # `//go:embed all:dist` is satisfied by the committed `web/dist/.gitkeep`,
+      # so `go build` succeeded, the archives were produced, the release drafted,
+      # and every binary served the "UI not built" page. Nothing here or in
+      # ci.yml could see it: `ci.yml` only ever asks the image `--version`.
+      # Found by an audit on 2026-09-12.
+      # Node 24 and pnpm through corepack, not pnpm/action-setup: the
+      # runner's own npm can be broken on a self-hosted runner (.github/actions/setup-web).
+      - uses: ./.github/actions/setup-web
+      - name: Build the console, and prove it exists before anything is built on it
+        run: |
+          set -eu
+          pnpm -C web install --frozen-lockfile
+          pnpm -C web run build
+          # An empty answer and a failed answer: `pnpm build` exits 0 for reasons
+          # that do not include "the bundle exists". DoD §14, brief §3.4.
+          test -f web/dist/ui/index.html || {
+            echo "::error::the console build produced no web/dist/ui/index.html - the archives would ship the UI-not-built page"
+            exit 1
+          }
+          # No sourcemap ships: the bundle is embedded whole, and a map's
+          # sourcesContent is every comment of the TypeScript source.
+          # web/vite.config.ts builds none unless KT_SOURCEMAP=1 asks.
+          maps=$(find web/dist -name '*.map')
+          if [ -n "$maps" ]; then
+            echo "::error::the console bundle holds sourcemaps, which would be embedded in every binary:"
+            echo "$maps"
+            exit 1
+          fi
+          echo "bundle: $(find web/dist -type f | wc -l) files, $(du -sh web/dist | cut -f1), no sourcemap"
+
+      # **The third-party notices**, generated rather than kept by hand: the Go
+      # modules linked into cmd/kubetower for every target below, the npm
+      # packages the bundle above contains (written by its build), each with its
+      # license text. Into web/dist/ui before anything is linked, so every
+      # binary embeds and serves it, and each archive
+      # gets a copy beside LICENSE. A module or package with no license file
+      # fails here, by name.
+      - name: Third-party notices
+        run: |
+          set -eu
+          go run ./cmd/ktnotices -npm web/build/third-party-npm.json -o web/dist/ui/THIRD_PARTY_NOTICES.txt
+          test -s web/dist/ui/THIRD_PARTY_NOTICES.txt || {
+            echo "::error::cmd/ktnotices wrote an empty THIRD_PARTY_NOTICES.txt"
+            exit 1
+          }
+          sed -n '/^Go modules: /p' web/dist/ui/THIRD_PARTY_NOTICES.txt
+
+      # cmd/ktbuild links each target the shipped way and reads every Windows
+      # binary back: GUI subsystem, and the tag's version in the resource
+      # Explorer shows, which it regenerates for the build (go-winres, fetched
+      # once) and puts back afterwards. internal/launch/versionstamp_test.go
+      # holds the stamps it writes. A -version build ships, so it also refuses
+      # a tree with no web/dist/ui/index.html and reads every binary back for
+      # the console (cmd/ktbuild/console.go).
+      - name: Build, and archive per platform convention
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          BUILT: ${{ needs.verify.outputs.built }}
+        run: |
+          set -eu
+          mkdir -p dist stage
+          for target in windows/amd64 darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            ext=""; [ "$os" = windows ] && ext=".exe"
+
+            rm -rf stage; mkdir -p stage
+            go run ./cmd/ktbuild -os "$os" -arch "$arch" -version "$VERSION" -built "$BUILT" -o "stage/kubetower$ext"
+            cp LICENSE LICENSING.md web/dist/ui/THIRD_PARTY_NOTICES.txt stage/
+            # The binary this runner can execute is asked for the notices it
+            # embeds, not only the copy beside it in the archive.
+            if [ "$target" = "$(go env GOOS)/$(go env GOARCH)" ]; then
+              # Captured whole, then cut in the shell: `| head -1` closes the
+              # pipe early, which fails under pipefail and logs a broken pipe.
+              # A failing --notices still fails the step (bash -e).
+              notices=$(stage/kubetower --notices)
+              header=${notices%%$'\n'*}
+              if [ "$header" != "KubeTower - third-party notices" ]; then
+                echo "::error::$target's binary printed '$header' for --notices: it does not embed them"
+                exit 1
+              fi
+              echo "ok   $target's binary embeds the notices"
+            fi
+
+            base="kubetower_${VERSION}_${os}_${arch}"
+            # zip for Windows, tar.gz elsewhere: what each platform's users
+            # already have a way to open without installing anything.
+            if [ "$os" = windows ]; then
+              # Named as the public download page asks, like the setup and
+              # the disk images. Only windows/amd64 is built, hence x64; the
+              # tar.gz archives keep their names, which that page does not link.
+              base="kubetower-${VERSION}-win-x64"
+              (cd stage && zip -q -r "../dist/${base}.zip" .)
+            else
+              tar -czf "dist/${base}.tar.gz" -C stage .
+            fi
+            echo "archived $base"
+          done
+          # cmd/ktbuild put the committed resource object back after each
+          # Windows build; a tree left modified means it did not.
+          git diff --exit-code --stat -- internal/launch/rsrc_windows_amd64.syso
+
+      # One file covering every archive, and it is the only record of what each
+      # should hash to - so it is an asset like the rest and is what a careful
+      # person checks a download against. Named checksums.txt, as the public
+      # download page asks.
+      - name: Checksums
+        id: sums
+        run: |
+          set -eu
+          cd dist
+          sha256sum ./* > checksums.txt
+          cat checksums.txt
+          echo "sha256=$(sha256sum checksums.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # The draft job takes its files from here, and an artifact that is only in
+      # a draft release is one nobody can inspect if the draft is deleted.
+      # Keeping the build's own copy for a fortnight costs little and is what
+      # makes a failed release investigable.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-${{ needs.verify.outputs.version }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+      # The caches made for this job go with it, whatever happened above:
+      # the runner is not discarded after the job. Checked gone, not assumed.
+      - name: Remove this job's Go caches
+        if: always()
+        run: |
+          set -u
+          root="$RUNNER_TEMP/go-$GITHUB_JOB"
+          if [ -e "$root" ]; then chmod -R u+w "$root"; rm -rf "$root"; fi
+          if [ -e "$root" ]; then echo "::error::$root is still there"; exit 1; fi
+          echo "removed $root"
+
+  # The two macOS disk images, from the darwin archives above: dmg.yml says
+  # what is in them and why it is made the way it is. The same file runs in
+  # ci.yml's full tier by hand, which is how a branch proves it without a tag.
+  dmg:
+    name: macos disk images
+    needs: [verify, archives]
+    # Nothing: the called job downloads this run's artifact, clones a public
+    # repository and uploads an artifact, none of which needs GITHUB_TOKEN.
+    permissions: {}
+    uses: ./.github/workflows/dmg.yml
+    with:
+      version: ${{ needs.verify.outputs.version }}
+      artifact: kubetower-${{ needs.verify.outputs.version }}
+
+  # The Windows setup wizard, around the kubetower.exe the
+  # Windows zip above carries: the same bytes, not a second build of the
+  # commit. ci.yml's `setup` job builds the same script through the same tool
+  # on a full run by hand, which is how a branch proves it without a tag.
+  setup:
+    name: the windows setup wizard
+    needs: [verify, archives]
+    # makensis is on no runner by default, so the job installs it through the
+    # runner's passwordless sudo, in the step below. No write scope here. See
+    # the header.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    # The checkout of a private repository, and nothing else. Artifacts move
+    # with the run's own token, which needs no scope.
+    permissions:
+      contents: read
+    # The setup's SHA-256, as this job computed it: the draft checks the
+    # artifact it downloads against this rather than against a checksum that
+    # traveled with it, as it does for the disk images.
+    outputs:
+      sha256: ${{ steps.build.outputs.sha256 }}
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      BUILT: ${{ needs.verify.outputs.built }}
+      # As in ci.yml's setup job.
+      # A floor, not a pin: the pool's runners are not one OS - one is Debian 12
+      # (nsis 3.08), another Ubuntu (3.10) - so no apt version exists on all of
+      # them. The setup's own checks below hold the result.
+      NSIS_MIN: "3.08"
+    steps:
+      - name: Install NSIS
+        run: |
+          set -eu
+          # The pool's runners are a non-root VM with passwordless sudo, and the
+          # job installs what it needs itself: the distribution's makensis, at
+          # least NSIS_MIN, and nothing when the runner already has one.
+          have() { makensis -VERSION 2>/dev/null | sed 's/^v//'; }
+          new_enough() { [ -n "$1" ] && [ "$(printf '%s\n%s\n' "$NSIS_MIN" "$1" | sort -V | head -1)" = "$NSIS_MIN" ]; }
+          if new_enough "$(have)"; then
+            echo "makensis v$(have) is already installed"
+          else
+            # apt-get update takes the lists' lock, which DPkg::Lock::Timeout does
+            # not wait on: another job on this VM may hold it for a moment.
+            for try in 1 2 3; do
+              sudo apt-get -o DPkg::Lock::Timeout=300 update -qq && break
+              [ "$try" = 3 ] && exit 1
+              sleep 20
+            done
+            sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends nsis >/dev/null
+            if ! new_enough "$(have)"; then
+              echo "::error::makensis is '$(have)', older than NSIS_MIN $NSIS_MIN, on this runner's OS. apt-cache policy nsis says:"
+              apt-cache policy nsis
+              exit 1
+            fi
+          fi
+          # The setup is opened with 7z further down.
+          if ! command -v 7z >/dev/null 2>&1; then
+            sudo apt-get install -o DPkg::Lock::Timeout=300 -y -qq --no-install-recommends p7zip-full >/dev/null
+          fi
+          echo "makensis $(makensis -VERSION)"
+          command -v 7z
+      # See verify's first step. This job installs NSIS and 7z (p7zip-full) in
+      # the step before this one, so 7z is on the list below and checked after
+      # the install; the rest it only calls.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: git sudo apt-get apt-cache unzip sha256sum cut mkdir 7z find grep awk
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. This job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: false
+          # Nothing is compiled here but cmd/ktbuild, which imports only the
+          # standard library.
+          cache: false
+      # The module and build caches this job compiles from are made for it.
+      # The pool keeps the runner user's ~/go/pkg/mod and ~/.cache/go-build
+      # between jobs, any job on the machine may write to them, and Go does
+      # not check a cached entry again when it reuses it: one altered entry
+      # would be linked into every binary below, and the checksums would hash
+      # it faithfully. So GOMODCACHE and GOCACHE are fresh directories under
+      # this job's temp, every module is checked against go.sum before the
+      # first build, and the last step removes both.
+      - name: Go builds from caches made for this job
+        run: |
+          set -eu
+          root="$RUNNER_TEMP/go-$GITHUB_JOB"
+          if [ -e "$root" ]; then chmod -R u+w "$root"; rm -rf "$root"; fi
+          mkdir -p "$root/mod" "$root/build"
+          {
+            echo "GOMODCACHE=$root/mod"
+            echo "GOCACHE=$root/build"
+            echo "GOFLAGS=-mod=readonly"
+          } >> "$GITHUB_ENV"
+      - name: Every module is the one go.sum names
+        run: |
+          set -eu
+          case "$(go env GOMODCACHE)" in "$RUNNER_TEMP"/*) ;; *) echo "::error::GOMODCACHE is $(go env GOMODCACHE), not under RUNNER_TEMP"; exit 1 ;; esac
+          case "$(go env GOCACHE)" in "$RUNNER_TEMP"/*) ;; *) echo "::error::GOCACHE is $(go env GOCACHE), not under RUNNER_TEMP"; exit 1 ;; esac
+          go mod download
+          go mod verify
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-${{ needs.verify.outputs.version }}
+          path: in
+
+      # The zip is checked before anything is built on it, against a hash that
+      # did not travel with it - the draft's argument, made here because this
+      # job wraps those bytes in another file. cmd/ktbuild then reads the binary
+      # back (GUI subsystem, the tag's version in its resource, the console
+      # embedded), runs makensis with warnings as errors, and reads the setup
+      # back (a PE file whose own resource section says the tag). The console
+      # is also checked by its own line first, before ktbuild is asked to wrap
+      # anything: a zip without it is refused by name.
+      # Named as the public download page asks. Unsigned, so SmartScreen will
+      # ask.
+      - name: Build the setup around the Windows zip's kubetower.exe
+        id: build
+        env:
+          SUMS: ${{ needs.archives.outputs.sums }}
+        run: |
+          set -eu
+          if ! [[ "$SUMS" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the archives job's sums output is '$SUMS', not a SHA-256"
+            exit 1
+          fi
+          zip="kubetower-${VERSION}-win-x64.zip"
+          (cd in && echo "$SUMS  checksums.txt" | sha256sum --check --strict \
+            && grep -F "  ./$zip" checksums.txt | sha256sum --check --strict)
+          mkdir -p stage dist
+          unzip -q "in/$zip" -d stage
+          go run ./cmd/ktbuild -check-console stage/kubetower.exe
+          go run ./cmd/ktbuild -os windows -arch amd64 -setup -stage stage -version "$VERSION" -built "$BUILT" \
+            -o "dist/kubetower-${VERSION}-setup.exe"
+          echo "sha256=$(sha256sum "dist/kubetower-${VERSION}-setup.exe" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The setup itself, opened rather than trusted, as ci.yml's setup job
+      # does: 7-Zip reads an NSIS payload, and the kubetower.exe it would
+      # install is read back for the console. The listing is asserted name by
+      # name: the setup installs each of the four files the zip carries.
+      - name: The setup installs a binary that embeds the console
+        run: |
+          set -eu
+          setup="dist/kubetower-${VERSION}-setup.exe"
+          x="$RUNNER_TEMP/setup-payload"
+          list=$(7z l "$setup")
+          echo "$list"
+          for f in kubetower.exe LICENSE LICENSING.md THIRD_PARTY_NOTICES.txt; do
+            awk '{print $NF}' <<< "$list" | grep -qxF "$f" || { echo "::error::the setup does not install $f"; exit 1; }
+          done
+          7z x -y -bd -o"$x" "$setup" >/dev/null
+          exe=$(find "$x" -name kubetower.exe -type f)
+          [ "$(printf '%s\n' "$exe" | grep -c .)" = 1 ] || { echo "::error::the setup holds no single kubetower.exe: '$exe'"; exit 1; }
+          go run ./cmd/ktbuild -check-console "$exe"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-setup-${{ needs.verify.outputs.version }}
+          path: dist/kubetower-${{ needs.verify.outputs.version }}-setup.exe
+          retention-days: 14
+          if-no-files-found: error
+          # A re-run of this job replaces the setup it made before.
+          overwrite: true
+
+      # The caches made for this job go with it, whatever happened above:
+      # the runner is not discarded after the job. Checked gone, not assumed.
+      - name: Remove this job's Go caches
+        if: always()
+        run: |
+          set -u
+          root="$RUNNER_TEMP/go-$GITHUB_JOB"
+          if [ -e "$root" ]; then chmod -R u+w "$root"; rm -rf "$root"; fi
+          if [ -e "$root" ]; then echo "::error::$root is still there"; exit 1; fi
+          echo "removed $root"
+
+  # The .deb and the .rpm, around the binary the Linux amd64 archive above
+  # carries: linux-packages.yml says what is in them, and installs each in a
+  # container of its distribution. The archive is checked against the archives
+  # job's checksum output first, as the setup job checks its zip. The same file
+  # runs in ci.yml's full tier by hand, which is how a branch proves it.
+  packages:
+    name: linux packages
+    needs: [verify, archives]
+    # The checkout of this private repository at the tagged commit, for the
+    # packaging files, and nothing else.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-packages.yml
+    with:
+      version: ${{ needs.verify.outputs.version }}
+      artifact: kubetower-${{ needs.verify.outputs.version }}
+      ref: ${{ needs.verify.outputs.sha }}
+      sums: ${{ needs.archives.outputs.sums }}
+
+  # The AppImage, around the same Linux amd64 archive's binary: appimage.yml
+  # says what is in it and how its tool is pinned. The archive is checked
+  # against the archives job's checksum output first, as packages checks it.
+  # The same file runs in ci.yml's full tier by hand.
+  appimage:
+    name: linux appimage
+    needs: [verify, archives]
+    # The checkout of this private repository at the tagged commit, for
+    # build.sh and the files it packs, and nothing else.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/appimage.yml
+    with:
+      version: ${{ needs.verify.outputs.version }}
+      artifact: kubetower-${{ needs.verify.outputs.version }}
+      ref: ${{ needs.verify.outputs.sha }}
+      sums: ${{ needs.archives.outputs.sums }}
+
+  image:
+    name: build the image, scan it, and push the image that was scanned
+    # After setup, dmg, packages and appimage as well as archives: a push is
+    # the one step a re-run cannot take back, so it waits until every file the
+    # draft will carry exists.
+    needs: [verify, archives, setup, dmg, packages, appimage]
+    # On the pool, though it holds `packages: write`: see the header for what
+    # replaces the discarded VM. The registry credential is this job's own
+    # directory under runner.temp and the last step removes it.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    # 90, not 60: the pool's runners are shared and start with little cached
+    # (pnpm install, the web gates, go mod download, the in-image vet and
+    # tests, the apk installs, trivy's database). The image took 14.5 min on the
+    # pool (rc.1); 90 leaves room for a 3- to 4-fold slowdown. A timeout pushes
+    # nothing, and a re-run rebuilds.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # The push to ghcr.io, and nothing else.
+      packages: write
+    steps:
+      # See verify's first step. Before the registry is asked anything, so a
+      # missing tool never leaves a credential written and the image half done.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: docker gh tr mktemp rm grep
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          # The build is buildx's (docker/setup-buildx-action), and a daemon
+          # that does not answer fails every docker call below: name both here
+          # rather than in the middle of a build.
+          docker buildx version >/dev/null 2>&1 || missing="$missing docker-buildx"
+          docker info >/dev/null 2>&1 || missing="$missing docker-daemon"
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them and installs none; this job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS docker-buildx docker-daemon"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+
+      - name: Name the image
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          # ghcr.io wants the path lower-case, and the owner is whoever this
+          # repository belongs to - a fork's tag pushes to the fork's registry.
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "ref=ghcr.io/$owner/kubetower:$VERSION" >> "$GITHUB_OUTPUT"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+
+      # **The credential is this job's, and only for as long as the job.**
+      # It goes into a directory of this job's own under runner.temp, made 700
+      # by mktemp, passed to every docker call with --config, and the last step
+      # logs out of it and removes it whatever happened - what keeps it from
+      # outliving the job on a runner that persists, and from being the runner
+      # user's own ~/.docker, which the pool's other jobs read.
+      #
+      # **Then the version tag is asked about, before anything is built.** A
+      # version tag is pushed once: a second build would not be the same image
+      # (the Dockerfile's `apk upgrade` reads the live index), and a chart may
+      # already have pulled the first. So:
+      #
+      #   absent      build, check, scan, push - the normal first run.
+      #   published   the tag exists and its image says it was built from this
+      #               very commit (its org.opencontainers.image.revision
+      #               label, which the build below sets and the next step
+      #               asserts). That is a re-run after a push whose later steps
+      #               failed: nothing is built or pushed, the registry copy is
+      #               pulled, checked and scanned like a fresh build, and the job
+      #               goes green so the draft can follow.
+      #   refused     the tag exists and was built from another commit. Never
+      #               replaced by a workflow; deleting it is a person's act.
+      #
+      # Only ghcr's "manifest unknown" (docker's "no such manifest") means
+      # absent. Anything else - a denial, a timeout, a proxy's 404 page - is
+      # an error, and nothing is guessed from it.
+      - name: Log in, and ask the registry about the version tag
+        id: probe
+        env:
+          ACTOR: ${{ github.actor }}
+          REF: ${{ steps.image.outputs.ref }}
+          SHA: ${{ needs.verify.outputs.sha }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          cfg=$(mktemp -d "$RUNNER_TEMP/docker-config.XXXXXX")
+          echo "KT_DOCKER_CONFIG=$cfg" >> "$GITHUB_ENV"
+          printf '%s' "$TOKEN" | docker --config "$cfg" login ghcr.io --username "$ACTOR" --password-stdin
+          if probe=$(docker --config "$cfg" manifest inspect "$REF" 2>&1); then
+            docker --config "$cfg" pull "$REF" >/dev/null
+            rev=$(docker image inspect --format '{{with .Config.Labels}}{{index . "org.opencontainers.image.revision"}}{{end}}' "$REF")
+            if [ "$rev" != "$SHA" ]; then
+              echo "::error::$REF already exists, built from '${rev:-no revision label}', not from $SHA. A published version tag is never replaced by a workflow; delete it on the package page first if it really must be rebuilt."
+              exit 1
+            fi
+            echo "$REF already exists and was built from $SHA: a re-run after the push. Checking and scanning the registry copy instead of building."
+            echo "state=published" >> "$GITHUB_OUTPUT"
+          else
+            case "$probe" in
+              *"manifest unknown"*|*"MANIFEST_UNKNOWN"*|*"no such manifest"*)
+                echo "$REF is not in the registry yet"
+                echo "state=absent" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error::could not tell whether $REF exists: $probe"
+                exit 1 ;;
+            esac
+          fi
+
+      # The pool's own platform, linux/amd64, so no QEMU or binfmt is needed. The
+      # Dockerfile's build stage does not cross-compile (it vets and tests inside
+      # itself), so a second architecture means emulation on the runner - a
+      # decision with a cost in minutes, not a flag to add here. setup-buildx
+      # makes a builder of its own for this run and removes it in its post step;
+      # nothing here leaves one behind for the next job on the runner.
+      #
+      # **Every third-party action in this job is pinned by commit**, because
+      # this job's token can push to the registry and a tag is only as fixed as
+      # the account that owns it. build-push-action takes `github.token` as an
+      # input default, so it would see that token even if nothing passed it.
+      # Renovate moves a pin with its version comment.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.probe.outputs.state == 'absent'
+
+      # Built once and loaded into the local daemon, not pushed: the scan below
+      # reads this image, and the push sends this image.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        if: steps.probe.outputs.state == 'absent'
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.image.outputs.ref }}
+          # The Dockerfile's own arguments, fed the values the archives were
+          # linked with, so the image's `--version` is the archives'
+          # `--version`. There is no edition to pass
+          # (2026-10-22).
+          #
+          # CLAUDE_CODE_VERSION empty leaves Claude Code out: this
+          # image is what a cluster runs, and under --incluster the assistant
+          # is never registered, so the binary would be weight and
+          # attack surface with no caller. The Dockerfile keeps its default for
+          # development and for a containerized desktop.
+          build-args: |
+            KT_VERSION=${{ needs.verify.outputs.version }}
+            KT_BUILT=${{ needs.verify.outputs.built }}
+            CLAUDE_CODE_VERSION=
+          # `source` is what links the package to this repository, which is how
+          # it inherits the repository's access - and only its access; see the
+          # visibility step below. `revision` is what a re-run reads back to
+          # recognize its own push (the probe above), so the next step asserts
+          # it is really in the image.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+      # The image asked about itself before anything else is spent on it - the
+      # one just built, or on a re-run the one pulled from the registry - and
+      # its id and layers kept: the push step refuses if the tag no longer
+      # names this image. A fixed tag on a shared daemon has lost its image
+      # between two steps before.
+      - name: The image says the tag's version, and carries its commit
+        id: built
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+          SHA: ${{ needs.verify.outputs.sha }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          line=$(docker run --rm "$REF" --version)
+          echo "$line"
+          case "$line" in
+            "kubetower $VERSION ("*) ;;
+            *) echo "::error::$REF answers '$line', which is not version $VERSION"; exit 1 ;;
+          esac
+          rev=$(docker image inspect --format '{{with .Config.Labels}}{{index . "org.opencontainers.image.revision"}}{{end}}' "$REF")
+          if [ "$rev" != "$SHA" ]; then
+            echo "::error::$REF carries revision '${rev:-none}', not $SHA - a re-run could not recognize this push as its own"
+            exit 1
+          fi
+          # **No Claude Code in the published image**, read from the
+          # image rather than trusted from the build argument. The answer is a
+          # word the image prints, so a container that fails to start is an
+          # error and never reads as "absent".
+          claude=$(docker run --rm --entrypoint /bin/sh "$REF" -c \
+            'if command -v claude >/dev/null 2>&1 || [ -e /opt/claude ]; then echo present; else echo absent; fi')
+          if [ "$claude" != absent ]; then
+            echo "::error::$REF answers '$claude' when asked for Claude Code; the release image carries none"
+            exit 1
+          fi
+          echo "ok   no Claude Code in $REF"
+          # The license and the third-party notices travel with the image.
+          notices=$(docker run --rm --entrypoint /bin/sh "$REF" -c \
+            'cd /usr/share/licenses/kubetower && test -s LICENSE && test -s LICENSING.md && test -s THIRD_PARTY_NOTICES.txt && echo present || echo absent')
+          if [ "$notices" != present ]; then
+            echo "::error::$REF lacks LICENSE, LICENSING.md or THIRD_PARTY_NOTICES.txt under /usr/share/licenses/kubetower"
+            exit 1
+          fi
+          echo "ok   LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt are in $REF"
+          # And the copy the binary embeds, which the route and --notices serve.
+          # The file on disk is copied separately, so it proves nothing about
+          # the embed: a Dockerfile that ran ktnotices after `go build` would
+          # pass the check above and serve a 404.
+          # Captured whole, then cut in the shell, for the reason given in the
+          # archives job; a failing --notices still fails the step.
+          notices=$(docker run --rm "$REF" --notices)
+          header=${notices%%$'\n'*}
+          if [ "$header" != "KubeTower - third-party notices" ]; then
+            echo "::error::$REF --notices printed '$header', not the notices header: the binary does not embed them"
+            exit 1
+          fi
+          echo "ok   the binary in $REF embeds the notices"
+          echo "id=$(docker image inspect --format '{{.Id}}' "$REF")" >> "$GITHUB_OUTPUT"
+          # The layers' content digests, which do not depend on how the daemon
+          # stores images - unlike the id - so they can be compared with the
+          # copy pulled back from the registry after the push.
+          echo "layers=$(docker image inspect --format '{{json .RootFS.Layers}}' "$REF")" >> "$GITHUB_OUTPUT"
+
+      # **The scan gates the push**, and it is the only trivy scan in this
+      # repository's workflows: the scan of the image
+      # that ships, and a HIGH or CRITICAL with a fix available stops it from
+      # shipping. On a re-run after the push it is the registry copy that is
+      # scanned, so a resumed release is gated exactly like a first one. Unfixed
+      # ones are ignored, so the gate is one somebody can act on.
+      #
+      # Pinned to the commit of v0.36.0 rather than the tag, in the one job that
+      # can push: this action's tags were force-pushed in a reported compromise
+      # in 2026, and a tag is only as fixed as the account that owns it.
+      #
+      # TRIVY_IMAGE_SRC=docker: trivy otherwise falls back to the registry when
+      # it cannot find the image locally, and would then scan a copy that is
+      # not the one about to be pushed.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IMAGE_SRC: docker
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      # Only on the first run: on a re-run the image is already the registry's.
+      - name: Push the image that was scanned, then pull it back and ask it
+        if: steps.probe.outputs.state == 'absent'
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+          SCANNED: ${{ steps.built.outputs.id }}
+          SCANNED_LAYERS: ${{ steps.built.outputs.layers }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -eu
+          cfg="$KT_DOCKER_CONFIG"
+          now=$(docker image inspect --format '{{.Id}}' "$REF")
+          if [ "$now" != "$SCANNED" ]; then
+            echo "::error::$REF is $now now, and the scanned image was $SCANNED - refusing to push an image nobody scanned"
+            exit 1
+          fi
+          docker --config "$cfg" push "$REF"
+          # **From here a failure is recoverable by re-running this job**: the
+          # tag exists and carries this commit, so the probe resumes rather
+          # than refusing.
+          #
+          # The published image, asked about itself: removed locally first, so
+          # the answer comes from the registry and not from the daemon. Its
+          # layers have to be the scanned image's, layer for layer (the
+          # uncompressed layer digests; a config-only change over the same
+          # layers would not show here, and nothing between the scan and the
+          # push changes the config).
+          docker image rm "$REF" >/dev/null
+          docker --config "$cfg" pull "$REF" >/dev/null
+          pulled=$(docker image inspect --format '{{json .RootFS.Layers}}' "$REF")
+          if [ "$pulled" != "$SCANNED_LAYERS" ]; then
+            echo "::error::the image pulled back from $REF does not have the scanned image's layers"
+            echo "scanned: $SCANNED_LAYERS"
+            echo "pulled:  $pulled"
+            exit 1
+          fi
+          echo "ok   the registry holds the scanned image's layers"
+          line=$(docker run --rm "$REF" --version)
+          echo "$line"
+          case "$line" in
+            "kubetower $VERSION ("*) ;;
+            *) echo "::error::the pushed $REF answers '$line'"; exit 1 ;;
+          esac
+
+      # **Visibility follows the repository's, and GitHub does not do that on its
+      # own.** A package linked to a repository inherits its access "but not the
+      # visibility" (docs.github.com, Configuring a package's access control and
+      # visibility), so a first push is private whatever the repository is. So
+      # this reads both and says, in the run summary, when they differ: a public
+      # repository with a private image is a chart nobody outside can install.
+      # The fix is one setting on the package's page, and it is the operator's.
+      - name: The package's visibility is the repository's
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # gh's own directory under runner.temp, never ~/.config/gh.
+          GH_CONFIG_DIR: ${{ runner.temp }}/gh-image
+          OWNER: ${{ steps.image.outputs.owner }}
+          REF: ${{ steps.image.outputs.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -u
+          repo=$(gh api "repos/$REPOSITORY" --jq .visibility 2>&1) || repo="unknown: $repo"
+          pkg=$(gh api "orgs/$OWNER/packages/container/kubetower" --jq .visibility 2>&1) || pkg="unknown: $pkg"
+          echo "repository: $repo, package: $pkg"
+          printf '### Image\n\n`%s` - repository **%s**, package **%s**.\n' "$REF" "$repo" "$pkg" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$repo" != "$pkg" ]; then
+            echo "::warning::the package is '$pkg' and the repository is '$repo' - set the package's visibility on its settings page"
+          fi
+
+      # Whatever happened above: the credential, gh's directory and the image
+      # are this job's. The runner is not discarded after the job, so this step is
+      # what keeps them from outliving it. Checked gone, not assumed.
+      - name: Remove the credential and the image
+        if: always()
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+          GH_CONFIG_DIR: ${{ runner.temp }}/gh-image
+        # Every action stands on its own: `set +e` (the step's shell is
+        # `bash -e`), so one that fails is recorded in rc and the next still
+        # runs; the step ends on rc and nothing else.
+        run: |
+          set +e -u
+          rc=0
+          if [ -n "${KT_DOCKER_CONFIG:-}" ]; then
+            docker --config "$KT_DOCKER_CONFIG" logout ghcr.io
+            rm -rf "$KT_DOCKER_CONFIG"
+            if [ -e "$KT_DOCKER_CONFIG" ]; then
+              echo "FAIL $KT_DOCKER_CONFIG is still there"; rc=1
+            else
+              echo "ok   the registry credential is gone"
+            fi
+          else
+            echo "no registry credential was written by this job"
+          fi
+          rm -rf "$GH_CONFIG_DIR"
+          if [ -e "$GH_CONFIG_DIR" ]; then
+            echo "FAIL $GH_CONFIG_DIR is still there"; rc=1
+          fi
+          # The login never touched the runner user's own docker config; look
+          # rather than trust it. A warning, not a failure: this job cannot have
+          # written it, and somebody must remove it from the VM.
+          if grep -qs 'ghcr.io' "$HOME/.docker/config.json"; then
+            echo "::warning::$HOME/.docker/config.json names ghcr.io: a registry credential is on the runner VM, and not this job's"
+          fi
+          if [ -n "${REF:-}" ]; then
+            # A daemon that does not answer cannot say the image is gone: an
+            # inspect that fails for that reason is not "no such image".
+            if ! docker info >/dev/null 2>&1; then
+              echo "FAIL the docker daemon does not answer, so whether $REF is left on the runner is unknown"; rc=1
+            else
+              docker image rm "$REF" >/dev/null 2>&1
+              out=$(docker image inspect "$REF" 2>&1)
+              if [ $? -eq 0 ]; then
+                echo "FAIL $REF is still in the runner's image store"; rc=1
+              elif printf '%s' "$out" | grep -qi 'no such image'; then
+                echo "ok   $REF is not left on the runner"
+              else
+                echo "FAIL could not tell whether $REF is left on the runner: $out"; rc=1
+              fi
+            fi
+          fi
+          # Red, not a warning: what this job could not remove is still on the runner.
+          exit $rc
+
+  draft:
+    name: draft the release
+    needs: [verify, archives, setup, dmg, packages, appimage, image]
+    # On the pool, though it holds `contents: write`: see the header. The token
+    # is only in this job's environment and gh keeps its files in a directory
+    # of its own under runner.temp, removed by the last step.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      # The draft and its assets. Nothing else in this job writes, and no
+      # third-party action runs in it: `gh` does what softprops/action-gh-release
+      # did, which is one mutable third-party tag fewer next to a write scope.
+      contents: write
+    steps:
+      # See verify's first step.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: gh sha256sum cat sed sort find diff rm mkdir ls grep printf
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them and installs none; this job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+      # draft has no checkout to reset its workspace: the pool's runners keep
+      # theirs, so a `dist` left by a killed run would fail the "dist holds other
+      # files" check below on every re-run. Start from an empty one.
+      - name: Start from an empty dist
+        run: |
+          set -eu
+          rm -rf dist
+          mkdir dist
+          [ -z "$(ls -A dist)" ] || { echo "FAIL dist is not empty"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-${{ needs.verify.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-setup-${{ needs.verify.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-dmg-${{ needs.verify.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-linux-packages-${{ needs.verify.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kubetower-appimage-${{ needs.verify.outputs.version }}
+          path: dist
+
+      # **Every file is checked against a hash that did not travel with it.**
+      # An artifact can be written by any job of this run - each holds the
+      # runtime token artifacts use - and the dmg job runs a tool built from
+      # third-party source. A checksums.txt inside the artifact proves nothing
+      # about an artifact that could have been replaced whole. So:
+      #
+      #   checksums.txt  its own hash is the archives job's output (`sums`),
+      #                  which only that job's steps can set; then every
+      #                  archive is checked against its lines.
+      #   the setup      against the setup job's own output, then appended.
+      #   the images     each against the dmg job's own output, then appended.
+      #   the packages   the .deb and the .rpm, each against the packages job's
+      #                  own output, then appended.
+      #   the AppImage   against the appimage job's own output, then appended.
+      #   nothing else   the directory holds exactly the files checksums.txt
+      #                  names and checksums.txt itself, since `dist/*` is what
+      #                  gets uploaded to the draft.
+      - name: Every asset matches a checksum computed where it was made
+        working-directory: dist
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          SUMS: ${{ needs.archives.outputs.sums }}
+          SETUP: ${{ needs.setup.outputs.sha256 }}
+          DMG_ARM64: ${{ needs.dmg.outputs.sha256_arm64 }}
+          DMG_X64: ${{ needs.dmg.outputs.sha256_x64 }}
+          DEB: ${{ needs.packages.outputs.sha256_deb }}
+          RPM: ${{ needs.packages.outputs.sha256_rpm }}
+          APPIMAGE: ${{ needs.appimage.outputs.sha256 }}
+        run: |
+          set -eu
+          for v in SUMS SETUP DMG_ARM64 DMG_X64 DEB RPM APPIMAGE; do
+            if ! [[ "${!v}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::$v is '${!v}', not a SHA-256: the job that should have computed it did not"
+              exit 1
+            fi
+          done
+          echo "$SUMS  checksums.txt" | sha256sum --check --strict
+          sha256sum --check --strict checksums.txt
+          echo "$SETUP  ./kubetower-${VERSION}-setup.exe" | sha256sum --check --strict
+          echo "$SETUP  ./kubetower-${VERSION}-setup.exe" >> checksums.txt
+          for pair in "arm64:$DMG_ARM64" "x64:$DMG_X64"; do
+            name=${pair%%:*}; want=${pair#*:}
+            echo "$want  ./kubetower-${VERSION}-${name}.dmg" | sha256sum --check --strict
+            echo "$want  ./kubetower-${VERSION}-${name}.dmg" >> checksums.txt
+          done
+          for pair in "amd64.deb:$DEB" "x86_64.rpm:$RPM"; do
+            name=${pair%%:*}; want=${pair#*:}
+            echo "$want  ./kubetower-${VERSION}-${name}" | sha256sum --check --strict
+            echo "$want  ./kubetower-${VERSION}-${name}" >> checksums.txt
+          done
+          echo "$APPIMAGE  ./kubetower-${VERSION}-x86_64.AppImage" | sha256sum --check --strict
+          echo "$APPIMAGE  ./kubetower-${VERSION}-x86_64.AppImage" >> checksums.txt
+          listed=$( { sed 's|^[0-9a-f]\{64\}  \./||' checksums.txt; echo checksums.txt; } | LC_ALL=C sort)
+          present=$(find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
+          if [ "$listed" != "$present" ]; then
+            echo "::error::dist holds other files than checksums.txt names:"
+            diff <(echo "$listed") <(echo "$present") || true
+            exit 1
+          fi
+          cat checksums.txt
+
+      # Draft. See the header: publishing is a person's act.
+      #
+      # Idempotent, because a re-run of this job must not make a second draft:
+      # a draft for this tag that already exists has its assets replaced, and a
+      # release that is already published is never touched by a workflow. A
+      # read that fails for any other reason than "not found" is an error, not a
+      # cue to create.
+      #
+      # **A version with a suffix is a pre-release**, on the draft and on the
+      # release it becomes: a release candidate drafted with
+      # isPrerelease=false and published as it stood would become the
+      # repository's "Latest". verify has held the tag
+      # to X.Y.Z[-pre], so a `-` is exactly the pre-release part. A refreshed
+      # draft is set too - in both directions, so a draft an earlier run made
+      # without the flag is corrected by re-running this job - and the result
+      # is read back rather than trusted.
+      - name: Draft the release, or refresh the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # gh's own directory under runner.temp, never ~/.config/gh.
+          GH_CONFIG_DIR: ${{ runner.temp }}/gh-draft
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -eu
+          case "$TAG" in
+            *-*) pre=true ;;
+            *) pre=false ;;
+          esac
+          # The notes open with the unsigned-build notice, read at the tag,
+          # followed by the generated notes (gh prepends --notes-file to them).
+          notes="$RUNNER_TEMP/unsigned.md"
+          if ! gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/$REPO/contents/packaging/release-notes/unsigned.md?ref=$TAG" >"$notes" || [ ! -s "$notes" ]; then
+            echo "::error::could not read packaging/release-notes/unsigned.md at $TAG; the draft's notes open with it"
+            exit 1
+          fi
+          if state=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft 2>&1); then
+            if [ "$state" != true ]; then
+              echo "::error::$TAG is already a published release; a workflow does not rewrite one"
+              exit 1
+            fi
+            gh release upload "$TAG" --repo "$REPO" --clobber dist/*
+            gh release edit "$TAG" --repo "$REPO" --prerelease="$pre"
+            # A draft made before the notice was added gets it on top.
+            first=$(sed -n '/./{p;q}' "$notes")
+            body=$(gh release view "$TAG" --repo "$REPO" --json body --jq .body)
+            if ! printf '%s\n' "$body" | grep -qxF -- "$first"; then
+              { cat "$notes"; printf '\n'; printf '%s\n' "$body"; } >"$RUNNER_TEMP/notes.md"
+              gh release edit "$TAG" --repo "$REPO" --notes-file "$RUNNER_TEMP/notes.md"
+              echo "put the unsigned-build notice on top of the draft's notes"
+            fi
+            echo "refreshed the assets of the existing draft $TAG (pre-release: $pre)"
+          else
+            case "$state" in
+              *"release not found"*)
+                flags=""
+                [ "$pre" = true ] && flags="--prerelease"
+                # $flags unquoted on purpose: empty, or one flag.
+                # shellcheck disable=SC2086
+                gh release create "$TAG" --repo "$REPO" --draft --verify-tag $flags --title "$TAG" --notes-file "$notes" --generate-notes dist/*
+                echo "drafted $TAG (pre-release: $pre)" ;;
+              *)
+                echo "::error::could not read whether $TAG already has a release: $state"
+                exit 1 ;;
+            esac
+          fi
+          gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets \
+            --jq '"draft: \(.isDraft), pre-release: \(.isPrerelease), assets: \([.assets[].name] | join(", "))"'
+          got=$(gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+          if [ "$got" != "true $pre" ]; then
+            echo "::error::$TAG reads back as draft/pre-release '$got', want 'true $pre'"
+            exit 1
+          fi
+
+      # Whatever happened above: the assets and gh's directory are this job's,
+      # and the pool's runners are not discarded, so they keep what nobody removes. The token
+      # was only ever in the environment; this checks that gh wrote none to
+      # disk either.
+      - name: Remove the assets and leave no token
+        if: always()
+        env:
+          GH_CONFIG_DIR: ${{ runner.temp }}/gh-draft
+        # Every action stands on its own, as in image's clean-up.
+        run: |
+          set +e -u
+          rc=0
+          for d in dist "$GH_CONFIG_DIR"; do
+            rm -rf "$d"
+            if [ -e "$d" ]; then echo "FAIL $d is still there"; rc=1; fi
+          done
+          # gh never wrote outside GH_CONFIG_DIR; look rather than trust it. A
+          # warning, not a failure: this job cannot have written it.
+          if grep -qs 'oauth_token' "$HOME/.config/gh/hosts.yml"; then
+            echo "::warning::$HOME/.config/gh/hosts.yml holds a token: a credential is on the runner VM, and not this job's"
+          fi
+          if [ $rc -eq 0 ]; then echo "ok   no asset and no token left by this job"; fi
+          # Red, not a warning: what this job could not remove is still on the runner.
+          exit $rc

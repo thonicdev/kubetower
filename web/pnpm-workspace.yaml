@@ -1,0 +1,13 @@
+# Two packages, one boundary.
+#
+#   web/        the core SPA. Private, never published, builds to dist/ui.
+#   web/ui/     @kubetower/ui, the shell and the extension contract. Private
+#               and published nowhere: the app and the extras in
+#               web/app/extras/ compile it from source.
+#
+# The root is the app rather than a bare workspace root so that Vite's entry
+# (`web/index.html`) sits where the styling rules name it as an exception.
+packages:
+  - ui
+minimumReleaseAgeExclude:
+  - vite@8.3.0

@@ -1,0 +1,789 @@
+# KubeTower — the development loop.
+#
+# Run `task` with no argument for the list. `docs/DEVELOPMENT.md` is the prose;
+# this file is the commands, and the two are meant to be read together.
+#
+# # Why Task and not make
+#
+# `make` is not on most Windows machines. Installing it there means Chocolatey, MSYS2 or WSL — three
+# different answers, none of which a contributor has because they cloned a Go
+# repository. `task` is one command on every platform, and it is a command every
+# contributor to this repository can already run:
+#
+#     go install github.com/go-task/task/v3/cmd/task@v3.45.4
+#
+# Three smaller reasons:
+#
+#   * **Parallelism is declarative.** The development loop is two long-running
+#     processes. `deps:` runs them concurrently and forwards the interrupt; a
+#     Makefile does that with `&`, a `wait` and a `trap`, which behave
+#     differently under sh, dash and whatever Windows supplies.
+#   * **One shell per task, not one per line.** Make runs every recipe line in
+#     its own shell unless `.ONESHELL` is set, so a `cd` on one line is gone on
+#     the next — `dir:` here is a property of the task.
+#   * **The shell is embedded.** Task interprets POSIX shell itself (mvdan/sh),
+#     so a recipe does not depend on which `sh` happens to be on PATH. Tabs are
+#     not syntax either, which is the other thing that makes a Makefile
+#     unpleasant to edit from an editor that was not told about it.
+#
+# What it costs, stated rather than discovered: one more binary to install, and
+# it is not in any distribution's base image. `task doctor` says so by name.
+
+version: '3'
+
+vars:
+  # pnpm does not need to be installed globally: `corepack` ships with Node and
+  # resolves pnpm on demand. Override with `PNPM=pnpm task ...` if you have your
+  # own.
+  #
+  # **It is version-pinned, and not from here.** `web/package.json` carries a
+  # `"packageManager": "pnpm@<version>"` field, so corepack resolves that exact
+  # pnpm on every machine rather than whatever it considers current. A number
+  # copied here would go stale; the pin moves in `web/package.json` and nothing
+  # here needs to change with it.
+  PNPM: '{{.PNPM | default "corepack pnpm"}}'
+
+  # Where `task build:api` writes the binary.
+  #
+  # **Outside the working tree on purpose.** A working tree inside a
+  # synchronized directory whose client excludes `node_modules` and `build` but
+  # not `dist` or `*.exe` would upload a ~100 MB binary on every build. The
+  # default here is the machine's temporary directory, which is synced by
+  # nothing and ignored by git without a line in `.gitignore`.
+  #
+  # `go run`, which is what the development loop uses, writes nothing into the
+  # tree at all — it builds into Go's own cache.
+  BUILD_DIR: '{{.BUILD_DIR | default (default "/tmp" (env "TEMP"))}}'
+  BINARY: '{{.BUILD_DIR | default (default "/tmp" (env "TEMP"))}}/kubetower{{exeExt}}'
+
+  COMPOSE: docker compose -f compose.dev.yaml
+
+  # The in-cluster loop's four settings (`task incluster:up`, docs/DEVELOPMENT.md
+  # section 8). Two ways to override one, and a third that is refused:
+  #
+  #   KT_INCLUSTER_CONTEXT=kind-dev task incluster:up    the environment
+  #   task incluster:up INCLUSTER_CONTEXT=kind-dev       the variable itself
+  #   task incluster:up KT_INCLUSTER_CONTEXT=kind-dev    refused by incluster:check
+  #
+  # The third is refused because Task would ignore it: these are computed before
+  # a command-line variable is set, so only the environment reaches KT_*, and it
+  # would run against the default without a word.
+  # `.env` does not reach them either - it is the compose loop's.
+  #
+  # The context is **never kubectl's current one**: that may well be a real
+  # cluster, and what this loop installs carries
+  # credentials published in a public repository. It is named on every kubectl
+  # and helm call, and `incluster:check` refuses a context whose API server is
+  # not on this machine.
+  INCLUSTER_CONTEXT: '{{.KT_INCLUSTER_CONTEXT | default "docker-desktop"}}'
+  # The kubetower-helm-charts checkout the chart, its dev values and the Dex
+  # fixture are read from. Read only: nothing here writes into it.
+  INCLUSTER_CHARTS: '{{.KT_INCLUSTER_CHARTS | default "../kubetower-helm-charts"}}'
+  # Where devforward records itself, outside the tree for BUILD_DIR's reason.
+  INCLUSTER_STATE: '{{.BUILD_DIR | default (default "/tmp" (env "TEMP"))}}/kubetower-incluster'
+  # Where Dex's forward is bound. Loopback, plus host.docker.internal as this
+  # machine resolves it - see `incluster:forward` for why the second, and set
+  # this to 127.0.0.1 to keep Dex on loopback alone.
+  INCLUSTER_DEX_ADDRESS: '{{.KT_INCLUSTER_DEX_ADDRESS | default "127.0.0.1,host.docker.internal"}}'
+
+  # Where the Go half of `task dev` listens, and the address that reaches it.
+  # Shared by `dev:api`, which binds and probes it, and `dev:web`, whose proxy
+  # follows it; `dev:api` carries the argument for both forms.
+  LISTEN: '{{env "KT_LISTEN" | default "127.0.0.1:5823"}}'
+  DIAL: '{{if hasPrefix ":" .LISTEN}}127.0.0.1{{.LISTEN}}{{else if hasPrefix "0.0.0.0:" .LISTEN}}127.0.0.1:{{trimPrefix "0.0.0.0:" .LISTEN}}{{else if hasPrefix "[::]:" .LISTEN}}127.0.0.1:{{trimPrefix "[::]:" .LISTEN}}{{else}}{{.LISTEN}}{{end}}'
+
+tasks:
+
+  default:
+    desc: List what there is.
+    cmds:
+      - task --list
+    silent: true
+
+  # -------------------------------------------------------------------------
+  # Getting started
+  # -------------------------------------------------------------------------
+
+  doctor:
+    desc: Say which of the tools this loop needs are present, and which are not.
+    silent: true
+    cmds:
+      - echo "go       $(go version 2>/dev/null || echo 'MISSING - https://go.dev/dl/')"
+      - echo "node     $(node --version 2>/dev/null || echo 'MISSING - Node 22 or later')"
+      - echo "pnpm     $({{.PNPM}} --version 2>/dev/null || echo 'MISSING - corepack ships with Node; or npm i -g pnpm')"
+      - echo "docker   $(docker --version 2>/dev/null || echo 'absent - only the container loop needs it')"
+      - echo "kubectl  $(kubectl version --client -o json 2>/dev/null | head -c 0; kubectl version --client 2>/dev/null | head -1 || echo 'absent - the console does not call it, the dock terminal does')"
+      - echo ""
+      - echo "kubeconfig KUBECONFIG=${KUBECONFIG:-<unset, ~/.kube/config>}"
+      - echo "binaries   {{.BINARY}}"
+
+  setup:
+    desc: Install the front end's dependencies. Run once after a clone.
+    dir: web
+    cmds:
+      - '{{.PNPM}} install'
+
+  # -------------------------------------------------------------------------
+  # The loop
+  # -------------------------------------------------------------------------
+
+  dev:
+    desc: The development loop - Go on 5823 and Vite on 5173, both on the host.
+    summary: |
+      Two processes, one origin.
+
+      Once per clone: `task dev:password -- <word>` (or with no word, to be
+      asked). It writes the git-ignored .env this loop loads, so you sign in
+      with a password you chose rather than one drawn at random, against a
+      state directory that is not your own ~/.kubetower.
+
+      The Go binary serves /api/* on 127.0.0.1:5823, or KT_LISTEN. Vite serves
+      the SPA on 5173 and proxies /api to the Go half wherever KT_LISTEN put
+      it, unless KT_DEV_API says otherwise, so the browser only ever talks to
+      one origin - no CORS, no second cookie domain, and the same-origin session
+      cookie behaves in development exactly as it does in production, where one
+      process serves both.
+
+      Open http://localhost:5173 - NOT 127.0.0.1, which answers nothing. Vite 8
+      binds the IPv6 loopback only; `docs/DEVELOPMENT.md` section 2 has the
+      measurement.
+
+      A CSS or TSX change is hot-reloaded by Vite. **A Go change is too**: the
+      Go half runs under `cmd/devwatch`, which rebuilds and
+      restarts it when any .go file changes. A build that fails leaves the last
+      one running and prints the error, so a save in the middle of an edit does
+      not take the console down.
+    deps: [dev:api, dev:web]
+
+  dev:api:
+    desc: The Go process alone, on KT_LISTEN - 127.0.0.1:5823 unless it is set.
+
+    # `.env` at the root, when there is one - but only KT_PASSWORD_HASH,
+    # KT_SESSION_SECRET and KT_STATE_DIR from it, which is what `task
+    # dev:password` writes. `devwatch -dotenv .env` takes those three
+    # (`internal/devenv`), never over a variable the shell already has, and
+    # nothing else in the file reaches the process.
+    #
+    # **Not Task's `dotenv`, which loads every line**: a `.env` made the
+    # documented way, `cp .env.example .env`, carries the container's
+    # `KT_FORWARD_PORTS=30000-30031`, and a desktop process given it binds
+    # every forward - a raw tunnel into a cluster workload - on 0.0.0.0,
+    # reachable from the network. An allow-list rather than refusing that one
+    # variable, so the next container-only variable added to the example
+    # cannot do it again. `internal/devenv`'s tests hold both the list and this
+    # file to it.
+
+    # The address this half is about to bind, derived once and used by both the
+    # probe below and its message. LISTEN and DIAL are declared at the top of
+    # this file, because `dev:web` derives the proxy's target from the same
+    # two; the argument for their form stays here.
+    #
+    # `internal/launch/run.go` reads KT_LISTEN and nothing else, and :80 is
+    # this same default - so this is the whole of what decides where the process
+    # listens. `default` here matches `envOr` there exactly, including the edge:
+    # both treat an empty value as unset.
+    #
+    # Both the probe and the message read it, so `KT_LISTEN=127.0.0.1:5824
+    # task dev` probes 5824 and names 5824: a busy port that was never probed
+    # would let Vite come up alone against nothing.
+    #
+    # **KT_PORT is not this**, however much it looks like it. It moves the host
+    # side of the container's published mapping and the process never reads it:
+    # `.env.example`, beside KT_PORT, and `internal/launch/envwiring_test.go`
+    # both say so in as many words.
+    #
+    # DIAL is separate from LISTEN because curl cannot dial a host-less URL.
+    # With KT_LISTEN=:5823 - which is correct inside the container, and what
+    # someone copying compose.dev.yaml onto the host will try - curl rejects
+    # `http://:5823/kt-healthz` before a packet is sent and exits 3, which
+    # `|| exit 0` reads as a free port. So the message names LISTEN, which is
+    # what the process was given, and the probe dials DIAL, which is what can be
+    # dialled. `0.0.0.0:<port>` and `[::]:<port>` are dialled on 127.0.0.1 too, exactly as `dialAddress` in
+    # `internal/launch/appwindow.go` does: a connection to an unspecified
+    # address is undefined and on Windows it fails, which `|| exit 0` would read
+    # as a free port and Vite's proxy as a back end that is not there. 127.0.0.1
+    # and not ::1 for `[::]`, because Go listens dual-stack there, so the IPv4
+    # loopback reaches it. A hostname, or any other address, is passed through
+    # untouched.
+    #
+    # A Task template is not bash: try a change to this form under `task` with
+    # KT_LISTEN set, unset and empty.
+    #
+    # KT_LISTEN is never taken from `.env` (see above), so this probe, Vite's
+    # proxy and the process always agree on it: it comes from the shell.
+
+    # Refuse to start half a loop, and say who is holding the port.
+    #
+    # `deps:` runs both halves concurrently, so when this one cannot bind - the
+    # container from `task container` holding 5823, say - Vite comes up alone and proxies into nothing. The SPA then
+    # draws Vite's own 502 as "The answer was not JSON - expected JSON, received
+    # text/plain", which reads as a broken cluster list rather than as a back end
+    # that is not there. A back end that is absent and a back end that answered
+    # wrongly are different answers, and the reader must be shown the right one.
+    #
+    # The probe is the health endpoint rather than a port scan, because `netstat`,
+    # `lsof` and `ss` are three different commands on three platforms and none of
+    # them is on all of them. An answer here means something is already
+    # serving, which is the only case worth refusing.
+    preconditions:
+      # `curl … && exit 1 || exit 0` and **not** `! curl …`.
+      #
+      # Task runs a precondition through its own embedded shell, and a leading
+      # `!` there does not negate: the whole expression reports failure whatever
+      # curl did. Written with `!`, this check would refuse every time the port
+      # is FREE - which is every normal run. Bash does negate `!`, so test a
+      # change here under Task, not in bash.
+      #
+      # One second, not two: a free 5823 does not answer with a
+      # refusal, it waits out the whole timeout - so the probe's cost is paid on
+      # the normal path, every time, and not on the rare one.
+      # `curl -sS` and **not** `curl -fsS`. The absent `-f` is the point, and it
+      # is written down because a probe that does not fail on an error status
+      # looks like an oversight to the next person who reads it.
+      #
+      # `-f` makes curl exit non-zero on any 4xx or 5xx. With it the expression
+      # cannot tell *nothing answered* from *something answered and it was not a
+      # 2xx*, and `|| exit 0` reads both as a free port. The question above is
+      # "is anything serving", not "does it answer 2xx"; without `-f` curl exits
+      # 0 on any complete HTTP response and non-zero only when the connection
+      # itself fails, which is exactly that distinction.
+      #
+      # Against KubeTower the two questions have the same answer:
+      # `internal/auth`'s `HealthPath` exempts /kt-healthz from the session
+      # guard so a container's health check is not shown the login page, so it
+      # answers 200 unauthenticated. Against another program, one answering 401
+      # from behind its session, `-fsS` would read the port as FREE.
+      #
+      # The case it is really for is nearer than another program. `healthz` in
+      # `internal/launch/run.go` answers **503** when readiness says degraded -
+      # health has to be able to fail - so a degraded KubeTower is a port that
+      # is occupied *and* answers non-2xx.
+      - sh: 'curl -sS -m 1 --connect-timeout 1 -o /dev/null http://{{.DIAL}}/kt-healthz && exit 1 || exit 0'
+        msg: |
+          Something is already serving {{.LISTEN}}, so the Go half cannot bind.
+          That address is KT_LISTEN, and 127.0.0.1:5823 when it is unset.
+
+          What this found is an answer on that port and nothing more. It does
+          not know what is holding it, and will not pretend to.
+
+          The packaged back end is one candidate: `{{.COMPOSE}} ps`,
+          then `task container:down` if it is there. A KubeTower you started
+          already is another. So is a program that is neither - an older
+          install of this console, answering 401 from behind its own session,
+          is one - and neither of those two stops with that command.
+
+          Free the address, or move this half: KT_LISTEN=127.0.0.1:<port> task dev.
+          Starting Vite alone against an API that is not there is what this
+          check exists to prevent.
+    cmds:
+      # --no-window because this is a terminal and the log is the point. Without
+      # it a launch with no console opens a native window, which is right for a
+      # double-click and wrong here.
+      #
+      # `devwatch` builds the binary and runs **that**, rather than `go run`,
+      # which on Windows spawns the compiled binary as a child: killing the
+      # parent then leaves the child holding 5823.
+      #
+      # --unattended because the first run in a fresh state directory opens a
+      # modal box on Windows *before* the server goroutine starts, and a `task
+      # dev` launched by anything without a console — an agent's harness, a CI
+      # step, an editor's task runner — then holds a window nobody can see and
+      # never answers on its port. The password is still delivered: the banner
+      # is on this terminal and PASSWORD-ONCE.txt is beside the credentials. On
+      # a terminal the box only ever repeated the banner.
+      - go run ./cmd/devwatch -dotenv .env -pkg ./cmd/kubetower -- --no-window --unattended
+
+  dev:web:
+    desc: The Vite dev server alone, on localhost:5173, proxying /api to KT_DEV_API or KT_LISTEN.
+    dir: web
+    cmds:
+      # KT_DEV_API is read by web/vite.config.ts and moves the proxy's target.
+      #
+      # **Unset, it follows KT_LISTEN**, through the same DIAL that `dev:api`
+      # probes, so the way out `dev:api`'s own refusal offers -
+      # `KT_LISTEN=127.0.0.1:<port> task dev` - moves the proxy with the Go
+      # half instead of leaving it on 5823, talking to whatever refused to yield
+      # it (and whose 401 a correct password would then meet).
+      #
+      # **Set, it wins**, which keeps what it was added for: pointing the front
+      # end at the packaged back end of `task container`, whose host port is
+      # KT_PORT. The process never reads KT_PORT - `.env.example` says so
+      # beside it - so KT_LISTEN is the name for the Go half under `task dev`
+      # and KT_PORT the name for the container's published mapping; KT_DEV_API
+      # names the target either way.
+      #
+      # The line it prints is the target, because a proxy pointed at the wrong
+      # back end is invisible until a sign-in fails.
+      #
+      # CLI_ARGS go to Vite, so `task dev -- --port 5183 --strictPort` moves
+      # this half the way KT_LISTEN moves the other. Without `--strictPort` a
+      # busy 5173 is not refused: Vite takes the next free port and says so.
+      - |
+        export KT_DEV_API="${KT_DEV_API:-http://{{.DIAL}}}"
+        echo "dev:web: the proxy sends /api to $KT_DEV_API"
+        {{.PNPM}} dev {{.CLI_ARGS}}
+
+  dev:password:
+    desc: Choose the development password once and keep its hash in .env - task dev:password -- <word>, or no word to be asked.
+    summary: |
+      Writes KT_PASSWORD_HASH into the git-ignored .env at the root, which
+      `task dev` loads, so the password is one you chose and can type again
+      tomorrow. Never draws at random, and never stores the word itself.
+
+      Also writes, only when .env has none: KT_SESSION_SECRET, so a session
+      survives the restarts `task dev` makes on every Go change; and
+      KT_STATE_DIR=~/.kubetower-dev, so the loop never writes into your own
+      ~/.kubetower. Prints what it did, one line per variable.
+
+      With no word it asks, twice, without echo, which keeps the word out of
+      the process list. `task dev:password -- <word>` is shorter and puts the
+      word on Task's command line; it is a development password, so that is
+      your call. A running `task dev` reads .env only when it starts.
+
+      The same .env is read by `task container`, so the container takes this
+      password too.
+    # Silent, or Task echoes the command it runs - `set -- <word>` - and the
+    # word is on the terminal after all. Seen on the first run of this task.
+    silent: true
+    cmds:
+      # The word reaches the Go side on its standard input, never as an
+      # argument of that process. `set --` re-splits CLI_ARGS, which Task has
+      # already quoted for a shell, so a word with a space in it stays one word
+      # and two words are refused rather than silently cut to the first.
+      - |
+        set -- {{.CLI_ARGS}}
+        if [ "$#" -gt 1 ]; then
+          echo "dev:password: one word, please - quote it if it has a space in it" >&2
+          exit 1
+        fi
+        if [ "$#" -eq 1 ]; then
+          printf '%s\n' "$1" | go run ./cmd/devpassword
+        else
+          go run ./cmd/devpassword
+        fi
+
+  password:
+    desc: Draw a new console password, say where it went, and exit.
+    summary: |
+      `--reset-password` against the state directory the loop uses: KT_STATE_DIR
+      from the shell, then from .env, then ~/.kubetower. It prints one line
+      naming PASSWORD-ONCE.txt and its directory, which the first successful
+      login deletes. The password itself is in that file; on a
+      terminal with a console attached the banner shows it too.
+
+      Refused when KT_PASSWORD_HASH is set, in the shell or in .env: the
+      console then uses that hash and never reads the file this draws into.
+      `task dev:password` is the one to run then.
+    cmds:
+      # Through devwatch, once, for the same `.env` allow-list as `task dev`
+      # (internal/devenv): KT_STATE_DIR and KT_PASSWORD_HASH from .env, and
+      # nothing else from it. The refusal while KT_PASSWORD_HASH is set is the
+      # binary's own (`resetPassword`), so it holds wherever `--reset-password`
+      # is run, a container included.
+      #
+      # CLI_ARGS so `task password -- --unattended` reaches the binary: no box
+      # on Windows, for a terminal with nobody to dismiss one.
+      - go run ./cmd/devwatch -once -dotenv .env -pkg ./cmd/kubetower -- --reset-password {{.CLI_ARGS}}
+
+  # -------------------------------------------------------------------------
+  # The packaged back end
+  # -------------------------------------------------------------------------
+
+  container:
+    desc: Build and run the packaged back end from compose.dev.yaml.
+    summary: |
+      The slow loop, and the only one that can catch a container-only failure:
+      a bind mount arriving empty, a glibc binary in a musl image, a read-only
+      ~/.aws that works until an SSO session expires, or a listener on the
+      container's own loopback that Docker cannot publish.
+
+      Needs HOST_KUBE_DIR and HOST_AWS_DIR in .env - compose refuses without
+      them rather than mounting an empty directory that looks like a kubeconfig
+      with no clusters in it.
+
+      The first start draws a password and prints it in the log. Read it with
+      `task container:logs`.
+    cmds:
+      - '{{.COMPOSE}} up --build'
+
+  container:logs:
+    desc: Follow the packaged back end's log (this is where a drawn password is).
+    cmds:
+      - '{{.COMPOSE}} logs -f'
+
+  container:down:
+    desc: Stop it. Add -- -v to also drop the state volume and its password.
+    cmds:
+      - '{{.COMPOSE}} down {{.CLI_ARGS}}'
+
+  container:config:
+    desc: Interpolate and validate compose.dev.yaml without building anything.
+    cmds:
+      - '{{.COMPOSE}} config'
+
+  # -------------------------------------------------------------------------
+  # In a cluster
+  # -------------------------------------------------------------------------
+  #
+  # The console as the chart deploys it - server profile, single sign-on through
+  # the Dex fixture, the shared account beside it - in Docker Desktop's
+  # Kubernetes, built from this tree. The chart, its `dev/values.yaml` and the
+  # fixture are kubetower-helm-charts'; this side builds, installs and keeps the
+  # two port-forwards alive, so the environment is never a hand-built image
+  # with uncommitted values behind a port-forward nothing keeps alive.
+
+  incluster:up:
+    desc: Build kubetower:dev from this tree, install the dev chart in docker-desktop, and keep Dex (5556) and the console (8824) forwarded.
+    summary: |
+      1. Refuses unless KT_INCLUSTER_CONTEXT (docker-desktop) answers and its
+         API server is on this machine, and the charts checkout is there
+         (KT_INCLUSTER_CHARTS, ../kubetower-helm-charts).
+      2. `docker build -t kubetower:dev .` - the output is an image in the
+         Docker daemon, nothing in the tree.
+      3. Applies the Dex fixture if it is absent, and waits for it.
+      4. `helm upgrade --install` with the charts checkout's dev/values.yaml,
+         rolling the console only when the image changed, and waits.
+      5. Supervises both forwards in the foreground: Dex on 5556 and the
+         console on 127.0.0.1:8824. A forward that dies is restarted within
+         seconds, and the output says so.
+
+      Then open http://127.0.0.1:8824 and sign in through Dex, or with the
+      shared account, dev / dev (dev/values.yaml). Ctrl-C stops the forwards and
+      leaves the release running; `task incluster:forward` brings them back
+      without a rebuild. `task incluster:down`, from any terminal, stops
+      everything.
+    cmds:
+      - task: incluster:check
+      - task: incluster:image
+      - task: incluster:install
+      - task: incluster:forward
+
+  incluster:down:
+    desc: Stop the forwards, uninstall the dev release and remove the Dex fixture.
+    summary: |
+      Stops the devforward recorded in the state directory, from any terminal,
+      and checks that nothing still answers on 5556 or 8824. Then uninstalls
+      the release and deletes the fixture's objects, namespace included.
+
+      The console's state volume survives: the chart marks it
+      `helm.sh/resource-policy: keep`, so the next `incluster:up` finds it.
+      `kubectl --context docker-desktop -n kubetower delete pvc kubetower-state`
+      is the deliberate act that drops it.
+    cmds:
+      # The forwards first, and before any check of the cluster: they are local
+      # processes, and an unreachable cluster is no reason to leave them up.
+      - go run ./cmd/devforward -state '{{.INCLUSTER_STATE}}' -stop
+      - task: incluster:check
+      - helm --kube-context '{{.INCLUSTER_CONTEXT}}' uninstall kubetower --namespace kubetower --ignore-not-found --wait
+      - kubectl --context '{{.INCLUSTER_CONTEXT}}' delete -f '{{.INCLUSTER_CHARTS}}/test/oidc/dex.yaml' --ignore-not-found --wait=true
+
+  incluster:forward:
+    desc: Keep Dex (5556) and the console (127.0.0.1:8824) forwarded, restarting each when it dies - what incluster:up ends in.
+    cmds:
+      # A program rather than a loop here: stopping it from another terminal and
+      # not restarting what Ctrl-C is stopping are the hard parts, and neither
+      # is portable sh on Windows. `cmd/devforward`'s package comment says how.
+      #
+      # **Why Dex is not on loopback alone, while the console is.** The
+      # fixture's issuer is http://host.docker.internal:5556/dex, the one name
+      # both the browser and the pod can reach (the top of test/oidc/dex.yaml).
+      # With Docker Desktop on Windows:
+      #
+      #   - the pod reaches a forward bound on 127.0.0.1 alone - from inside
+      #     the console's pod, host.docker.internal:5556/dex/healthz answers
+      #     "Health check passed" - so the console needs nothing more;
+      #   - the browser does not. The host resolves host.docker.internal
+      #     through the hosts file Docker Desktop writes, to the machine's own
+      #     network address, and a connection to that address on 5556 is
+      #     refused with the forward on loopback.
+      #
+      # So Dex is bound on loopback and on that one address, resolved again at
+      # every restart, and devforward says so in a line. That is narrower than
+      # the fixture's own `--address 0.0.0.0`, and still on the network while it
+      # runs: what it serves is the fixture, whose users and client secret are
+      # published. KT_INCLUSTER_DEX_ADDRESS=127.0.0.1 keeps it on loopback, and
+      # then a browser needs host.docker.internal to resolve to 127.0.0.1.
+      # Every interface - 0.0.0.0, ::, or a name resolving to one - is refused.
+      #
+      # The console is bound on 127.0.0.1 and nowhere else. Neither port moves:
+      # 5556 is in the issuer and 8824 in the redirect the fixture registers.
+      #
+      # The same guard as up and down first: forwarding is read-only, but the
+      # Services it reaches are the named context's, and that must be this
+      # machine's. `run: once` keeps it to one pass
+      # under incluster:up.
+      - task: incluster:check
+      - echo "incluster - http://127.0.0.1:8824 once the console is up; Ctrl-C, or task incluster:down from any terminal, stops the forwards"
+      - >-
+        go run ./cmd/devforward -context '{{.INCLUSTER_CONTEXT}}' -state '{{.INCLUSTER_STATE}}'
+        -forward 'dex=dex/svc/dex:5556:5556@{{.INCLUSTER_DEX_ADDRESS}}'
+        -forward 'console=kubetower/svc/kubetower:8824:5823@127.0.0.1'
+
+  incluster:check:
+    internal: true
+    silent: true
+    run: once
+    # A KT_* variable on the command line is ignored by Task (the comment over
+    # INCLUSTER_CONTEXT has why), so it is refused rather than run against the
+    # default. Set in the environment, the two readings agree.
+    preconditions:
+      - sh: '{{if eq (.KT_INCLUSTER_CONTEXT | default "") (env "KT_INCLUSTER_CONTEXT" | default "")}}true{{else}}false{{end}}'
+        msg: 'incluster: KT_INCLUSTER_CONTEXT on the command line is not read - put it before task (KT_INCLUSTER_CONTEXT=... task ...), or pass INCLUSTER_CONTEXT=...'
+      - sh: '{{if eq (.KT_INCLUSTER_CHARTS | default "") (env "KT_INCLUSTER_CHARTS" | default "")}}true{{else}}false{{end}}'
+        msg: 'incluster: KT_INCLUSTER_CHARTS on the command line is not read - put it before task (KT_INCLUSTER_CHARTS=... task ...), or pass INCLUSTER_CHARTS=...'
+      - sh: '{{if eq (.KT_INCLUSTER_DEX_ADDRESS | default "") (env "KT_INCLUSTER_DEX_ADDRESS" | default "")}}true{{else}}false{{end}}'
+        msg: 'incluster: KT_INCLUSTER_DEX_ADDRESS on the command line is not read - put it before task (KT_INCLUSTER_DEX_ADDRESS=... task ...), or pass INCLUSTER_DEX_ADDRESS=...'
+    cmds:
+      # The context exists, its API server is on this machine, and it answers.
+      #
+      # "On this machine" is the API server's host: kubernetes.docker.internal
+      # (Docker Desktop) or a loopback address (kind, k3d). It is a guard
+      # against a mistyped KT_INCLUSTER_CONTEXT naming a real cluster, which
+      # would then be given a console whose every credential is public. It also
+      # matches what the image needs: `pullPolicy: Never` finds kubetower:dev
+      # only on a node that sees this machine's Docker daemon.
+      - |
+        ctx='{{.INCLUSTER_CONTEXT}}'
+        server=$(kubectl config view --context "$ctx" --minify -o jsonpath='{.clusters[0].cluster.server}' 2>&1) || {
+          echo "incluster: kubectl knows no context named $ctx ($server)" >&2
+          echo "incluster: enable Kubernetes in Docker Desktop, or name a local cluster with KT_INCLUSTER_CONTEXT" >&2
+          exit 1
+        }
+        host=${server#*://}
+        host=${host%%/*}
+        case "$host" in
+          \[*) host=${host%%]*}; host=${host#\[} ;;
+          *) host=${host%:*} ;;
+        esac
+        case "$host" in
+          kubernetes.docker.internal|localhost|127.0.0.1|::1) ;;
+          *)
+            echo "incluster: refused - context $ctx is served from $server, which is not this machine." >&2
+            echo "incluster: the dev values carry public credentials and are for a local cluster only." >&2
+            exit 1 ;;
+        esac
+        kubectl --context "$ctx" get --raw /readyz --request-timeout=5s >/dev/null || {
+          echo "incluster: context $ctx ($server) does not answer - is Docker Desktop's Kubernetes running?" >&2
+          exit 1
+        }
+        echo "incluster: context $ctx, $server, answers"
+      - |
+        charts='{{.INCLUSTER_CHARTS}}'
+        for f in charts/kubetower/Chart.yaml dev/values.yaml test/oidc/dex.yaml; do
+          [ -f "$charts/$f" ] || {
+            echo "incluster: $charts/$f is missing - KT_INCLUSTER_CHARTS names the kubetower-helm-charts checkout" >&2
+            exit 1
+          }
+        done
+        echo "incluster: chart, values and fixture from $charts"
+
+  incluster:image:
+    internal: true
+    cmds:
+      # In the Docker daemon, and nowhere in the tree: the build context is sent
+      # to the daemon, and the SPA and the binary are built inside it. That is
+      # why this is `docker build` and not `task build`, which writes web/dist
+      # into the working tree. The Dockerfile's own checks - lint,
+      # typecheck, go vet, go test - run too; the cache skips them when nothing
+      # they read changed.
+      #
+      # BuildKit is named, not assumed: the Dockerfile needs it ($BUILDPLATFORM),
+      # and a machine that exports DOCKER_BUILDKIT=0 would get the legacy
+      # builder, which fails on the first FROM with "failed to parse platform".
+      - DOCKER_BUILDKIT=1 docker build --build-arg KT_VERSION=dev -t kubetower:dev .
+
+  incluster:install:
+    internal: true
+    # Silent, or Task echoes both scripts whole before running them.
+    silent: true
+    cmds:
+      # Absent, not "failed to read": --ignore-not-found answers empty for a
+      # fixture that is not there and fails for a cluster that does not answer,
+      # and only the first is a reason to apply it.
+      - |
+        ctx='{{.INCLUSTER_CONTEXT}}'
+        found=$(kubectl --context "$ctx" --namespace dex get deployment dex --ignore-not-found -o name) || exit 1
+        if [ -z "$found" ]; then
+          echo "incluster: the Dex fixture is absent - applying it"
+          kubectl --context "$ctx" apply -f '{{.INCLUSTER_CHARTS}}/test/oidc/dex.yaml' || exit 1
+        else
+          echo "incluster: the Dex fixture is present - left as it is"
+        fi
+        kubectl --context "$ctx" --namespace dex rollout status deployment/dex --timeout=180s
+      # The image's ID as a pod annotation, because the tag never changes: with
+      # `kubetower:dev` and `pullPolicy: Never` on every run, a rebuilt image
+      # leaves the Deployment's spec identical and the old pod running. The ID
+      # changes exactly when the image does, so the console rolls then and only
+      # then.
+      #
+      # helm's own output is dropped for one line of `helm list`: its NOTES are
+      # written for a production install and run to a screenful.
+      - |
+        ctx='{{.INCLUSTER_CONTEXT}}'
+        charts='{{.INCLUSTER_CHARTS}}'
+        id=$(docker images --quiet --no-trunc kubetower:dev) || exit 1
+        [ -n "$id" ] || { echo "incluster: no kubetower:dev image in the Docker daemon" >&2; exit 1; }
+        echo "incluster: installing kubetower:dev ($id)"
+        helm --kube-context "$ctx" upgrade --install kubetower "$charts/charts/kubetower" \
+          --namespace kubetower --create-namespace \
+          -f "$charts/dev/values.yaml" \
+          --set-string "podAnnotations.kubetower-dev-image=$id" \
+          --wait --timeout 5m >/dev/null || exit 1
+        helm --kube-context "$ctx" list --namespace kubetower --filter '^kubetower$'
+
+  # -------------------------------------------------------------------------
+  # Checks
+  # -------------------------------------------------------------------------
+
+  ci:
+    desc: What guards.yml and ci.yml check, run here first (one at a time, not above KT_CI_MAX_LOAD).
+    summary: |
+      test/ci-local.sh replays every job of guards.yml and ci.yml that needs no
+      runner, prints a summary and fails if a check did. `task ci -- --force`
+      runs above the load limit; `bash test/ci-local.sh --list` says what it
+      replays and what it leaves to the runners.
+    cmds:
+      - bash test/ci-local.sh {{.CLI_ARGS}}
+
+  hooks:install:
+    desc: Run .githooks/pre-push before every push from this clone (git push --no-verify skips it).
+    cmds:
+      - git config core.hooksPath .githooks
+      - git config --get core.hooksPath
+
+  hooks:uninstall:
+    desc: Stop running .githooks from this clone.
+    cmds:
+      - git config --unset core.hooksPath || true
+
+  vet:
+    desc: go vet over the whole module.
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Both suites.
+    cmds:
+      - task: test:api
+      - task: test:web
+
+  test:api:
+    desc: The Go tests.
+    cmds:
+      - go test ./...
+
+  test:web:
+    desc: The Vitest suite.
+    dir: web
+    cmds:
+      - '{{.PNPM}} test'
+
+  test:wiring:
+    desc: Check that every KT_ variable the code reads reaches the process.
+    summary: |
+      internal/launch/envwiring_test.go holds both halves of the contract: a
+      variable the code reads is listed in .env.example, and it is forwarded by
+      every compose file or carries a written reason for not being. It skips
+      when no compose file is in the tree, which is what `docker build` sees.
+    cmds:
+      - go test ./internal/launch/ -run 'TestEveryVariableTheCodeReads' -v
+
+  typecheck:
+    desc: TypeScript, both projects.
+    dir: web
+    cmds:
+      - '{{.PNPM}} typecheck'
+
+  lint:
+    desc: ESLint over the front end.
+    dir: web
+    cmds:
+      - '{{.PNPM}} lint'
+
+  # -------------------------------------------------------------------------
+  # Building the shipped shape
+  # -------------------------------------------------------------------------
+
+  build:
+    desc: Build the SPA, then the binary that embeds it.
+    summary: |
+      The order is not a preference. //go:embed all:dist takes whatever is on
+      disk when the Go build runs, and a lone dist/.gitkeep satisfies it without
+      error - so building Go first produces a binary that serves the "UI not
+      built" page and says nothing about it.
+    cmds:
+      - task: build:web
+      - task: build:notices
+      - task: build:api
+
+  build:web:
+    desc: Build the SPA into web/dist/ui.
+    summary: |
+      This is the one command in this file that writes a large artifact INTO the
+      working tree, and the tree is inside a synchronized directory whose
+      exclusion list covers node_modules and not dist. The development loop never
+      needs it - `task dev` serves from memory. Run it when you are checking the
+      embedded shape, and see docs/DEVELOPMENT.md section 6.
+    dir: web
+    cmds:
+      - '{{.PNPM}} build'
+
+  build:notices:
+    desc: Write the third-party notices into the bundle, as a release does.
+    summary: |
+      The Go modules linked into cmd/kubetower for every release target, and the
+      npm packages the last `build:web` bundled, each with its license text
+      (cmd/ktnotices). Written to web/dist/ui/THIRD_PARTY_NOTICES.txt, so the
+      binary built next embeds it and serves it at /THIRD_PARTY_NOTICES.txt;
+      release.yml also copies it into every archive. Needs `build:web` first: the
+      npm half is what that build wrote to web/build/third-party-npm.json.
+    cmds:
+      - go run ./cmd/ktnotices -npm web/build/third-party-npm.json -o web/dist/ui/THIRD_PARTY_NOTICES.txt
+
+  # Both builds go through `cmd/ktbuild`, which is what `ci.yml` and
+  # `release.yml` call too: one set of link flags, whoever builds. A plain
+  # `go build` on Windows produces a console-subsystem binary that opens a cmd
+  # window behind the application once installed. The tool reads a Windows binary back and refuses it unless it is a GUI
+  # program, so this task cannot regress to that silently.
+  #
+  # VERSION is optional, and a release's business: `task build:setup
+  # VERSION=0.1.0` stamps it, and regenerates the Windows version resource for
+  # the build, which needs the network once (go-winres). Without it the binary
+  # says `dev`, which is the honest answer for a build cut from a tree.
+  #
+  # A build with a VERSION, and every setup, ships: cmd/ktbuild refuses it
+  # unless `build:web` has written web/dist/ui/index.html, and reads the binary
+  # back for the console. `task build` runs them in order;
+  # an unstamped build:api still needs no Node.
+  build:api:
+    desc: Build the binary for this machine, the way a release links it, outside the working tree.
+    cmds:
+      - go run ./cmd/ktbuild {{if .VERSION}}-version '{{.VERSION}}' {{end}}-o '{{.BINARY}}'
+
+  build:setup:
+    desc: Build the Windows setup wizard (NSIS, per user) around the windows/amd64 binary. Needs makensis.
+    summary: |
+      The setup is an NSIS wizard, packaging/windows/kubetower.nsi, around the
+      same binary as build:api cross-compiled for windows/amd64: a license
+      page, the install folder (%LOCALAPPDATA%\Programs\KubeTower by default),
+      Start-menu and desktop shortcuts, one uninstaller and one Apps & features
+      entry, no elevation. internal/launch/installsetup.go says why it is NSIS.
+
+      Needs makensis on PATH: `apt-get install nsis` on Debian or Ubuntu, or
+      NSIS from https://nsis.sourceforge.io on Windows. cmd/ktbuild refuses
+      with that sentence when it is missing, and reads the result back.
+      Needs the console built first (`task build:web`, then `task
+      build:notices`): cmd/ktbuild refuses a setup around a binary that would
+      open on "The front end is not in this binary".
+      Written to BUILD_DIR, outside the tree, as kubetower-setup.exe; a release
+      names it kubetower-<version>-setup.exe. It carries THIRD_PARTY_NOTICES.txt
+      only when build:notices has written one. Unsigned,
+      so SmartScreen will ask.
+    cmds:
+      - go run ./cmd/ktbuild -os windows -arch amd64 -setup {{if .VERSION}}-version '{{.VERSION}}' {{end}}-o '{{.BUILD_DIR}}/kubetower-setup.exe'
+
+  clean:
+    desc: Remove the built binary and the SPA bundle.
+    cmds:
+      - rm -f '{{.BINARY}}'
+      - rm -rf web/dist/ui

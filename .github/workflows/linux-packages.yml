@@ -1,0 +1,214 @@
+# The Linux packages: `kubetower-<version>-amd64.deb` for Debian and Ubuntu,
+# `kubetower-<version>-x86_64.rpm` for Fedora and RHEL. Called by release.yml on
+# a tag and by ci.yml's full tier, run by hand, so a branch proves the job that
+# a tag runs: the same file, the same pinned tool, the same installs. It
+# publishes nothing; the packages leave as a workflow artifact, and only
+# release.yml's draft job puts them on a (draft) release.
+#
+# THE NAMES ARE THE DOWNLOAD PAGE'S, as for the disk images: a button that
+# points at a name the release does not carry is a 404 on the page people
+# download from. The version inside each package is the tag, written as each
+# packager sorts a pre-release before its release: 0.1.0-rc.1 is 0.1.0~rc.1 in
+# the .deb and 0.1.0~rc.1-1 in the .rpm (packaging/linux/nfpm.yaml).
+#
+# WHAT EACH INSTALLS, and nothing else: the linux_amd64 archive's own binary at
+# /usr/bin/kubetower - the bytes a person downloads in the .tar.gz, not a second
+# build - the launcher packaging/linux/kubetower.desktop (the one `--install`
+# writes, held to it by a test in internal/launch), the 512 px icon the binary
+# embeds, and the archive's LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt.
+# It depends on xdg-utils, because the console opens in the browser.
+# packaging/linux/packages.sh builds them and reads them back, and installs
+# them; this file runs that script, so a developer runs the same thing.
+#
+# THE TOOL IS nfpm, goreleaser's packager: one description for both formats,
+# a single static binary, and no dpkg-buildpackage or rpmbuild tree to keep on
+# a runner whose packages were installed by hand (an rpmbuild on a Debian host
+# is a tool nobody else here uses). Pinned by version and by the SHA-256 of its
+# release archive, the hash its own checksums.txt names: never a floating
+# download, and a different file under the same name fails the check.
+#
+# PROVED BY INSTALLING. The .deb is installed with apt-get in a debian:stable
+# container and the .rpm with dnf in a fedora one, each pulling xdg-utils from
+# the distribution, and the installed `kubetower --version` has to say the
+# version: the check a person makes after installing it. On the pool, whose
+# runners have docker (ci.yml's image job uses it); the containers are removed
+# by `--rm`, and their images are left, as the pool shares its daemon.
+#
+# UNSIGNED, amd64 only, and in no apt or dnf repository: a person downloads the
+# file, checks it against the release's checksums.txt, and installs it.
+#
+# The job holds `contents: read` and nothing else: the checkout of this
+# repository for the script, the description, the launcher and the icon.
+
+name: linux packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The version the binary was stamped with, without the v"
+        required: true
+        type: string
+      artifact:
+        description: >-
+          This run's artifact holding kubetower_<version>_linux_amd64.tar.gz,
+          with kubetower, LICENSE, LICENSING.md and THIRD_PARTY_NOTICES.txt
+        required: true
+        type: string
+      ref:
+        description: >-
+          The commit to take the packaging files from: release.yml's tagged
+          sha. Empty is the caller's own commit.
+        required: false
+        type: string
+        default: ""
+      sums:
+        description: >-
+          The SHA-256 of the artifact's checksums.txt, as the job that wrote it
+          computed it (release.yml's archives job). When set, the archive is
+          checked against it before anything is built on it; ci.yml's hand-off
+          carries no checksum file.
+        required: false
+        type: string
+        default: ""
+      retention-days:
+        description: "How long the packages are kept as a workflow artifact"
+        required: false
+        type: number
+        default: 14
+    # The packages' SHA-256, as this job computed them. A job output is set by
+    # this job's own steps and cannot be changed by any other job, so a caller
+    # checks the artifact it downloads against these rather than against a
+    # checksum that traveled in the artifact itself (release.yml's draft).
+    outputs:
+      sha256_deb:
+        description: "SHA-256 of kubetower-<version>-amd64.deb"
+        value: ${{ jobs.packages.outputs.sha256_deb }}
+      sha256_rpm:
+        description: "SHA-256 of kubetower-<version>-x86_64.rpm"
+        value: ${{ jobs.packages.outputs.sha256_rpm }}
+
+permissions: {}
+
+jobs:
+  packages:
+    name: the linux packages
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.RUNS_ON_RELEASE && fromJSON(vars.RUNS_ON_RELEASE) || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    outputs:
+      sha256_deb: ${{ steps.build.outputs.sha256_deb }}
+      sha256_rpm: ${{ steps.build.outputs.sha256_rpm }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+      # nfpm 2.48.0 (2026-10-12), the Linux x86_64 release archive, pinned by
+      # the SHA-256 its release's checksums.txt gives for it. Moving it is a
+      # change to review like any other, with the read-back and the installs
+      # below as its test.
+      NFPM_VERSION: 2.48.0
+      NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+    steps:
+      # See release.yml's verify job: every job checks the host's tools first,
+      # and names every missing one in a single error. dpkg-deb reads the .deb
+      # back; the .rpm is read back with rpm inside the fedora container.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: curl tar gzip sha256sum grep cut du mkdir mktemp rm ls dpkg-deb docker
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them; this job runs on the self-hosted pool: install them on the runner VM or in a step before this one, then re-run the failed jobs."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+
+      # The version reaches every shell below through env, never `${{ }}`, and
+      # is held to a version's shape before it becomes part of a file name.
+      - name: The version is a version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a version (MAJOR.MINOR.PATCH[-pre])"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Fetch nfpm at the pinned version and checksum
+        run: |
+          set -eu
+          name="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          dir="$RUNNER_TEMP/nfpm"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/$name" \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$name"
+          echo "$NFPM_SHA256  $dir/$name" | sha256sum --check --strict
+          tar -xzf "$dir/$name" -C "$dir" nfpm
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/nfpm" --version | grep -F "$NFPM_VERSION"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: in
+
+      # On a tag, the archive is checked before anything is built on it, against
+      # a hash that did not travel with it - the setup job's argument, made here
+      # because this job wraps those bytes in other files.
+      - name: The archive is the one the archives job made
+        if: inputs.sums != ''
+        env:
+          SUMS: ${{ inputs.sums }}
+        run: |
+          set -eu
+          if ! [[ "$SUMS" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the sums input is '$SUMS', not a SHA-256"
+            exit 1
+          fi
+          cd in
+          echo "$SUMS  checksums.txt" | sha256sum --check --strict
+          grep -F "  ./kubetower_${VERSION}_linux_amd64.tar.gz" checksums.txt | sha256sum --check --strict
+
+      - name: Build the packages, then read the .deb back
+        id: build
+        run: |
+          set -euo pipefail
+          packaging/linux/packages.sh build "$VERSION" "in/kubetower_${VERSION}_linux_amd64.tar.gz" out
+          echo "sha256_deb=$(sha256sum "out/kubetower-${VERSION}-amd64.deb" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha256_rpm=$(sha256sum "out/kubetower-${VERSION}-x86_64.rpm" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Install each package where people will, and ask it its version
+        run: packaging/linux/packages.sh try "$VERSION" out
+
+      - name: Summary
+        run: |
+          {
+            echo "### Linux packages, $VERSION"
+            echo
+            echo '| package | size | sha256 |'
+            echo '|---|---|---|'
+            for f in out/*.deb out/*.rpm; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
+            echo
+            echo "Unsigned. Built with nfpm $NFPM_VERSION; installed in debian:stable and fedora, where \`kubetower --version\` said $VERSION."
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -l out
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kubetower-linux-packages-${{ inputs.version }}
+          path: |
+            out/*.deb
+            out/*.rpm
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+          # A re-run of this job replaces the packages it made before.
+          overwrite: true

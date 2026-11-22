@@ -1,0 +1,33 @@
+# Who is asked to review what.
+#
+# One rule today, and it is deliberately the whole tree.
+#
+# WHY THERE IS ONLY ONE LINE
+#
+# Per-area ownership is an OPEN DECISION and is not settled here. The question
+# is real - the Go extension contract, the application wiring, the extras and
+# the console itself are four surfaces with genuinely different review
+# criteria, and the contract binds code that was not written with the core,
+# which is the strongest argument for naming a separate reviewer.
+# But who reviews which has not been decided, the directories those rules would
+# name do not all exist yet, and a CODEOWNERS entry pointing at a path that does
+# not exist is silently inert: GitHub does not warn, it simply never matches.
+#
+# So this file says what is true - everything is the repository owner's - rather
+# than inventing an arrangement that would then be read as a decision. When the
+# split is decided, it is added here and this comment is replaced by it.
+#
+# WHAT THIS FILE DOES AND DOES NOT DO
+#
+# CODEOWNERS requests a review automatically. It only *requires* one where a
+# branch protection rule says "Require review from Code Owners", and that
+# setting is not available on a private repository under the Free plan. Until
+# then this is a routing rule, not a gate - and saying so is the point, because
+# a file that looks like enforcement and is not is worse than no file.
+#
+# SYNTAX NOTE, since it costs a pull request to discover: the LAST matching
+# pattern wins, not the most specific one. Any future per-area rule goes BELOW
+# the catch-all, never above it.
+
+# Everything.
+* @Thomas6013

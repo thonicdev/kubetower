@@ -1,0 +1,1 @@
+export { cnpg } from './extension';

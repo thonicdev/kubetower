@@ -1,0 +1,62 @@
+# What does not belong in the build context.
+#
+# The builder stage is `COPY . .`, so everything here is either weight, or a
+# correctness problem, or both.
+
+# ---------------------------------------------------------------------------
+# Correctness, not weight
+# ---------------------------------------------------------------------------
+# The console stage runs `pnpm install --frozen-lockfile` for the platform it
+# builds on. A host `node_modules` copied over it carries this machine's
+# binaries — and on Windows that is a different platform from the image. Letting
+# it into the context risks the build resolving against it rather than against
+# the lockfile, which is the one thing `--frozen-lockfile` exists to prevent.
+web/node_modules
+**/node_modules
+
+# `web/dist` arrives from the console stage, built inside the image. A host
+# build copied in would be whatever was on this machine last, which is how an
+# image ships a bundle nobody can reproduce.
+web/dist
+# Likewise the npm half of the third-party notices, which the console stage
+# writes for itself.
+web/build
+
+# `.env` holds a password hash and the host's paths to ~/.kube and ~/.aws. It is
+# gitignored, so it is not in a clone — but it *is* in the operator's working
+# tree, which is where `docker build .` runs.
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+
+# ---------------------------------------------------------------------------
+# Weight, and cache invalidation
+# ---------------------------------------------------------------------------
+# The builder stage runs `go vet ./... && go test ./...` after `COPY . .`, so
+# anything here that changes invalidates that layer and costs a full test run.
+# Documentation changes several times a day; it changes nothing the image does.
+.git
+.github
+docs
+*.md
+!LICENSE
+!LICENSING.md
+
+# Development-only, and named rather than swept up by a pattern so that removing
+# one is a decision. `compose.dev.yaml` ships nowhere and
+# `internal/launch/envwiring_test.go` reads it — but that test runs on a
+# developer's tree and in CI, not inside the image, and the image runs
+# `go test ./...` which would then fail on its absence.
+#
+# So it is NOT excluded: a test that skips because its input is missing is a
+# gate that sleeps.
+
+# Editors and operating systems.
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini

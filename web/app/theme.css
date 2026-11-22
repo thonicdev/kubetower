@@ -1,0 +1,583 @@
+/* =============================================================================
+   theme.css — the only stylesheet in this repository.
+
+   Two rules hold above everything below: no hand-written CSS file beside a
+   component, and no hand-written HTML file. The exceptions are this file and
+   Vite's entry (`scripts/check-styles.mjs` holds the list), so another is a
+   defect rather than a judgment call.
+
+   What that means for this file: it is tokens, plus a document base, plus the
+   two constraints that are arithmetic rather than styling. Anything that can be
+   said as a utility on an element is said there and not here.
+
+   The tokens: surface and state colors, sixteen ANSI colors for the dock's
+   terminal, seven for server-coloured YAML, the nameplate palette, one brand
+   color, and the scales below. Colors live here and nowhere else.
+   ========================================================================== */
+
+@import "tailwindcss";
+
+@theme {
+  /* --- dark only ----------------------------------------------------------
+     The console is dark only, and there is no light palette. `color-scheme:
+     dark` is set on `body` below.
+     ---------------------------------------------------------------------- */
+
+  /* --- surface and state (11) --------------------------------------------
+     v4's @theme emits real custom properties, so `var(--color-accent)` resolves
+     identically in a server-rendered string and in a .tsx, and a chart drawn by
+     either cannot drift from the other.
+
+     The four surfaces sit within nine points of each other on purpose — a flat
+     console rather than a stack of cards — which is why the gauge trough below
+     is light rather than dark.
+     ---------------------------------------------------------------------- */
+  --color-bg:      #0d1117;
+  --color-panel:   #161b22;
+  --color-panel-2: #1c2230;
+  --color-line:    #262d3a;
+  --color-fg:      #e6e9ef;
+  --color-muted:   #8b95a5;
+  --color-accent:  #326ce5;   /* Kubernetes blue */
+  --color-ok:      #3fb950;
+  --color-warn:    #d29922;
+  --color-bad:     #f85149;
+
+  /* KubeAdjust's fourth reading: a node or a pod nobody is using is a finding
+     that is neither an alarm nor fine, so it is blue rather than a shade of
+     green or of red. Its gauges' fourth band, its pod tracks' and its
+     volumes'. */
+  --color-ka-over: #58a6ff;
+
+  /* --- the nameplate palette (16 + 2 inks) ------------------------------
+     The rail's tiles are colored squares, and the color is a KEY the server
+     sends (`Cluster.colour`, the contract's `ClusterColour` enum) - never a CSS
+     value. Each key is one token here and `shell/clusterState.ts` maps key to
+     class, as `DOT` maps a state to one.
+
+     Eight hues 45 degrees apart (`internal/nameplates`), each at
+     `hsl(h 55% 40%)` and in a pale version at `hsl(h 55% 62%)`, with white
+     initials on the deep half and #10131a on the pale half. Amber, lime, green
+     and teal are at 32% and not 40%: white initials at 13px semibold on those
+     four read under WCAG AA's 4.5:1 at 40%, and at 32% they are 4.8 to 5.4:1,
+     so the rule stays one rule: white on the deep half, dark on the pale.
+     `scripts/check-styles.mjs` computes every pair from these tokens and fails
+     below 4.5:1. They are tokens and not an inline `hsl()` in JSX because
+     colors live in this file, and because a fixed sixteen are values, not
+     arithmetic.
+     ---------------------------------------------------------------------- */
+  --color-plate-red:         hsl(0 55% 40%);
+  --color-plate-amber:       hsl(45 55% 32%);
+  --color-plate-lime:        hsl(90 55% 32%);
+  --color-plate-green:       hsl(135 55% 32%);
+  --color-plate-teal:        hsl(180 55% 32%);
+  --color-plate-blue:        hsl(225 55% 40%);
+  --color-plate-violet:      hsl(270 55% 40%);
+  --color-plate-pink:        hsl(315 55% 40%);
+  --color-plate-red-pale:    hsl(0 55% 62%);
+  --color-plate-amber-pale:  hsl(45 55% 62%);
+  --color-plate-lime-pale:   hsl(90 55% 62%);
+  --color-plate-green-pale:  hsl(135 55% 62%);
+  --color-plate-teal-pale:   hsl(180 55% 62%);
+  --color-plate-blue-pale:   hsl(225 55% 62%);
+  --color-plate-violet-pale: hsl(270 55% 62%);
+  --color-plate-pink-pale:   hsl(315 55% 62%);
+  --color-plate-ink-light:  #ffffff;
+  --color-plate-ink-dark:   #10131a;
+
+  /* The cluster rail is the compact 56px strip, Tailwind's own `w-14`, so it
+     needs no width token. */
+
+  /* --- the type scale (7 steps) ------------------------------------------
+     The load-bearing part of the file: it decides how large the whole console
+     reads, and it moves the console together from one place rather than
+     through hundreds of class edits.
+
+     Most of the console's text is small - list cells, badges, counters - and
+     Tailwind's smallest default step is `text-xs` at 0.75rem (12px) with a
+     1rem (16px) base, so the defaults would enlarge every surface. The ladder
+     is therefore its own: 11 / 12 / 13 / 14 / 16 / 18 / 21. Which step a
+     component asks for is a separate question (`text-2xs` is for badges and
+     counters, not for reading text).
+
+     `--text-base` equals the 14px that `body` declares below, so an element
+     that asks for `text-base` and one that asks for nothing are the same size.
+
+     The grids' leading is the ratio below and not a pixel value, so a row
+     grows with its text; the cell padding is a utility in
+     `components/DataGrid.tsx` (`px-2 py-1`), which is where any adjustment
+     belongs.
+
+     `--text-*: initial` wipes the default namespace first, and that line is not
+     tidiness. Overriding `--text-xs` alone leaves Tailwind's paired
+     `--text-xs--line-height: calc(1 / 0.75)` behind — a ratio computed for 12px
+     silently applied to whatever `--text-xs` is here. Clearing the namespace
+     removes the modifiers with the values.
+
+     Each step then carries 1.5 explicitly, the document default (`body`
+     below), so an element that declares nothing computes the same leading at
+     every step. Elements that want another leading say so as utilities. A
+     ratio rather than px means a size change moves the leading with it.
+     ---------------------------------------------------------------------- */
+  --text-*: initial;
+
+  --text-2xs:                11px;
+  --text-2xs--line-height:   1.5;
+  --text-xs:                 12px;
+  --text-xs--line-height:    1.5;
+  --text-sm:                 13px;
+  --text-sm--line-height:    1.5;
+  --text-base:               14px;
+  --text-base--line-height:  1.5;
+  --text-lg:                 16px;
+  --text-lg--line-height:    1.5;
+  --text-xl:                 18px;
+  --text-xl--line-height:    1.5;
+  --text-2xl:                21px;
+  --text-2xl--line-height:   1.5;
+
+  /* --- the radius scale (7 steps) ----------------------------------------
+     7px is the console's most common corner, and it is absent from Tailwind's
+     default scale (2/4/6/8/12/16/24/32px), so there is no step to round it to
+     that is not visibly wrong on the most repeated corner.
+
+     The namespace is cleared for the same reason as the type scale: leaving the
+     defaults in place would put a 12px `rounded-xl` beside a 7px `rounded-lg`
+     with nothing saying which scale a reader is looking at.
+
+     7px is `--radius-lg`, inside the ladder. A bare `--radius` is read only by
+     the unsuffixed `rounded` utility and sits OUTSIDE the `--radius-*` ladder,
+     so naming the common corner that way would leave a hole between md and xl.
+
+     A consequence worth stating because it is the safe direction: the namespace
+     reset removes the default bare `--radius: 0.25rem` too, so `rounded` with no
+     suffix generates NO rule at all. A stray `rounded` in JSX therefore does
+     visibly nothing rather than silently applying a 4px corner that belongs to
+     no scale. `rounded-full` is hard-coded to `calc(infinity * 1px)` and is
+     unharmed by the reset.
+     ---------------------------------------------------------------------- */
+  --radius-*: initial;
+
+  --radius-xs:  3px;
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  7px;   /* the common one */
+  --radius-xl:  8px;
+  --radius-2xl: 10px;
+  --radius-3xl: 12px;
+
+  /* --- the faces ---------------------------------------------------------
+     One monospace stack for every monospace rule, so two rules on one page
+     cannot resolve to different faces. The union is right on both platforms
+     rather than a compromise: Menlo exists on macOS and not on Windows,
+     Consolas the reverse, so the order below resolves to the intended face on
+     each.
+     ---------------------------------------------------------------------- */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Tailwind's default --font-sans is close but names neither Segoe UI nor
+     Roboto; on a Linux desktop where system-ui resolves to something else the
+     difference is visible, so the stack is stated rather than assumed
+     equivalent. */
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+
+  /* --- the dock's terminal palette (16) ----------------------------------
+     Sixteen names a *program* chose, which this console has to answer for on
+     this background. They are not ours and they are not free to be adjusted to
+     taste: a container writing an escape for one of them expects the thing that
+     name means in every other terminal.
+
+     Which is why black is not black. Drawn literally on #0d1117 the line simply
+     disappears — a worse failure than the raw escape, and one that reads as the
+     log having stopped rather than as a color bug. Both grays are lifted until
+     they read, as every terminal emulator does and none documents. Bright black
+     is the one that matters in practice: it is what a structured logger dims
+     its timestamps with, so it has to be quiet and still legible.
+
+     Global rather than scoped to the log pane: @theme can only emit at :root,
+     and the terminal reads them through getComputedStyle from JS, which needs
+     them resolvable without a pane in the tree.
+     ---------------------------------------------------------------------- */
+  --color-ansi-black:          #545d6a;
+  --color-ansi-red:            #f85149;
+  --color-ansi-green:          #3fb950;
+  --color-ansi-yellow:         #d29922;
+  --color-ansi-blue:           #58a6ff;
+  --color-ansi-magenta:        #bc8cff;
+  --color-ansi-cyan:           #39c5cf;
+  --color-ansi-white:          #b1bac4;
+  --color-ansi-bright-black:   #768390;
+  --color-ansi-bright-red:     #ff7b72;
+  --color-ansi-bright-green:   #56d364;
+  --color-ansi-bright-yellow:  #e3b341;
+  --color-ansi-bright-blue:    #79c0ff;
+  --color-ansi-bright-magenta: #d2a8ff;
+  --color-ansi-bright-cyan:    #56d4dd;
+  --color-ansi-bright-white:   #e6e9ef;
+
+  /* --- YAML, colored by the server (7) ----------------------------------
+     key / string / number / boolean / comment / tag / literal, with short
+     `y-*` stems.
+
+     Only the rendered view is colored. The editor is not, and that is not an
+     omission: a textarea cannot be styled per token, and the layered trick that
+     fakes it puts the caret a character away from its glyph the moment the two
+     layers disagree about a font metric or a scroll offset.
+     ---------------------------------------------------------------------- */
+  --color-y-key:  #79b8ff;
+  --color-y-str:  #a5d6a7;
+  --color-y-num:  #d19a66;
+  --color-y-bool: #d2a8ff;
+  --color-y-com:  #6f7c8f;
+  --color-y-tag:  #ffab70;
+  --color-y-lit:  #c3ccd9;
+
+  /* One control on the drawer's action row, drawn as the mark alone, and the
+     mark carries its own color rather than the row's — which is what makes it
+     recognisable at 15px with no label beside it. */
+  --color-claude: #d97757;
+
+  /* --- tracking on the uppercase eyebrows ---------------------------------
+     Uppercase headings are tracked; untracked uppercase at 10-11px reads
+     cramped, and that is the size where the difference is most visible.
+
+     `.07em` is the wider of the two and marks a heading that labels a REGION:
+     a menu group's summary, the drawer's kind. `.04em` marks a heading INSIDE
+     something, and the table heading is what it is for.
+
+     Tokens rather than `tracking-[.07em]` at each site. Tailwind's own scale
+     already carries `.025em`, `.05em` and `.1em` under wide/wider/widest and
+     neither of these is one of them, so the choice at a call site would be
+     between an arbitrary value and the wrong step - and a name says which of
+     the two headings a reader is looking at, which a decimal does not.
+     ---------------------------------------------------------------------- */
+  --tracking-eyebrow: .07em;   /* a heading that labels a region */
+  --tracking-heading: .04em;   /* a heading inside one */
+
+  /* --- the live pulse -----------------------------------------------------
+     A live indicator's pulse: a 2s ease-in-out between full and .35 opacity.
+     Use it as `animate-pulse-live motion-reduce:animate-none`. Tailwind's own
+     `animate-pulse` is `cubic-bezier(.4,0,.6,1)` with `50% { opacity: .5 }` - a
+     different curve AND a different depth - and it is what somebody reaching
+     for "the pulsing dot" gets by default.
+
+     Tailwind v4 takes `@keyframes` inside `@theme` paired with an `--animate-*`
+     token, which is why this is a token and not another stylesheet; without
+     this block `animate-pulse-live` generates no rule at all.
+     ---------------------------------------------------------------------- */
+  --animate-pulse-live: pulse-live 2s ease-in-out infinite;
+
+  @keyframes pulse-live {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
+
+/* The drawer's width — container and panel both, so the two cannot disagree.
+
+   Deliberately NOT a theme token: it is a computed width, not a step on a scale,
+   and putting it in the spacing namespace would offer `p-drawer` and `gap-drawer`
+   to anything that wanted them. It is reached as `w-[var(--drawer-w)]`, and a
+   plain :root declaration can be overridden where a @theme token cannot.
+
+   It is the drawer's default and its floor, not its only width: a person can
+   widen it from its inner edge, and `shell/drawerWidth.ts` repeats these two
+   numbers for the handle's bounds. Change them together. */
+:root {
+  --drawer-w: min(560px, 46vw);
+
+  /* The icon square. Here for the same reason --drawer-w is: a computed size
+     rather than a step on a scale, so it must not enter the spacing namespace
+     where `p-icon` and `gap-icon` would become offers. Reached as
+     `size-[var(--icon)]`, from `components/Icon.tsx` and nowhere else. 15px is
+     what a 24x24 icon grid scales to beside 12px type. */
+  --icon: 15px;
+}
+
+@layer base {
+  /* The document ground. Four declarations:
+
+     - `color-scheme: dark` is what makes the scrollbars, the form controls and
+       the caret dark. Without it the browser draws light widgets on a #0d1117
+       page and no utility class can reach them.
+     - The 14px base is the size everything that declares nothing inherits; it
+       would otherwise render at Tailwind's 16px.
+     - It is set on `body` and NOT on `html`, which is the load-bearing half.
+       Tailwind's spacing scale is `--spacing: 0.25rem`, so moving the root font
+       size to 14px would rescale every `p-*`, `gap-*` and `m-*` in the console by
+       12.5% as a side effect of a font decision. The default spacing scale fits
+       the console's paddings and gaps, so `--spacing` is left alone and `p-4`
+       still means 16px to anyone who has used Tailwind before.
+     - Background and color, so the page behind the app is the console's ground
+       rather than white. */
+  body {
+    color-scheme: dark;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* The console is an application, not a page: the shell is one window tall
+     and clips, and only its content area scrolls. A wheel or a trackpad at the
+     end of a scroller must not chain to the document and draw the elastic page
+     bounce that moves the header and bars. Only the chaining is switched off
+     here: the document is not made `overflow: hidden`, because the views
+     outside the shell (SignIn, RouteError) are one window tall too, and in a
+     window shorter than their card - 200 % zoom, a phone on its side - the
+     document's own scroll is the only way down to the submit button. The shell
+     never makes the document scroll: it is `h-dvh overflow-hidden`. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+}
+
+/* =============================================================================
+   @layer components — the two constraints that are arithmetic, not styling.
+
+   They are here because neither can be said as a utility on an element: one is
+   an inherited property whose whole mechanism is that it reaches children no
+   class is written on, and the other is a table layout whose widths are decided
+   before the data they describe has arrived. Everything else in both that CAN
+   be a utility is a utility, and this block says where each of those went.
+
+   The reasoning travels with the rules because without it the next reader sees
+   two odd-looking declarations and tidies one away.
+
+   THE CLASS IS `.kt-grid`, NOT `.grid`, and it is not cosmetic: Tailwind emits
+   `.grid { display: grid }`, so a `<table class="grid">` would be taken out of
+   table layout entirely and neither rule below would have anything to act on.
+   ========================================================================== */
+
+@layer components {
+  /* --- one line per row, and the exception is on the cell -----------------
+
+     Wrapping cells by default lets one long name in one column put every other
+     row on two lines, and the table becomes a ragged thing to scan. A list is
+     read by running the eye down one column, and that only works when the rows
+     are the same height. A long value is cut with an ellipsis instead.
+
+     THE MECHANISM IS INHERITANCE AND IT DEFEATS THE OBVIOUS FIX EVERY TIME.
+     `white-space` is inherited into every element inside the cell, so
+     `overflow-wrap: anywhere` on a span or a div in there is INERT:
+     `overflow-wrap` says WHERE a line may break, and `nowrap` says there are
+     none to break. A `word-break` or `wrap` class on a descendant reads like a
+     working declaration and does nothing.
+
+     So: THE WRAP GOES ON THE CELL, NEVER ON A DESCENDANT, and the vocabulary is
+     closed at three. Do not invent a fourth spelling.
+
+     `.prose` and `.message` mark a column that is a SENTENCE — a message, a
+     reason, a remediation. `.wrap` marks a single unbreakable token that may be
+     broken anywhere. What makes a column one of those is a property of the view
+     model, not of its heading, so the server says so and the stylesheet keeps
+     deciding the appearance.
+
+     How to check it, because reading the stylesheet is not enough: render the
+     real markup and compare the cell's scrollWidth with its clientWidth. A
+     computed `white-space: nowrap` on the cell means this rule is still
+     winning, whatever any child declares. */
+  .kt-grid th,
+  .kt-grid td {
+    white-space: nowrap;
+  }
+
+  .kt-grid th.prose,
+  .kt-grid td.prose,
+  .kt-grid td.message,
+  .kt-grid th.wrap,
+  .kt-grid td.wrap {
+    white-space: normal;
+  }
+
+  /* `.wrap` additionally needs somewhere to break, and unlike the rule above
+     this one is on the cell only because that is where the class is — it would
+     work on a child. It is here so the three exceptions read as one vocabulary
+     rather than two of them being CSS and the third being a utility somebody has
+     to remember to add beside the class. */
+  .kt-grid th.wrap,
+  .kt-grid td.wrap {
+    overflow-wrap: anywhere;
+  }
+
+  /* --- a width derived from data that has not arrived ----------------------
+
+     A resource table's column widths are computed from the cells in front of the
+     renderer, and the refresh redraws the rows and never the colgroup. So a
+     column whose content arrives LATER than its heading is sized for whatever
+     stood in for it, and stays that size.
+
+     The nodes list is the case: usage lookups never block on a cluster, so the
+     first render of CPU, Memory and Disk is three em dashes, sized for an em
+     dash. The readings arrive later into a fixed-layout table where the
+     colgroup is authoritative and nothing recomputes it, so they overflow their
+     column and draw over the next one until the next navigation moves every
+     column.
+
+     The fix is declarative and has to be: the column declares that it draws a
+     bar, and the width reserves the bar and floors the reading whether or not
+     this second's cells carry one. A WIDTH DERIVED FROM DATA THAT HAS NOT
+     ARRIVED IS NOT A WIDTH, IT IS A GUESS — anything put in a table whose value
+     arrives asynchronously has to declare what it costs, because the first
+     render cannot measure it and no later render is allowed to.
+
+     The CSS half is the fixed layout itself, and it is the half that cannot be a
+     utility: `table-fixed` would be one class on one element, but the arrangement
+     below is three states of the same table and the selector is what distinguishes
+     them. The rest is expressible and therefore lives in JSX:
+
+       - The bar and its reading are a flex row (`flex items-center gap-1.5`),
+         with the track `shrink-0` and the reading `flex-1 min-w-0 text-right
+         truncate`. Not taste: an inline bar followed by a right-aligned number is
+         positioned BY THE NUMBER, so the bar moves when a reading gains a digit.
+         Flex removes the coupling rather than compensating for it.
+       - A badge used in place of the bar needs `shrink-0` of its own, for the
+         same reason: a flex item may shrink below its content.
+       - The trough is LIGHT (`bg-white/10`) and has no border. A sunken trough
+         has nothing darker than `--color-bg` to sink into on this palette, so it
+         would be invisible, leaving the fill alone, whose right edge IS the
+         reading: level bars that read as ragged. GEOMETRY AND LEGIBILITY ARE TWO
+         QUESTIONS: when something looks misaligned and the rects say it is not,
+         compare the colors next.
+       - An unmeasured cell draws an em dash and NO track at all. An empty track
+         reads as 0%, which reads as an idle machine, which is the opposite of the
+         truth. Nothing should ever grow an "empty gauge" class.
+
+     Scoped to the list, and the scope is the point: the same table class is also
+     the drawer's fact tables and the overview cards, and those are content that
+     should size to itself. */
+  #panel > .table-scroll > .kt-grid {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  /* A table nobody has arranged fills the panel when its columns are narrower
+     than it; when they are not, `DataGrid`'s `fitToRoom` narrows the columns
+     that yield until they fit, so the list does not scroll sideways. `min-width`
+     and not `width`: the widths are what each column needs, and stretching them
+     to fill a wide screen is a courtesy.
+
+     A sized table fills its panel too, by the rule below. The `:not` exists
+     because the declaration is redundant on a sized table (`width: 100%`
+     already), and narrowing it to the unsized case says which half of the
+     arrangement this rule is about. */
+  #panel > .table-scroll > .kt-grid:not(.sized) {
+    min-width: 100%;
+  }
+
+  /* A value wider than its column is clipped, rather than drawn over the column
+     beside it.
+
+     THE FIXED LAYOUT DOES NOT CLIP AND NEITHER DOES `nowrap`. The rule above
+     makes the colgroup authoritative and the one-line rule holds every cell on
+     one line; what a cell then does with text too long for its declared width
+     is PAINT PAST ITS OWN EDGE, over the column beside it, silently. Clipping is
+     a third declaration and it has to be written, unconditionally.
+
+     Deliberately NOT excepted for `.prose`: a wrapping cell grows its ROW, not
+     its width, so `overflow: hidden` has nothing to take from it.
+
+     How to check it: put a value longer than its column in a list and compare
+     the cell's scrollWidth with its clientWidth. Wider scrollWidth with no
+     ellipsis on screen means this rule is missing. */
+  #panel > .table-scroll > .kt-grid th,
+  #panel > .table-scroll > .kt-grid td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Once a person has dragged a column, the table lays itself out to the
+     stored SHARES, which is the only way a column can be made narrower than
+     what is in it and therefore the only way resizing means anything at all.
+
+     `width: 100%`, the same as any other table here: a stored number is this
+     column's share of the table and not a number of pixels. A fixed-layout
+     table shares any difference between its own width and the sum of its
+     columns back out over those columns, IN PROPORTION TO WHAT THEY DECLARE, so
+     the table fills its panel and a drag moves a boundary, not the table's
+     right edge. (`min-content` would draw the declared widths literally and
+     size the table to its columns rather than to its panel; `max-content`
+     floors each column at its content, so the wider the value the less a
+     stored width does.)
+
+     THE SHARE IS DECLARED AS A PERCENTAGE, AND THAT IS WHAT MAKES THE SENTENCE
+     ABOVE TRUE IN BOTH DIRECTIONS. `width: 100%` only ever shares out a SURPLUS:
+     CSS 2.1 §17.5.2.1 makes a table's width the GREATER of its own `width` and
+     the sum of its columns, so a colgroup in pixels that sums to more than the
+     panel is not scaled down at all — it is drawn literally and `.table-scroll`
+     scrolls sideways. `DataGrid.tsx` therefore writes each `<col>` as its share
+     of the set — `13.57%` and not `310px` — so there is no sum for the table to
+     be the greater of. The stored numbers stay what was dragged; only what is
+     put in the colgroup is a share.
+
+     What that costs: the 56px floor is a floor on the GESTURE and not one on
+     screen. A narrow enough panel draws a column under it rather than
+     scrolling, and the grip stays on the heading's edge at any width, so no
+     column becomes unreachable.
+
+     TWO SELECTORS, AND BOTH ARE NEEDED. The rule above this one —
+     `#panel > .table-scroll > .kt-grid { width: 100% }` — scores an id, so
+     inside a resource list it would win over a class-only rule here. And
+     `DataGrid.tsx`'s `w-full` is `@layer utilities`, declared after `@layer
+     components`, so it beats this rule regardless of specificity; it asks for
+     the same 100%. The rule is kept explicit because it is the statement of the
+     model rather than an override, and because a table with `.sized` outside
+     `#panel` gets its width from nowhere else.
+
+     The clipping goes with the fixed layout and only with it: under it a value
+     wider than its column would otherwise spill across the next one. It
+     overrides the one-line rule's exceptions inside a sized table deliberately
+     — the person chose that share. */
+  .kt-grid.sized,
+  #panel > .table-scroll > .kt-grid.sized {
+    table-layout: fixed;
+    width: 100%;
+  }
+
+  .kt-grid.sized th,
+  .kt-grid.sized td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* =============================================================================
+   @layer base — the text selection, so the user agent's highlight, picked for
+   a white page, is not the one color on this console nobody chose.
+
+   `--color-accent` at 40%, which is the console's own blue rather than a second
+   one. 40% over #161b22 composites to rgb(32,55,102).
+
+   **`--color-fg` is stated rather than inherited, and that is the half worth
+   arguing.** Letting each element keep its own color through the wash looks
+   more faithful and is not readable: `--color-muted` (#8b95a5) over that
+   composite measures 3.85:1, under the 4.5:1 this console holds body text to,
+   and `text-muted` is what most of a confirmation is written in. Forced to
+   `--color-fg` it is 9.6:1. The cost is that a selection flattens the syntax
+   coloring underneath it — the pink of a namespace/name, the mono of a field —
+   for as long as the selection lasts. That is the ordinary behavior of a
+   `::selection` rule and it was chosen over three lines of unreadable gray.
+
+   A color question is settled on screen, not in a calculator: the numbers
+   above are the floor and not the verdict.
+
+   It is unscoped on purpose. A selection is a document-wide affordance, not a
+   dialog's. It sits in `@layer base`, so xterm's own stylesheet — imported
+   unlayered by the terminal chunk (`dock/terminal.ts`) — still wins inside the
+   terminal, where xterm draws its own selection.
+   ========================================================================== */
+
+@layer base {
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    color: var(--color-fg);
+  }
+}
