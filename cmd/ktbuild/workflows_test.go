@@ -1036,7 +1036,7 @@ func TestEveryBinaryThatShipsEmbedsTheConsole(t *testing.T) {
 
 	release := workflowJobs(t, "release.yml")
 	archives := release["archives"]
-	spa := stepWhere(archives, runs("pnpm -C web run build\n"))
+	spa := stepWhere(archives, runs("pnpm run build)\n"))
 	index := stepWhere(archives, runs("test -f web/dist/ui/index.html"))
 	first := stepWhere(archives, runs("go run ./cmd/ktbuild "))
 	switch {

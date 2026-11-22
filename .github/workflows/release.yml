@@ -404,8 +404,11 @@ jobs:
       - name: Build the console, and prove it exists before anything is built on it
         run: |
           set -eu
-          pnpm -C web install --frozen-lockfile
-          pnpm -C web run build
+          # From web/, not `pnpm -C web` at the root: corepack picks the pnpm
+          # named by the package.json of the directory it starts in, and the
+          # root has none, so it ran its own default and pnpm then refused
+          # web/package.json's packageManager (ERR_PNPM_BAD_PM_VERSION).
+          (cd web && pnpm install --frozen-lockfile && pnpm run build)
           # An empty answer and a failed answer: `pnpm build` exits 0 for reasons
           # that do not include "the bundle exists". DoD §14, brief §3.4.
           test -f web/dist/ui/index.html || {
