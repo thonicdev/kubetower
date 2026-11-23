@@ -147,6 +147,21 @@ describe('Settings opened from a console page', () => {
     });
   });
 
+  it('goes back on Escape from a checkbox, which takes no typing', async () => {
+    stubFetch(routes);
+    const { router } = mountApp(ORIGIN);
+    await openFromTopbar(router);
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    document.getElementById('page')?.appendChild(box);
+    box.focus();
+    fireEvent.keyDown(box, { key: 'Escape' });
+    await waitFor(() => {
+      expect(where(router)).toBe(ORIGIN);
+    });
+    box.remove();
+  });
+
   it('keeps the way back through a reload', async () => {
     stubFetch(routes);
     const { router } = mountApp(ORIGIN);
@@ -186,6 +201,111 @@ describe('Settings opened from a console page', () => {
   });
 });
 
+describe('every way into Settings carries the way back', () => {
+  /** Each entry point's test fails when that entry stops carrying the origin:
+   *  Settings then draws no Back control. */
+  const capabilities = {
+    '/api/capabilities': {
+      body: {
+        mode: 'desktop',
+        localShell: true,
+        podExec: true,
+        nodeShell: true,
+        assistant: false,
+        portForward: true,
+        preferences: true,
+        replicated: false,
+        readOnly: { writesRefused: false, detailWritesRefused: false },
+      },
+    },
+  };
+
+  it('from the account menu', async () => {
+    // The account menu carries Settings where the top bar holds the session:
+    // one cluster, and a console one signs back in to.
+    stubFetch({
+      ...routes,
+      '/api/clusters': { body: { state: 'ok', items: [{ name: 'prod', label: 'Production', state: 'ok' }] } },
+      '/api/auth/methods': { body: { password: true, sso: { state: 'off' } } },
+    });
+    const { router } = mountApp(ORIGIN);
+    let trigger: HTMLElement | null = null;
+    await waitFor(() => {
+      trigger = document.querySelector<HTMLElement>('[title="Signed in as alice"]');
+      expect(trigger).not.toBeNull();
+    });
+    fireEvent.click(trigger as unknown as HTMLElement);
+    let item: HTMLElement | undefined;
+    await waitFor(() => {
+      item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((one) => one.textContent === 'Settings');
+      expect(item).toBeDefined();
+    });
+    fireEvent.click(item as HTMLElement);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/settings/general');
+    });
+    await waitFor(() => {
+      expect(back()?.getAttribute('title')).toBe(ORIGIN);
+    });
+  });
+
+  it("from the suggestion banner's See", async () => {
+    stubFetch({
+      ...routes,
+      ...capabilities,
+      '/api/c/prod/extensions/suggestions': {
+        body: {
+          state: 'ok',
+          items: [
+            { key: 'redis', label: 'Redis viewer', evidence: '2 Redis Services in 1 namespace' },
+            { key: 'cnpg', label: 'Postgres (CNPG)', evidence: '3 clusters in 2 namespaces' },
+            { key: 'security', label: 'Security Center', evidence: 'reports in 6 namespaces' },
+          ],
+        },
+      },
+    });
+    const { router } = mountApp(ORIGIN);
+    let see: HTMLElement | null = null;
+    await waitFor(() => {
+      see = document.querySelector<HTMLElement>('[data-suggestion-see]');
+      expect(see).not.toBeNull();
+    });
+    fireEvent.click(see as unknown as HTMLElement);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/settings/extra');
+    });
+    expect(originOf(router.state.location)?.path).toBe(ORIGIN);
+  });
+
+  it("from the rail's tiles while in Settings › Extra, replacing the entry", async () => {
+    const listing = {
+      body: { state: 'ok', items: [{ key: 'alfa', label: 'Alfa Center', enabled: false, pinned: false, writable: true, settings: [] }] },
+    };
+    stubFetch({ ...routes, ...capabilities, '/api/c/prod/extensions': listing, '/api/c/staging/extensions': listing });
+    const { router } = mountApp(ORIGIN);
+    await openFromTopbar(router);
+    let tab: HTMLElement | null = null;
+    await waitFor(() => {
+      tab = document.querySelector<HTMLElement>('nav[aria-label="Settings sections"] a[href^="/settings/extra"]');
+      expect(tab).not.toBeNull();
+    });
+    fireEvent.click(tab as unknown as HTMLElement);
+    let tile: HTMLElement | null = null;
+    await waitFor(() => {
+      tile = document.querySelector<HTMLElement>('a[href="/settings/extra?cluster=staging"]');
+      expect(tile).not.toBeNull();
+    });
+    fireEvent.click(tile as unknown as HTMLElement);
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?cluster=staging');
+    });
+    expect(router.state.historyAction).toBe('REPLACE');
+    await waitFor(() => {
+      expect(back()?.getAttribute('title')).toBe(ORIGIN);
+    });
+  });
+});
+
 describe('under the browser router', () => {
   it('goes back through the history, so the entry below is the page itself', async () => {
     stubFetch(routes);
@@ -216,6 +336,36 @@ describe('under the browser router', () => {
     expect((window.history.state as { idx: number }).idx).toBe(below);
     router.dispose();
     window.history.replaceState(null, '', '/');
+  });
+});
+
+describe("the page's scroll after the browser's Back", () => {
+  it('is put back too', async () => {
+    stubFetch(routes);
+    const { router } = mountApp(ORIGIN);
+    const region = document.getElementById('page') as HTMLElement;
+    let top = 0;
+    Object.defineProperty(region, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+    });
+    top = 480;
+    await openFromTopbar(router);
+    top = 0;
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await waitFor(() => {
+      expect(where(router)).toBe(ORIGIN);
+    });
+    expect(router.state.historyAction).toBe('POP');
+    await waitFor(() => {
+      expect(top).toBe(480);
+    });
   });
 });
 
@@ -257,6 +407,7 @@ describe('the origin', () => {
     expect(originOf({ state: null })).toBeUndefined();
     expect(originOf({ state: { from: { path: 'https://elsewhere.example' } } })).toBeUndefined();
     expect(originOf({ state: { from: { path: '//elsewhere.example/x' } } })).toBeUndefined();
+    expect(originOf({ state: { from: { path: '/\\elsewhere.example/x' } } })).toBeUndefined();
     expect(originOf({ state: { from: { path: '/c/prod/pods', key: 'k', idx: 3, scroll: -5 } } })).toEqual({
       path: '/c/prod/pods',
       key: 'k',

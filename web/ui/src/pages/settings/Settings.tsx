@@ -43,11 +43,12 @@ import { InfosTab } from './InfosTab';
  *
  * ## The way back
  *
- * Opened from a console page, Settings draws a « ← Back » control before its
- * title, the page's whole address in its tooltip, that returns to that page exactly - its address, and its scroll - and Escape
- * does the same where no dialog or menu holds it. The tabs replace the history
- * entry and carry the origin along, so the browser's Back leaves Settings in
- * one press. `../../shell/settingsOrigin.ts` holds the mechanism.
+ * Opened from a console page, Settings draws « ← Back » before its title,
+ * with the page's whole address in its tooltip. It returns to that page
+ * exactly - its address and its scroll - and Escape does the same where no
+ * dialog, menu or text field holds the key. The tabs replace the history entry
+ * and carry the origin along, so the browser's Back leaves Settings in one
+ * press. `../../shell/settingsOrigin.ts` holds the mechanism.
  *
  * **Anything unrecognized lands on General** rather than on an empty panel.
  * A stale bookmark is a stale
@@ -180,12 +181,15 @@ export function SettingsPage(): ReactNode {
   );
 }
 
+/** Inputs that take no typing: Escape on one of them still goes back. */
+const PRESSED = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image']);
+
 /** A field being typed in keeps its own Escape. */
 function editing(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]') !== null)
-  );
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target.closest('textarea, select, [contenteditable="true"]') !== null) return true;
+  const input = target.closest('input');
+  return input !== null && !PRESSED.has(input.type);
 }
 
 function Tab({

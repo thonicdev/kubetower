@@ -58,7 +58,9 @@ export function originOf(location: Pick<Location, 'state'>): SettingsOrigin | un
   const from = (state as { from?: unknown }).from;
   if (typeof from !== 'object' || from === null) return undefined;
   const { path, key, idx, scroll } = from as Partial<SettingsOrigin>;
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return undefined;
+  // A path of this console only: `//host` and `/\host` are read by a browser as
+  // another host, and `history.replaceState` refuses those.
+  if (typeof path !== 'string' || !/^\/(?![/\\])/.test(path)) return undefined;
   return {
     path,
     key: typeof key === 'string' ? key : '',
@@ -165,7 +167,8 @@ const RESTORE_MS = 3000;
  * Put the page's scroll back once Settings has been left for its origin.
  * Mounted once, by the Shell. The page may still be reading: the position is
  * tried on each frame until the page is tall enough, for at most three seconds,
- * and given up as soon as the person scrolls.
+ * and given up as soon as the person scrolls (wheel, touch, keyboard, or a
+ * press on the page, which is how a scrollbar drag starts).
  */
 export function useRestoreSettingsScroll(): void {
   const location = useLocation();
@@ -188,6 +191,8 @@ export function useRestoreSettingsScroll(): void {
     page.addEventListener('wheel', stop, { passive: true });
     page.addEventListener('touchstart', stop, { passive: true });
     page.addEventListener('keydown', stop);
+    // A drag of the scrollbar starts with a press on the page's box.
+    page.addEventListener('pointerdown', stop, { passive: true });
     const step = (): void => {
       if (stopped) return;
       page.scrollTop = wanted.top;
@@ -200,6 +205,7 @@ export function useRestoreSettingsScroll(): void {
       page.removeEventListener('wheel', stop);
       page.removeEventListener('touchstart', stop);
       page.removeEventListener('keydown', stop);
+      page.removeEventListener('pointerdown', stop);
     };
   }, [location, type]);
 }
