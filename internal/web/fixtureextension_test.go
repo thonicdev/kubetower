@@ -23,6 +23,9 @@ const (
 	fixtureKey      = "alfa"
 	fixtureLabel    = "Alfa Center"
 	fixtureOtherKey = "bravo"
+	// fixtureLegacyKey is the key the first fixture was published under before:
+	// a grant written for it must keep granting the page.
+	fixtureLegacyKey = "alpha"
 )
 
 // fixtureExtension is an extension with three routes of the three shapes the
@@ -32,13 +35,14 @@ const (
 type fixtureExtension struct {
 	key, label string
 	patterns   []extension.Route
+	legacy     []string
 }
 
 func (e fixtureExtension) Key() string      { return e.key }
 func (e fixtureExtension) Label() string    { return e.label }
 func (e fixtureExtension) Summary() string  { return "A fixture page, for the tests of the mechanism." }
 func (e fixtureExtension) Needs() string    { return "nothing" }
-func (e fixtureExtension) Legacy() []string { return nil }
+func (e fixtureExtension) Legacy() []string { return e.legacy }
 
 // Configured names, for every fixture, the Secret shop/db and the Service
 // shop/api: what ConfiguredSecret and ConfiguredService may read for it.
@@ -117,7 +121,7 @@ func (suggestingFixture) Component() string { return "charlie" }
 // catalog calls registry.Reset and says in its own comment why.
 func TestMain(m *testing.M) {
 	if err := registry.Register(
-		fixtureExtension{key: fixtureKey, label: fixtureLabel},
+		fixtureExtension{key: fixtureKey, label: fixtureLabel, legacy: []string{fixtureLegacyKey}},
 		configurableFixture{fixtureExtension{key: fixtureOtherKey, label: "Bravo Center"}},
 		suggestingFixture{fixtureExtension{key: fixtureSuggestingKey, label: "Charlie viewer"}},
 	); err != nil {
