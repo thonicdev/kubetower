@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from 'react';
-import { Link, NavLink, useMatch, useParams, useSearchParams } from 'react-router';
+import { Link, NavLink, useLocation, useMatch, useParams, useSearchParams } from 'react-router';
 
 import { useIntentPrefetch } from '../router/prefetch';
 
@@ -513,6 +513,9 @@ function Tile({
   // `href` has to be known before `to` is set.
   const { cluster: onScreen } = useParams<{ cluster: string }>();
   const active = onScreen === cluster.name;
+  // In Settings a tile replaces the entry and keeps its way back
+  // (`settingsOrigin.ts`).
+  const { state: settingsWay } = useLocation();
   /*
     **And with that cluster's namespace**: the list was
     left at a namespace, and a way back that named none would open it on every
@@ -553,6 +556,7 @@ function Tile({
   return (
     <TileLink
       to={href}
+      {...(settings !== undefined && settingsWay !== null && settingsWay !== undefined ? { state: settingsWay } : {})}
       {...intent}
       /*
         **The accessible name is the cluster's name, whole**:

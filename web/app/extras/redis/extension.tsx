@@ -12,7 +12,7 @@ import { podShortcut, serviceShortcut } from './shortcut';
  * `routes` under `/c/:cluster` only.
  *
  * Two pages under the `x` segment the console reserves for an extra's page:
- * the inventory and one instance. The Go routes answer JSON at
+ * the inventory, which the menu's Extra group opens, and one instance. The Go routes answer JSON at
  * `/x/{cluster}/redis/…`, a different address.
  *
  * And one tab, in a Service's panel, drawn by
@@ -29,8 +29,9 @@ export const redis: Extension = {
   key: KEY,
   icon: 'layers',
   about,
-  // No menu entry: reached from a Service's tab and tile.
-  nav: { label: 'Redis viewer', path: PAGE_PATH, menu: false },
+  // In the menu's Extra group: the inventory lists every Redis the cluster
+  // runs. The tab and tile below still open one from its Service or Pod.
+  nav: { label: 'Redis viewer', path: PAGE_PATH },
   routes: [
     {
       path: PAGE_PATH,
