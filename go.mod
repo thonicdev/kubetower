@@ -58,12 +58,13 @@
 // (CNPG) extra's SQL door** (`extras/cnpg/sqlconn.go`): the statistics and
 // the first rows of a table, through fixed read-only statements. MIT, which
 // combines into an AGPL-3.0 work. Only `pgconn` and what it needs are linked -
-// no pool, no type registry - and only from that package, which
+// no pool - and only from that package, which
 // `extras/redis/driver_test.go` checks over every file of the module:
 //
 //	go list -deps ./cmd/kubetower | grep jackc
 //	  → pgpassfile, pgservicefile, pgx/v5/pgconn and its internal
-//	    packages (iobufpool, pgio, ctxwatch, bgreader, pgproto3)
+//	    packages (iobufpool, pgio, ctxwatch, bgreader, pgproto3), and pgtype,
+//	    which pgconn imports itself since pgx 5.9
 //
 // **Two more draw the desktop window, one per platform, and each is linked only
 // on its own.** `github.com/jchv/go-webview2` (MIT) embeds WebView2 on Windows;
