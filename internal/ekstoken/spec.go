@@ -58,6 +58,11 @@ type Spec struct {
 // leaves client-go running the block itself. That costs a subprocess;
 // guessing wrong costs authenticating as somebody else, or against a cluster
 // the operator did not name.
+//
+// The arguments are read as the CLI reads them (readArgs), abbreviations
+// included: the CLI takes `--role` for `--role-arn`, and reading only the full
+// spelling signed as the profile's own role, which the cluster refused with a
+// bare 401 while kubectl in a terminal worked.
 func Parse(exec *clientcmdapi.ExecConfig) (Spec, bool) {
 	if exec == nil {
 		return Spec{}, false
@@ -65,18 +70,31 @@ func Parse(exec *clientcmdapi.ExecConfig) (Spec, bool) {
 	if !isAWS(exec.Command) {
 		return Spec{}, false
 	}
-	// `eks` and `get-token` are positional and, in the kubeconfigs AWS writes,
-	// not first (`--region eu-west-3 eks get-token --cluster-name x`), so they
-	// are looked for anywhere, adjacent.
-	if !hasSubcommand(exec.Args, "eks", "get-token") {
+	args, ok := readArgs(exec.Args)
+	if !ok {
 		return Spec{}, false
 	}
-
+	// `eks` and `get-token` are the only positionals and, in the kubeconfigs AWS
+	// writes, not first (`--region eu-west-3 eks get-token --cluster-name x`).
+	if len(args.positionals) != 2 || args.positionals[0] != "eks" || args.positionals[1] != "get-token" {
+		return Spec{}, false
+	}
+	if _, outposts := args.values["--cluster-id"]; outposts {
+		// A local cluster on Outposts, which `x-k8s-aws-id` names by its id: not a
+		// shape this package has been checked against.
+		return Spec{}, false
+	}
 	spec := Spec{
-		Cluster: flagValue(exec.Args, "--cluster-name"),
-		Region:  flagValue(exec.Args, "--region"),
-		RoleARN: flagValue(exec.Args, "--role-arn"),
-		Profile: profile(exec),
+		Cluster: args.values["--cluster-name"],
+		Region:  args.values["--region"],
+		RoleARN: args.values["--role-arn"],
+		// The flag before `AWS_PROFILE`, the CLI's precedence (see Spec.Profile).
+		// Both occur: `aws eks update-kubeconfig` writes the variable, hand
+		// edits the flag.
+		Profile: args.values["--profile"],
+	}
+	if spec.Profile == "" {
+		spec.Profile = envValue(exec.Env, "AWS_PROFILE")
 	}
 	if spec.Cluster == "" {
 		// Without it there is no `x-k8s-aws-id` to sign, and a token signed for
@@ -117,39 +135,94 @@ func isAWS(command string) bool {
 	return base == "aws"
 }
 
-// hasSubcommand reports whether two positional words appear next to each other,
-// in order.
-func hasSubcommand(args []string, first, second string) bool {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == first && args[i+1] == second {
-			return true
-		}
+// The options of `aws eks get-token` in the AWS CLI v2, true where one takes a
+// value. The CLI parses with argparse and its default `allow_abbrev`: the
+// global options first, over every argument (MainArgParser), then the
+// command's own over what is left (ArgTableArgParser). From awscli/argparser.py,
+// awscli/data/cli.json and awscli/customizations/eks/get_token.py.
+var (
+	awsGlobalOptions = map[string]bool{
+		"--ca-bundle": true, "--cli-auto-prompt": false, "--cli-binary-format": true,
+		"--cli-connect-timeout": true, "--cli-error-format": true, "--cli-read-timeout": true,
+		"--color": true, "--debug": false, "--endpoint-url": true, "--help": false,
+		"--no-cli-auto-prompt": false, "--no-cli-pager": false, "--no-paginate": false,
+		"--no-sign-request": false, "--no-verify-ssl": false, "--output": true,
+		"--profile": true, "--query": true, "--region": true, "--version": false,
 	}
-	return false
+	getTokenOptions = map[string]bool{
+		"--cluster-id": true, "--cluster-name": true, "--role-arn": true,
+	}
+)
+
+// awsArgs is an argument list as the CLI understood it: each option under its
+// full name, the last occurrence winning as in argparse, and the positionals.
+type awsArgs struct {
+	values      map[string]string
+	positionals []string
 }
 
-// flagValue reads `--name value` or `--name=value`: the CLI takes both, and
-// a kubeconfig is edited by hand.
-func flagValue(args []string, name string) string {
-	for i, a := range args {
-		if a == name && i+1 < len(args) {
-			return args[i+1]
+// readArgs reads an argument list as the CLI does, or refuses one the CLI would
+// refuse or that cannot be read for certain: an ambiguous abbreviation
+// (`--cluster` is `--cluster-name` or `--cluster-id`), an option neither parser
+// knows, a short option, a missing value.
+func readArgs(raw []string) (awsArgs, bool) {
+	out := awsArgs{values: map[string]string{}}
+	for i := 0; i < len(raw); i++ {
+		arg := raw[i]
+		if !strings.HasPrefix(arg, "-") {
+			out.positionals = append(out.positionals, arg)
+			continue
 		}
-		if v, ok := strings.CutPrefix(a, name+"="); ok {
-			return v
+		if !strings.HasPrefix(arg, "--") || arg == "--" {
+			return awsArgs{}, false
 		}
+		name, value, inline := strings.Cut(arg, "=")
+		full, takesValue, ok := resolveOption(name)
+		if !ok {
+			return awsArgs{}, false
+		}
+		switch {
+		case !takesValue && inline:
+			return awsArgs{}, false
+		case !takesValue:
+			value = ""
+		case !inline:
+			// argparse does not take a word starting with `-` as a value.
+			if i+1 >= len(raw) || strings.HasPrefix(raw[i+1], "-") {
+				return awsArgs{}, false
+			}
+			i++
+			value = raw[i]
+		}
+		out.values[full] = value
 	}
-	return ""
+	return out, true
 }
 
-// profile is which credentials the block asked for: `--profile` before
-// `AWS_PROFILE`, the CLI's precedence (see Spec.Profile). Both occur:
-// `aws eks update-kubeconfig` writes the variable, hand edits the flag.
-func profile(exec *clientcmdapi.ExecConfig) string {
-	if flag := flagValue(exec.Args, "--profile"); flag != "" {
-		return flag
+// resolveOption is argparse's lookup, one parser after the other: the exact
+// name, else the one option it abbreviates. Several is the CLI's "ambiguous
+// option" error, and a refusal here too.
+func resolveOption(name string) (full string, takesValue, ok bool) {
+	for _, table := range []map[string]bool{awsGlobalOptions, getTokenOptions} {
+		if value, exact := table[name]; exact {
+			return name, value, true
+		}
+		var matches []string
+		for option := range table {
+			if strings.HasPrefix(option, name) {
+				matches = append(matches, option)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			continue
+		case 1:
+			return matches[0], table[matches[0]], true
+		default:
+			return "", false, false
+		}
 	}
-	return envValue(exec.Env, "AWS_PROFILE")
+	return "", false, false
 }
 
 func envValue(env []clientcmdapi.ExecEnvVar, name string) string {
