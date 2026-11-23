@@ -9,6 +9,7 @@ import { IconSprite } from '../components/Icon';
 import { Drawer } from './Drawer';
 import { LIST_MIN } from './drawerWidth';
 import { LiveRegion } from './LiveRegion';
+import { useRestoreSettingsScroll } from './settingsOrigin';
 import { KindsCorner } from './KindsToggle';
 import { Menu } from './Menu';
 import { PageFactsProvider } from './pageFacts';
@@ -71,6 +72,9 @@ export function Shell(): ReactNode {
   const clusters = useClusters();
   // `railDrawn.ts` holds the condition, because the top bar reads it too.
   const railDrawn = useRailDrawn();
+  // The page's scroll, put back once Settings is left for the page it was
+  // opened from.
+  useRestoreSettingsScroll();
 
   // The menu's per-cluster snapshots of a cluster that has left the list are
   // let go of. Only on an `ok` answer: a list that could not be
