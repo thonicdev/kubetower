@@ -196,7 +196,7 @@ export interface ExtensionShortcutTarget {
    *  address with `?tab=x.<key>.<tab>` to open the extension's tab on it. */
   to: string;
   /** **Optional.** A graded word drawn first among the chips, in its tone, and
-   *  the tile's left bar in the same tone: the JVM Inspector's "OOMKill".
+   *  the tile's left bar in the same tone: the Runtime Inspector's "OOMKill".
    *  Without it the tile is drawn as before, in the neutral info tone. */
   status?: ExtensionStatus;
   /** **Optional.** A small bar under the second line: what the tile is about,
