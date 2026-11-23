@@ -296,7 +296,7 @@ var bareGo = map[string]allowance{
 	"internal/auth/oidc.go:Auth.Start":              {1, "single sign-on discovery against the identity provider, not a cluster"},
 	"internal/archive/archive.go:Archive.Start":     {1, "the pruner of the archive's own files on this disk; no cluster is asked"},
 	"internal/forward/forward.go:Manager.Open":      {1, "waits on a tunnel's Done and frees its local port; reads nothing from the cluster"},
-	"internal/web/tunnelcap.go:countedTunnels.Open": {1, "waits on a tunnel's Done and gives its slot back"},
+	"internal/web/tunnelcap.go:counted": {1, "waits on a tunnel's Done and gives its slot back"},
 
 	// The terminal's byte relays: they copy a socket to a PTY or a pipe and
 	// back, and decode nothing a cluster sent. The cluster-facing ones - the
@@ -450,6 +450,6 @@ var unrecoveredCalls = map[string]allowance{
 		"once its deadline has passed; a CancelFunc reads nothing and does not panic"},
 	"internal/launch/launchpage.go:browserTarget time.AfterFunc": {1, "removes the launch page this process wrote " +
 		"on this disk; no cluster is involved, and os.Remove reports rather than panics"},
-	"internal/web/hostconsole.go:host.ForwardAsConsole context.AfterFunc": {1, "closes the console's tunnel when " +
+	"internal/web/hostconsole.go:endsWithRequest context.AfterFunc": {1, "closes a console or pod tunnel when " +
 		"its request ends; the function it runs is wrapped in safego.Call, which recovers a panic in the teardown"},
 }
