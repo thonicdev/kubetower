@@ -37,15 +37,16 @@ Every list an extra makes goes through `Host.List`, reviewed for the person and 
 
 - **Every extra is off until it is turned on**, on the desktop, in a container
   and in a cluster. **Settings → Extra** lists every extra this build carries,
-  one tile each, with a button to turn it on (and off again) for the cluster the
-  page is opened on, and the extra's own settings (Argo CD's column in the
-  lists, for one); the choice is kept per cluster in the state directory.
+  one card each: its icon, its state for the cluster the page is opened on, a
+  switch to turn it on (and off again), **Edit** for the extra's own settings
+  (Argo CD's column in the lists, for one) and **About** for what it does,
+  reads and needs; the choice is kept per cluster in the state directory.
 - **When the cluster runs what an extra reads** - a Redis Service, for the Redis
   viewer - the console may suggest turning it on, in a one-line banner with
   *Turn on* and *Not now*.
 - **On the desktop and in a container**, `KT_EXTRAS`, a comma-separated list of
-  keys read at start-up, pins one on or off for every cluster, and its tile
-  then says so instead of offering the button.
+  keys read at start-up, pins one on or off for every cluster, and its card
+  then says so, its switch disabled.
 - **In a cluster**, the chart's `extras` value says which extras this
   installation **may** turn on. It reaches the console as `KT_EXTRAS`, which
   there pins nothing: an extra it names is still off on a cluster until a person

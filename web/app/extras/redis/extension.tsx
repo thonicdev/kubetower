@@ -27,6 +27,7 @@ import { podShortcut, serviceShortcut } from './shortcut';
  */
 export const redis: Extension = {
   key: KEY,
+  icon: 'layers',
   about,
   // No menu entry: reached from a Service's tab and tile.
   nav: { label: 'Redis viewer', path: PAGE_PATH, menu: false },
