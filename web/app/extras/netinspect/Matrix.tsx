@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent, type ReactNode } from 'react';
-import { focusRing } from '@kubetower/ui';
+import { btnToggle, focusRing } from '@kubetower/ui';
 
 import type { FlowEdge, Graph, GraphNode } from './data';
 import { fold, ORDERS, TOPS, type CellData, type FoldAsk, type Order } from './fold';
@@ -61,18 +61,11 @@ export function Matrix({
             placeholder="Find"
             aria-label="Find a namespace"
             onChange={(e) => onAsk({ mq: e.target.value })}
-            className={`h-8 w-48 rounded-md border border-line bg-panel-2 px-2 text-xs text-fg placeholder:text-muted ${focusRing}`}
+            className={`h-6 w-48 rounded-md border border-line bg-panel-2 px-2 text-xs text-fg placeholder:text-muted ${focusRing}`}
           />
-          <div role="group" aria-label="Namespaces drawn" className="flex">
-            {TOPS.map((top, i) => (
-              <button
-                key={top}
-                type="button"
-                data-top={top}
-                aria-pressed={ask.top === top}
-                onClick={() => onAsk({ top: String(top) })}
-                className={`h-8 border border-line px-2 text-xs tabular-nums ${i === 0 ? 'rounded-l-md' : '-ml-px'} ${i === TOPS.length - 1 ? 'rounded-r-md' : ''} ${ask.top === top ? 'relative border-accent bg-accent/15 text-fg' : 'text-muted hover:text-fg'} ${focusRing}`}
-              >
+          <div role="group" aria-label="Namespaces drawn" className="flex gap-1">
+            {TOPS.map((top) => (
+              <button key={top} type="button" data-top={top} aria-pressed={ask.top === top} onClick={() => onAsk({ top: String(top) })} className={`${btnToggle(ask.top === top)} tabular-nums`}>
                 {top === 0 ? 'All' : top}
               </button>
             ))}
@@ -83,7 +76,7 @@ export function Matrix({
               data-matrix-order=""
               value={ask.order}
               onChange={(event) => onAsk({ sort: event.target.value })}
-              className={`h-8 rounded-md border border-line bg-panel-2 px-2 text-xs text-fg ${focusRing}`}
+              className={`h-6 rounded-md border border-line bg-panel-2 px-1.5 text-xs text-fg ${focusRing}`}
             >
               {ORDERS.map((o) => (
                 <option key={o} value={o}>
@@ -98,7 +91,7 @@ export function Matrix({
             aria-pressed={ask.active}
             title="Only namespaces a rule or a flow names"
             onClick={() => onAsk({ active: ask.active ? '' : '1' })}
-            className={`h-8 rounded-md border px-2 text-xs ${ask.active ? 'border-accent bg-accent/15 text-fg' : 'border-line text-muted hover:text-fg'} ${focusRing}`}
+            className={btnToggle(ask.active)}
           >
             Active
           </button>
