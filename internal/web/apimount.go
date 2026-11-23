@@ -587,6 +587,14 @@ func (c apiClusters) Probe(ctx context.Context, name string) (api.Cluster, *api.
 	if s.health == nil {
 		return api.Cluster{}, api.Absent("this build has no health probe")
 	}
+	// A kubeconfig corrected a second ago is what the operator is retrying, so
+	// it is read now rather than at the next tick of Manager.Watch. A file that
+	// does not parse keeps the previous one, and the probe answers from it.
+	if s.clusters != nil {
+		if _, err := s.clusters.ReloadIfChanged(); err != nil {
+			log.Printf("[kubetower] kubeconfig changed and could not be read, the previous one stays: %v", err)
+		}
+	}
 	entries, fail := c.List(ctx)
 	if fail != nil {
 		return api.Cluster{}, fail
