@@ -137,6 +137,8 @@ export interface Graph {
   edges: GraphEdge[];
   folded: number;
   edgesTotal: number;
+  /** Some edges between the nodes sent were left out: a pair with no edge is then not known to be refused. */
+  truncated?: boolean;
 }
 
 export interface Overview {

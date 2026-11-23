@@ -53,11 +53,15 @@ describe('the namespace matrix on 120 namespaces', () => {
     expect(document.querySelector('[data-cell="ns:team-077>ns:team-000"]')?.getAttribute('data-seen')).toBe('dropped');
   });
 
-  it('shows every namespace when others is pressed', () => {
+  it('draws the next size up when others is pressed, as far as the largest', () => {
     render(<Harness />);
     fireEvent.click(document.querySelector('[data-heading-others]') as Element);
-    expect(rows()).toHaveLength(120);
-    expect(document.querySelector('[data-top="0"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(rows()).toHaveLength(49);
+    expect(document.querySelector('[data-top="48"]')?.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(document.querySelector('[data-heading-others]') as Element);
+    expect(rows()).toHaveLength(97);
+    // At the largest size "others" is a heading, not a button.
+    expect(document.querySelector('button[data-heading-others]')).toBeNull();
   });
 
   it('keeps only what Find names', () => {
@@ -80,5 +84,39 @@ describe('the namespace matrix on 120 namespaces', () => {
     render(<Harness />);
     fireEvent.change(document.querySelector('[data-matrix-order]') as Element, { target: { value: 'name' } });
     expect(rows().slice(0, 2)).toEqual(['ns:team-000', 'ns:team-001']);
+  });
+});
+
+/** 120 namespaces, each isolated and letting every namespace in, as the
+ *  server sends them: folded until every edge between what is kept fits. */
+function dense(kept: number, truncated: boolean): Graph {
+  // Each lets its own pods in too: the server counts that rule on the node (`internal`).
+  const nodes: GraphNode[] = Array.from({ length: kept }, (_, i) => ({ ...ns(i), isolatedIn: 2, internal: 1 }));
+  nodes.push({ id: 'others', label: `${String(120 - kept)} others`, kind: 'others', pods: 2 * (120 - kept), isolatedIn: 2 * (120 - kept), isolatedOut: 0, internal: 0 });
+  const edges = nodes.flatMap((a) =>
+    nodes.filter((b) => b.id !== a.id).map((b) => ({ kind: 'allow' as const, from: a.id, to: b.id, side: 'ingress' as const, ports: ['every port'], policies: ['from-all'], rules: 1 })),
+  );
+  return { scope: 'cluster', nodes, edges: truncated ? edges.slice(0, 500) : edges, folded: 120 - kept, edgesTotal: 120 * 119, truncated };
+}
+
+describe('a cluster where every namespace lets every namespace in', () => {
+  const mountGraph = (g: Graph) =>
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams('top=96'))} onAsk={() => undefined} onNamespace={() => undefined} />);
+
+  it('draws no refused cell', () => {
+    mountGraph(dense(44, false));
+    const states = [...document.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-state'));
+    expect(states.length).toBeGreaterThan(44 * 44);
+    expect(states).not.toContain('refused');
+    expect(document.querySelector('[data-matrix-cut]')).toBeNull();
+  });
+
+  it('draws a cell a cut answer has no rule for as unknown, never refused, and says the rules were cut', () => {
+    mountGraph(dense(44, true));
+    const states = [...document.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-state'));
+    expect(states).not.toContain('refused');
+    expect(states).not.toContain('open');
+    expect(states).toContain('unknown');
+    expect(document.querySelector('[data-matrix-cut]')).not.toBeNull();
   });
 });

@@ -16,8 +16,9 @@ export type Order = 'traffic' | 'rules' | 'name';
 
 export const ORDERS: readonly Order[] = ['traffic', 'rules', 'name'];
 
-/** The sizes offered; 0 is every namespace. */
-export const TOPS: readonly number[] = [12, 24, 48, 0];
+/** The sizes offered. The largest is a bound, not "all": a few hundred
+ *  namespaces squared is tens of thousands of cells. Find reaches the rest. */
+export const TOPS: readonly number[] = [12, 24, 48, 96];
 
 export const DEFAULT_TOP = 24;
 
@@ -29,7 +30,7 @@ const ENTITY_COLUMNS = 10;
 export interface FoldAsk {
   /** Only the namespaces whose name holds this, case-insensitive. */
   find: string;
-  /** How many to draw; 0 is all. */
+  /** How many to draw, one of TOPS. */
   top: number;
   order: Order;
   /** Leave out the namespaces no rule and no flow names. */
@@ -49,17 +50,22 @@ export interface Folded {
   nodes: GraphNode[];
   /** Keyed `from>to` on the drawn ids. */
   cells: Map<string, CellData>;
-  /** Drawn, not counting "others". */
+  /** Namespaces drawn. */
   shown: number;
-  /** Every namespace and end the answer names, the server's folded ones included. */
+  /** Every namespace the answer names, those the server folded included. */
   total: number;
-  /** What "others" holds. */
+  /** Namespaces "others" holds. */
   folded: number;
+  /** Ends that are not namespaces (world, a CIDR) "others" holds. */
+  foldedEnds: number;
+  /** The server left edges out: a pair with no rule is not known to be refused. */
+  truncated: boolean;
 }
 
 /** Reads the address's spelling of the ask, defaulting what is absent or wrong. */
 export function foldAskOf(params: URLSearchParams): FoldAsk {
-  const top = Number(params.get('top') ?? String(DEFAULT_TOP));
+  const raw = params.get('top') ?? '';
+  const top = /^[0-9]+$/.test(raw) ? Number(raw) : DEFAULT_TOP;
   const order = params.get('sort') as Order | null;
   return {
     find: params.get('mq') ?? '',
@@ -124,11 +130,14 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     const first = ask.order === 'traffic' ? y.traffic - x.traffic || y.rules - x.rules : y.rules - x.rules || y.traffic - x.traffic;
     return first || b.pods - a.pods || byName(a, b);
   });
-  const kept = ask.top > 0 ? candidates.slice(0, ask.top) : candidates;
+  const kept = candidates.slice(0, ask.top);
   const keptIds = new Set(kept.map((n) => n.id));
 
   const others: GraphNode = { id: OTHERS, label: '', kind: 'others', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
+  // The server's "others" is counted as namespaces: it folds the least
+  // connected nodes, which are namespaces but for the rarest cluster.
   let folded = serverOthers === undefined ? 0 : graph.folded;
+  let foldedEnds = 0;
   if (serverOthers !== undefined) {
     others.pods += serverOthers.pods;
     others.isolatedIn += serverOthers.isolatedIn;
@@ -136,18 +145,20 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
   }
   for (const n of base) {
     if (keptIds.has(n.id)) continue;
-    folded++;
+    if (n.kind === 'namespace') folded++;
+    else foldedEnds++;
     others.pods += n.pods;
     others.isolatedIn += n.isolatedIn;
     others.isolatedOut += n.isolatedOut;
   }
-  others.label = `${String(folded)} others`;
-  const nodes = folded > 0 ? [...kept, others] : kept;
+  others.label = `${String(folded > 0 ? folded : foldedEnds)} others`;
+  const any = folded + foldedEnds > 0;
+  const nodes = any ? [...kept, others] : kept;
   const drawn = (id: string): string | undefined => {
     const at = home(id);
     if (at === undefined) return undefined;
-    if (at === OTHERS) return folded > 0 ? OTHERS : undefined;
-    return keptIds.has(at) ? at : folded > 0 ? OTHERS : undefined;
+    if (at === OTHERS) return any ? OTHERS : undefined;
+    return keptIds.has(at) ? at : any ? OTHERS : undefined;
   };
 
   const cells = new Map<string, CellData>();
@@ -176,5 +187,14 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     c.forwarded += e.forwarded;
     c.dropped += e.dropped;
   }
-  return { nodes, cells, shown: kept.length, total: base.length + (serverOthers === undefined ? 0 : graph.folded), folded };
+  const isNamespace = (n: GraphNode) => n.kind === 'namespace';
+  return {
+    nodes,
+    cells,
+    shown: kept.filter(isNamespace).length,
+    total: base.filter(isNamespace).length + (serverOthers === undefined ? 0 : graph.folded),
+    folded,
+    foldedEnds,
+    truncated: graph.truncated === true,
+  };
 }

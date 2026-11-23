@@ -22,10 +22,11 @@ const ask = (over: Partial<FoldAsk> = {}): FoldAsk => ({ find: '', top: DEFAULT_
 describe('fold', () => {
   it('draws the 24 busiest and folds the rest into others', () => {
     const f = fold(graph(), flows, true, ask());
-    expect(f.shown).toBe(24);
-    // 120 namespaces and world, which only a flow names.
-    expect(f.total).toBe(121);
+    // world, which only a flow names, ranks among the 24 but is not a namespace.
+    expect(f.shown).toBe(23);
+    expect(f.total).toBe(120);
     expect(f.folded).toBe(97);
+    expect(f.foldedEnds).toBe(0);
     expect(f.nodes).toHaveLength(25);
     expect(f.nodes.at(-1)).toMatchObject({ id: 'others', label: '97 others', kind: 'others' });
   });
@@ -35,9 +36,10 @@ describe('fold', () => {
     expect(byTraffic.slice(0, 3)).toEqual(['team-050', 'team-051', 'team-052']);
     const byRules = fold(graph(), flows, true, ask({ order: 'rules' })).nodes.map((n) => n.label);
     expect(byRules[0]).toBe('team-000');
-    const byName = fold(graph(), flows, true, ask({ order: 'name', top: 0 })).nodes.map((n) => n.label);
+    const byName = fold(graph(), flows, true, ask({ order: 'name', top: 96 })).nodes.map((n) => n.label);
     expect(byName.slice(0, 2)).toEqual(['team-000', 'team-001']);
-    expect(byName).not.toContain('97 others');
+    // 24 namespaces and world folded: the label counts the namespaces.
+    expect(byName.at(-1)).toBe('24 others');
   });
 
   it('keeps only what Find names, case-insensitive', () => {
@@ -46,19 +48,21 @@ describe('fold', () => {
       expect.arrayContaining(['team-050', 'team-051', 'team-052', 'team-053', 'team-059']),
     );
     expect(f.shown).toBe(10);
-    expect(f.folded).toBe(111);
+    expect(f.folded).toBe(110);
+    expect(f.foldedEnds).toBe(1);
   });
 
-  it('draws every namespace when top is 0', () => {
-    const f = fold(graph(), flows, true, ask({ top: 0 }));
-    expect(f.shown).toBe(121);
-    expect(f.nodes.some((n) => n.kind === 'others')).toBe(false);
+  it('draws at most the largest size, the rest in others', () => {
+    const f = fold(graph(), flows, true, ask({ top: 96 }));
+    expect(f.nodes).toHaveLength(97);
+    expect(f.nodes.at(-1)?.kind).toBe('others');
   });
 
   it('leaves out the namespaces nothing names when asked for the active ones', () => {
-    const f = fold(graph(), flows, true, ask({ active: true, top: 0 }));
-    // team-000..009 by rules, team-050/051/052/060 and world by flows.
-    expect(f.shown).toBe(15);
+    const f = fold(graph(), flows, true, ask({ active: true, top: 96 }));
+    // team-000..009 by rules, team-050/051/052/060 by flows; world too, but it is not a namespace.
+    expect(f.shown).toBe(14);
+    expect(f.nodes.filter((n) => n.kind !== 'others')).toHaveLength(15);
   });
 
   it('sums the folded namespaces rules and flows in others', () => {
@@ -88,10 +92,19 @@ describe('fold', () => {
   });
 });
 
+describe('a cut answer', () => {
+  it('says so', () => {
+    expect(fold({ ...graph(), truncated: true }, flows, true, ask()).truncated).toBe(true);
+    expect(fold(graph(), flows, true, ask()).truncated).toBe(false);
+  });
+});
+
 describe('foldAskOf', () => {
   it('reads the address and defaults what is absent or wrong', () => {
     expect(foldAskOf(new URLSearchParams(''))).toEqual({ find: '', top: 24, order: 'traffic', active: false });
-    expect(foldAskOf(new URLSearchParams('mq=pay&top=0&sort=name&active=1'))).toEqual({ find: 'pay', top: 0, order: 'name', active: true });
-    expect(foldAskOf(new URLSearchParams('top=7&sort=size'))).toMatchObject({ top: 24, order: 'traffic' });
+    expect(foldAskOf(new URLSearchParams('mq=pay&top=96&sort=name&active=1'))).toEqual({ find: 'pay', top: 96, order: 'name', active: true });
+    for (const bad of ['top=7', 'top=0', 'top=', 'top=-0', 'top=0x30', 'top=48.0']) {
+      expect(foldAskOf(new URLSearchParams(`${bad}&sort=size`)), bad).toMatchObject({ top: 24, order: 'traffic' });
+    }
   });
 });

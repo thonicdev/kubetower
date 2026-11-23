@@ -1,4 +1,4 @@
-import { memo, useState, type MouseEvent, type ReactNode } from 'react';
+import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { btnToggle, focusRing } from '@kubetower/ui';
 
 import type { FlowEdge, Graph, GraphNode } from './data';
@@ -39,7 +39,12 @@ export function Matrix({
   onAsk: MatrixGo;
   onNamespace: (namespace: string) => void;
 }): ReactNode {
-  const { nodes, cells, shown, total, folded } = fold(graph, flows, showFlows, ask);
+  // Folded once per answer and ask, not on every hover.
+  const { find, top, order, active } = ask;
+  const { nodes, cells, shown, total, folded, foldedEnds, truncated } = useMemo(
+    () => fold(graph, flows, showFlows, { find, top, order, active }),
+    [graph, flows, showFlows, find, top, order, active],
+  );
   const [cross, setCross] = useState<{ from: string; to: string } | null>(null);
   const onOver = (event: MouseEvent<HTMLTableSectionElement>) => {
     const key = (event.target as HTMLElement).closest('td')?.getAttribute('data-cell') ?? null;
@@ -47,7 +52,9 @@ export function Matrix({
     const [from = '', to = ''] = key.split('>');
     if (cross?.from !== from || cross.to !== to) setCross({ from, to });
   };
-  const showAll = () => onAsk({ top: '0', mq: '', active: '' });
+  // "others" draws the next size up, as far as the largest.
+  const bigger = TOPS.find((t) => t > ask.top);
+  const showMore = bigger === undefined ? undefined : () => onAsk({ top: String(bigger) });
   // Nothing to fold on a small cluster: no controls, unless an address set one.
   const tools = total > (TOPS[0] ?? 0) || ask.find !== '' || ask.active;
   return (
@@ -66,7 +73,7 @@ export function Matrix({
           <div role="group" aria-label="Namespaces drawn" className="flex gap-1">
             {TOPS.map((top) => (
               <button key={top} type="button" data-top={top} aria-pressed={ask.top === top} onClick={() => onAsk({ top: String(top) })} className={`${btnToggle(ask.top === top)} tabular-nums`}>
-                {top === 0 ? 'All' : top}
+                {top}
               </button>
             ))}
           </div>
@@ -95,9 +102,14 @@ export function Matrix({
           >
             Active
           </button>
-          <span data-matrix-count="" className="rounded-sm border border-line px-1.5 py-0.5 text-2xs text-muted tabular-nums" title={`${String(shown)} drawn of ${String(total)}${folded > 0 ? `, ${String(folded)} in others` : ''}`}>
+          <span data-matrix-count="" className="rounded-sm border border-line px-1.5 py-0.5 text-2xs text-muted tabular-nums" title={`${String(shown)} namespaces drawn of ${String(total)}${folded > 0 ? `, ${String(folded)} in others` : ''}${foldedEnds > 0 ? `, ${String(foldedEnds)} other ends in others` : ''}`}>
             {shown} / {total}
           </span>
+          {truncated ? (
+            <span data-matrix-cut="" className="rounded-sm border border-warn/50 px-1.5 py-0.5 text-2xs text-warn" title="Too many rules to send them all: a cell with no rule is unknown, not refused">
+              rules cut
+            </span>
+          ) : null}
         </div>
       ) : null}
       {shown === 0 ? (
@@ -112,7 +124,7 @@ export function Matrix({
                 <th className="sticky top-0 left-0 z-20 bg-panel px-1 text-right font-normal text-muted">from ╲ to</th>
                 {nodes.map((n) => (
                   <th key={n.id} scope="col" data-col={n.id} data-lit={cross?.to === n.id ? '' : undefined} className={`sticky top-0 z-10 h-28 w-6 rounded-sm bg-panel align-bottom font-normal ${cross?.to === n.id ? 'bg-panel-2' : ''}`}>
-                    <Heading node={n} onNamespace={onNamespace} onOthers={showAll} vertical lit={cross?.to === n.id} />
+                    <Heading node={n} onNamespace={onNamespace} onOthers={showMore} vertical lit={cross?.to === n.id} />
                   </th>
                 ))}
               </tr>
@@ -121,10 +133,10 @@ export function Matrix({
               {nodes.map((from) => (
                 <tr key={from.id}>
                   <th scope="row" data-row={from.id} data-lit={cross?.from === from.id ? '' : undefined} className={`sticky left-0 z-10 rounded-sm px-1 text-right font-normal whitespace-nowrap ${cross?.from === from.id ? 'bg-panel-2' : 'bg-panel'}`}>
-                    <Heading node={from} onNamespace={onNamespace} onOthers={showAll} lit={cross?.from === from.id} />
+                    <Heading node={from} onNamespace={onNamespace} onOthers={showMore} lit={cross?.from === from.id} />
                   </th>
                   {nodes.map((to) => (
-                    <Cell key={to.id} from={from} to={to} cell={cells.get(`${from.id}>${to.id}`)} showRules={showRules} showFlows={showFlows} />
+                    <Cell key={to.id} from={from} to={to} cell={cells.get(`${from.id}>${to.id}`)} showRules={showRules} showFlows={showFlows} cut={truncated} />
                   ))}
                 </tr>
               ))}
@@ -132,21 +144,23 @@ export function Matrix({
           </table>
         </div>
       )}
-      <Legend />
+      <Legend cut={truncated} />
     </div>
   );
 }
 
-type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'open' | 'inside' | 'folded';
+type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'open' | 'inside' | 'folded' | 'unknown';
 
 /** What the rules say of one pair. A namespace to itself is allowed when a
  *  rule speaks between its own pods (`internal`). */
-function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined): State {
+function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   if (cell !== undefined && cell.deny.length > 0) return 'denied';
   if (cell !== undefined && cell.allow.length > 0) return 'allowed';
   if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
   if (from.id === to.id && to.internal > 0) return 'inside';
   if (to.kind === 'others') return 'folded';
+  // A rule may have been left out of a cut answer: no verdict on a pair with none.
+  if (cut) return 'unknown';
   if (to.kind === 'namespace' && to.pods > 0 && to.isolatedIn >= to.pods) return 'refused';
   return 'open';
 }
@@ -159,6 +173,7 @@ const LOOK: Record<State, string> = {
   refused: 'bg-panel-2 text-muted',
   open: 'border border-line',
   folded: 'border border-dashed border-line',
+  unknown: 'border border-dotted border-warn/60',
 };
 
 const WORD: Record<State, string> = {
@@ -169,6 +184,7 @@ const WORD: Record<State, string> = {
   refused: 'refused: the destination is isolated and no rule lets this in',
   open: 'open: no policy isolates the destination',
   folded: 'no rule toward the folded namespaces',
+  unknown: 'unknown: the rules were cut',
 };
 
 /** At most this many rule lines in a cell's tooltip; an "others" cell can sum hundreds. */
@@ -188,14 +204,16 @@ const Cell = memo(function Cell({
   cell,
   showRules,
   showFlows,
+  cut,
 }: {
   from: GraphNode;
   to: GraphNode;
   cell: CellData | undefined;
   showRules: boolean;
   showFlows: boolean;
+  cut: boolean;
 }): ReactNode {
-  const state = stateOf(from, to, cell);
+  const state = stateOf(from, to, cell, cut);
   const seen = showFlows && cell !== undefined && cell.forwarded + cell.dropped > 0;
   const title = [
     `${from.label} → ${to.label}: ${WORD[state]}`,
@@ -229,11 +247,19 @@ function Heading({
 }: {
   node: GraphNode;
   onNamespace: (namespace: string) => void;
-  onOthers: () => void;
+  /** Absent at the largest size: "others" is then a plain heading. */
+  onOthers: (() => void) | undefined;
   vertical?: boolean;
   lit?: boolean;
 }): ReactNode {
   const text = <span className={vertical ? 'inline-block max-h-28 truncate [writing-mode:vertical-rl] rotate-180' : 'inline-block max-w-40 truncate'}>{node.label}</span>;
+  if (node.kind === 'others' && onOthers === undefined) {
+    return (
+      <span data-heading-others="" title={`${node.label} · ${String(node.pods)} pods`} className={`italic ${lit ? 'text-accent' : 'text-muted'}`}>
+        {text}
+      </span>
+    );
+  }
   if (node.kind === 'others') {
     return (
       <button type="button" data-heading-others="" title={`${node.label} · ${String(node.pods)} pods`} onClick={onOthers} className={`italic ${lit ? 'text-accent' : 'text-muted'} hover:text-accent ${focusRing}`}>
@@ -256,12 +282,11 @@ function Heading({
   );
 }
 
-function Legend(): ReactNode {
+function Legend({ cut }: { cut: boolean }): ReactNode {
   const items: { state: State; label: string }[] = [
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
-    { state: 'refused', label: 'refused' },
-    { state: 'open', label: 'open' },
+    ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">

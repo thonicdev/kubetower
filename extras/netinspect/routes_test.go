@@ -104,25 +104,53 @@ func TestTheGraphDrawsTheRules(t *testing.T) {
 	}
 }
 
-// The graph is bounded however many namespaces the rules join, and a
-// cluster of a hundred namespaces is sent whole for the page to fold.
+// The graph is bounded however many namespaces the rules join, and never by
+// leaving out an edge between what it keeps: a missing edge reads as a pair
+// no rule allows. Sparse namespaces are sent whole up to maxNodes; dense ones
+// (each letting every namespace in) are folded until every edge fits.
 func TestTheGraphIsBounded(t *testing.T) {
-	whole := overviewOf(t, teams(t, 120), "").Graph
-	if len(whole.Nodes) != 120 || whole.Folded != 0 {
-		t.Errorf("120 namespaces: %d nodes (%d folded), want 120 and none", len(whole.Nodes), whole.Folded)
+	sparse := overviewOf(t, teams(t, 120, false), "").Graph
+	if len(sparse.Nodes) != 120 || sparse.Folded != 0 || sparse.Truncated {
+		t.Errorf("120 sparse namespaces: %d nodes (%d folded, truncated %v), want 120, none, false", len(sparse.Nodes), sparse.Folded, sparse.Truncated)
 	}
-	g := overviewOf(t, teams(t, maxNodes+20), "").Graph
-	if len(g.Nodes) != maxNodes || g.Folded != 21 || len(g.Edges) > maxEdges {
-		t.Errorf("%d nodes (%d folded), %d edges", len(g.Nodes), g.Folded, len(g.Edges))
+	capped := overviewOf(t, teams(t, maxNodes+20, false), "").Graph
+	if len(capped.Nodes) != maxNodes || capped.Folded != 21 || capped.Truncated {
+		t.Errorf("%d sparse namespaces: %d nodes (%d folded)", maxNodes+20, len(capped.Nodes), capped.Folded)
 	}
-	if last := g.Nodes[len(g.Nodes)-1]; last.ID != "others" || last.Label != "21 others" {
+	if last := capped.Nodes[len(capped.Nodes)-1]; last.ID != "others" || last.Label != "21 others" {
 		t.Errorf("last node %+v, want the 21 others", last)
+	}
+	for _, n := range []int{60, 120, 300} {
+		g := overviewOf(t, teams(t, n, true), "").Graph
+		if g.Truncated || len(g.Edges) > maxEdges || g.Folded == 0 {
+			t.Errorf("%d dense namespaces: %d nodes, %d folded, %d edges, truncated %v", n, len(g.Nodes), g.Folded, len(g.Edges), g.Truncated)
+		}
+		// A namespace letting every namespace in lets its own pods in too.
+		for _, node := range g.Nodes {
+			if node.Kind == nodeNamespace && node.Internal == 0 {
+				t.Fatalf("%d dense namespaces: %s has no internal rule", n, node.ID)
+			}
+		}
+		// Every pair of nodes kept, "others" included, still carries its allow.
+		allowed := map[string]bool{}
+		for _, e := range g.Edges {
+			if e.Kind == "allow" {
+				allowed[e.From+">"+e.To] = true
+			}
+		}
+		for _, a := range g.Nodes {
+			for _, b := range g.Nodes {
+				if a.ID != b.ID && !allowed[a.ID+">"+b.ID] {
+					t.Fatalf("%d dense namespaces: %s → %s lost its allow (%d nodes, %d edges)", n, a.ID, b.ID, len(g.Nodes), len(g.Edges))
+				}
+			}
+		}
 	}
 }
 
-// teams is n namespaces, each with a pod and a policy letting every
-// namespace in.
-func teams(t *testing.T, n int) *fakeHost {
+// teams is n namespaces, each with a pod and a policy letting in every
+// namespace (dense) or only its own pods (sparse).
+func teams(t *testing.T, n int, dense bool) *fakeHost {
 	t.Helper()
 	h := newHost()
 	for i := range n {
@@ -130,7 +158,11 @@ func teams(t *testing.T, n int) *fakeHost {
 		h.namespace(t, ns, nil)
 		h.pod(t, ns, "app", fmt.Sprintf("10.%d.%d.1", 1+i/250, i%250), map[string]string{"app": "app"})
 		p := np(ns, "from-all", nil)
-		p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{nsPeer(nil)}}}
+		peer := podPeer(nil)
+		if dense {
+			peer = nsPeer(nil)
+		}
+		p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{peer}}}
 		h.policy(t, p)
 	}
 	return h
