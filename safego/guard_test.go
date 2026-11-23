@@ -450,6 +450,8 @@ var unrecoveredCalls = map[string]allowance{
 		"once its deadline has passed; a CancelFunc reads nothing and does not panic"},
 	"internal/launch/launchpage.go:browserTarget time.AfterFunc": {1, "removes the launch page this process wrote " +
 		"on this disk; no cluster is involved, and os.Remove reports rather than panics"},
+	"extras/runtimeinspect/node.go:cdp.call context.AfterFunc": {1, "ends a DevTools read on the Node.js " +
+		"inspector when its request ends; the function it runs is wrapped in safego.Call"},
 	"internal/web/hostconsole.go:endsWithRequest context.AfterFunc": {1, "closes a console or pod tunnel when " +
 		"its request ends; the function it runs is wrapped in safego.Call, which recovers a panic in the teardown"},
 }

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/thonicdev/kubetower/extension"
+	"github.com/thonicdev/kubetower/safego"
 )
 
 // Node.js's diagnostics, through its inspector (the Chrome DevTools Protocol)
@@ -397,7 +398,12 @@ func (c *cdp) call(ctx context.Context, method string, params any, onEvent func(
 		_ = c.conn.SetWriteDeadline(deadline)
 		_ = c.conn.SetReadDeadline(deadline)
 	}
-	stop := context.AfterFunc(ctx, func() { _ = c.conn.SetReadDeadline(time.Now()) })
+	// Through safego: context.AfterFunc runs this on a goroutine of its own.
+	stop := context.AfterFunc(ctx, func() {
+		_ = safego.Call("node inspector: ending a read as its request ends", func() error {
+			return c.conn.SetReadDeadline(time.Now())
+		})
+	})
 	defer stop()
 	if err := c.conn.WriteJSON(map[string]any{"id": id, "method": method, "params": params}); err != nil {
 		return nil, err
