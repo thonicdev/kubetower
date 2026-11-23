@@ -30,5 +30,12 @@ func relaunch(path string, args []string) error {
 // starting a process and stopping itself.
 var restart = relaunch
 
-// stopSelf is SIGTERM to this process: internal/launch's graceful shutdown.
-var stopSelf = func() error { return syscall.Kill(os.Getpid(), syscall.SIGTERM) }
+// stopSelf ends this process through internal/launch's shutdown (SetStop),
+// or by SIGTERM to itself, which reaches the same path, where nothing was set.
+var stopSelf = func() error {
+	if stopper != nil {
+		stopper()
+		return nil
+	}
+	return syscall.Kill(os.Getpid(), syscall.SIGTERM)
+}
