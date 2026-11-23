@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { focusRing } from '@kubetower/ui';
+import { btnSecondary } from '@kubetower/ui';
 
 import { portsLabel, type Arrow, type Side } from './flows';
 import { shortLabel } from './text';
@@ -205,7 +205,7 @@ export function PodGraph({
         aria-label="Enlarge"
         title="Enlarge"
         onClick={onEnlarge}
-        className={`absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-md border border-line bg-panel-2 text-xs text-muted hover:text-fg ${focusRing}`}
+        className={`${btnSecondary} absolute right-1.5 bottom-1.5 bg-panel-2`}
       >
         <span aria-hidden="true">⤢</span>
       </button>

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { Failure, HEAD_ROW, Pending, Pill, ROW, TABLE, bodyCell, focusRing, formatClock, headCell } from '@kubetower/ui';
+import { Failure, HEAD_ROW, Pending, Pill, ROW, TABLE, bodyCell, btnToggle, focusRing, formatClock, headCell } from '@kubetower/ui';
 
 import { FLOW_WINDOWS, DEFAULT_FLOW_WINDOW, flowsQuery, type FlowRow } from './data';
 import { FLOW_STATE } from './parts';
@@ -25,16 +25,9 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
   if (data?.state === 'absent') return null;
 
   const periods = (
-    <div role="group" aria-label="Period" className="flex" data-flow-windows="">
-      {FLOW_WINDOWS.map((w, i) => (
-        <button
-          key={w}
-          type="button"
-          data-window={w}
-          aria-pressed={window === w}
-          onClick={() => setWindow(w)}
-          className={`h-7 border border-line px-2 text-xs tabular-nums ${i === 0 ? 'rounded-l-md' : '-ml-px'} ${i === FLOW_WINDOWS.length - 1 ? 'rounded-r-md' : ''} ${window === w ? 'relative border-accent bg-accent/15 text-fg' : 'text-muted hover:text-fg'} ${focusRing}`}
-        >
+    <div role="group" aria-label="Period" className="flex gap-1" data-flow-windows="">
+      {FLOW_WINDOWS.map((w) => (
+        <button key={w} type="button" data-window={w} aria-pressed={window === w} onClick={() => setWindow(w)} className={`${btnToggle(window === w)} tabular-nums`}>
           {WINDOW_WORD[w] ?? `${String(w)} s`}
         </button>
       ))}
