@@ -26,9 +26,28 @@ var labelKeys = []string{"app.kubernetes.io/name", "app"}
 // engines are the words an image's path carries when it runs the server.
 var engines = []string{"redis", "valkey"}
 
-// tools are the words of an image beside the server rather than the server
-// itself: an exporter, a web client, a Sentinel, an operator.
-var tools = []string{"exporter", "commander", "insight", "sentinel", "operator", "metrics", "admin", "browser", "proxy"}
+// tools are the words of an image or a label beside the server rather than
+// the server itself: an exporter, a web or command-line client, a Sentinel,
+// an operator, a backup or a migration. Found anywhere in a word.
+var tools = []string{"exporter", "commander", "insight", "sentinel", "operator", "metrics", "admin", "browser",
+	"proxy", "backup", "dump", "shake", "tools"}
+
+// toolTokens are the short ones, taken only as a whole token between `-`,
+// `_` or `.`: `ui` is inside `build`, `cli` inside `client`.
+var toolTokens = map[string]bool{"ui": true, "cli": true, "client": true, "tool": true}
+
+// isTool reports whether a word names a tool beside the server.
+func isTool(word string) bool {
+	if hasAny(word, tools) {
+		return true
+	}
+	for _, token := range strings.FieldsFunc(word, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
+		if toolTokens[token] {
+			return true
+		}
+	}
+	return false
+}
 
 // chosenPort is the port a Service's evidence picked, and why.
 type chosenPort struct {
@@ -55,17 +74,28 @@ func notAServerPort(port corev1.ServicePort) bool {
 
 // redisImage reports whether an image runs a Redis or a Valkey server, and the
 // path segment that says so. An internal registry renames images, so the word
-// may be inside a segment (`infra-valkey`, `infravalkey`, `redis-cluster`) and
-// in any segment of the path (`team/redis/server`). The registry host is not
-// the path. A segment naming a tool beside the server, and an image whose
-// last segment does, are not a server.
+// may be inside the image's own name (`infra-valkey`, `infravalkey`,
+// `redis-cluster`). A segment above it counts only when it is exactly `redis`
+// or `valkey` (`team/redis/server`): `team-redis/web-app` or
+// `redislabs/rebloom` say who publishes an image, not what it runs. The
+// registry host is not the path. No segment may name a tool beside the
+// server (`redis/exporter/v2`, `redis-cli`).
 func redisImage(image string) (string, bool) {
 	segments := imagePath(image)
-	if len(segments) == 0 || hasAny(segments[len(segments)-1], tools) {
+	if len(segments) == 0 {
 		return "", false
 	}
-	for i := len(segments) - 1; i >= 0; i-- {
-		if hasAny(segments[i], engines) && !hasAny(segments[i], tools) {
+	for _, segment := range segments {
+		if isTool(segment) {
+			return "", false
+		}
+	}
+	last := segments[len(segments)-1]
+	if hasAny(last, engines) {
+		return last, true
+	}
+	for i := len(segments) - 2; i >= 0; i-- {
+		if segments[i] == "redis" || segments[i] == "valkey" {
 			return segments[i], true
 		}
 	}
@@ -146,7 +176,7 @@ func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.P
 // beside the server.
 func labelSays(value string) bool {
 	value = strings.ToLower(value)
-	return hasAny(value, engines) && !hasAny(value, tools)
+	return hasAny(value, engines) && !isTool(value)
 }
 
 // byLabel is the label saying a Service fronts a Redis: on the Service, in its
