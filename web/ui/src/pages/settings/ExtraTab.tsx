@@ -24,7 +24,7 @@ import { badgesOf, ExtraGlyph, ExtraSwitch, lockState, StateBadge, useExtraRerea
  *
  * **A card**: the extra's glyph (`Extension.icon`), its name and one line of
  * purpose, the On/Off switch, a row of badges (On or Off for the cluster,
- * pinned, its component absent, detected, locked, the tools it works with),
+ * pinned, its component absent, Suggested, locked, the tools it works with),
  * and two buttons side by side, Edit and About. Detail goes in tooltips.
  *
  * **Every extension is off until it is turned on, on every profile, and every
@@ -64,7 +64,18 @@ export function ExtraTab({
   const [open, setOpen] = useState<{ cluster: string; key: string; what: 'about' | 'edit' } | null>(null);
   const opened = open?.cluster === cluster ? items.find((item) => item.key === open.key) : undefined;
   const absent = useAbsent(cluster, items);
-  const suggested = useSuggested(cluster, items);
+  const { suggested, settled } = useSuggested(cluster, items);
+  // **The order is taken once per cluster, then held while the page is open**
+  // (#62): suggested first is the order the page opens on, and turning an
+  // extra on must not slide another card under the pointer for the next click.
+  const natural = suggestedFirst(absentLast(byLabel(items), absent), suggested);
+  const [held, setHeld] = useState<{ cluster: string; keys: readonly string[] } | null>(null);
+  // Set while rendering, once per cluster (React's "adjusting state when a
+  // prop changes"): the next render draws the held order at once.
+  if (settled && items.length > 0 && held?.cluster !== cluster) {
+    setHeld({ cluster, keys: natural.map((item) => item.key) });
+  }
+  const ordered = held?.cluster === cluster ? heldOrder(items, held.keys) : natural;
   const on = items.filter((item) => item.enabled).length;
 
   return (
@@ -80,7 +91,7 @@ export function ExtraTab({
       </header>
 
       <TileGrid label="Extensions">
-        {suggestedFirst(absentLast(byLabel(items), absent), suggested).map((item) => (
+        {ordered.map((item) => (
           <ExtensionCard
             key={item.key}
             cluster={cluster}
@@ -150,7 +161,10 @@ function useAbsent(cluster: string, items: readonly ExtensionInfo[]): ReadonlyMa
  * The sentence the suggestion banner says for each off extra the cluster gives
  * a reason for, by key. The banner's own query; a failed read gives none.
  */
-function useSuggested(cluster: string, items: readonly ExtensionInfo[]): ReadonlyMap<string, string> {
+function useSuggested(
+  cluster: string,
+  items: readonly ExtensionInfo[],
+): { suggested: ReadonlyMap<string, string>; settled: boolean } {
   const asks = items.some((item) => !item.enabled && item.writable);
   const suggestions = useQuery({
     queryKey: queryKeys.extensionSuggestions(cluster),
@@ -160,12 +174,22 @@ function useSuggested(cluster: string, items: readonly ExtensionInfo[]): Readonl
     staleTime: 5 * 60_000,
   });
   const out = new Map<string, string>();
-  if (!asks || suggestions.data?.state !== 'ok') return out;
+  // Settled once the suggestions have answered or failed, or where nothing asks.
+  const settled = !asks || suggestions.isFetched;
+  if (!asks || suggestions.data?.state !== 'ok') return { suggested: out, settled };
   const off = new Set(items.filter((item) => !item.enabled).map((item) => item.key));
   for (const one of suggestions.data.items) {
     if (one.absent !== true && off.has(one.key)) out.set(one.key, `${one.evidence} on this cluster.`);
   }
-  return out;
+  return { suggested: out, settled };
+}
+
+/** The cards in a held order: each by its place in `keys`, any key it does not
+ *  hold after them in the order given. */
+export function heldOrder(items: readonly ExtensionInfo[], keys: readonly string[]): ExtensionInfo[] {
+  const place = new Map(keys.map((key, index) => [key, index]));
+  const held = items.filter((item) => place.has(item.key)).sort((a, b) => (place.get(a.key) ?? 0) - (place.get(b.key) ?? 0));
+  return [...held, ...items.filter((item) => !place.has(item.key))];
 }
 
 /** The suggested extras before the others, each group in the order it came
@@ -266,10 +290,13 @@ function ExtensionCard({
               </span>
             )}
             {suggested === undefined ? null : (
-              <span data-extra-suggested={suggested}>
-                <Pill tone="info" title={suggested}>
-                  Suggested
-                </Pill>
+              <span
+                data-extra-suggested={suggested}
+                title={suggested}
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-accent px-2 py-px text-2xs font-semibold text-fg"
+              >
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-accent" />
+                Suggested
               </span>
             )}
             {tools?.map((name) => (
