@@ -4,6 +4,25 @@ Every release of KubeTower, newest first. Versions are bare semver tags
 (`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
 built from its tag.
 
+## 0.1.1 — AWS sign-in fixes
+
+### Fixed
+
+- **`aws eks get-token` arguments are read as the AWS CLI reads them.**
+  An abbreviated option such as `--role` now assumes the role it names,
+  instead of being dropped and the token signed as the profile's own
+  identity (a bare 401, shown as a lapsed session). `--opt=value`, the last
+  occurrence and any unambiguous prefix read the same way; anything the CLI
+  would refuse or read otherwise is left to the CLI (#6, #8).
+- **An edited kubeconfig is used without a restart.** The desktop reads its
+  kubeconfig files again when they change and on a cluster's Retry. Only the
+  clusters whose entry changed are reconnected, and a save caught halfway
+  (an empty file, no contexts) keeps the previous kubeconfig (#6, #8).
+- **A first `aws sso login` after start is seen at once.** The private home
+  an AWS CLI credential plugin and a dock terminal run under now links
+  `~/.aws/sso` even when it did not exist yet, creating it for the AWS CLI
+  only (#7, #9).
+
 ## 0.1.0 — first public release
 
 ### The console
