@@ -2,7 +2,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 import { ApiError, queryKeys, type ExtensionInfo } from '../../api';
+import { Icon, type IconName } from '../../components/Icon';
 import { Pill } from '../../components/Pill';
+import { focusRingTight } from '../../focus';
 
 /**
  * What the Extra tab's tile and its preview window share: the reading of a
@@ -111,4 +113,83 @@ export function AboutBadges({ names }: { names: readonly string[] | undefined })
  *  contract, and a build that predates it says none. */
 export function badgesOf(extension: { about?: object | undefined } | undefined): readonly string[] | undefined {
   return (extension?.about as { badges?: readonly string[] } | undefined)?.badges;
+}
+
+/**
+ * An extra's glyph in a rounded square, tinted while it is on. `name` is the
+ * extension's own `icon`; absent, the generic `extra` glyph.
+ */
+export function ExtraGlyph({ name, on, size = 'card' }: { name: IconName | undefined; on: boolean; size?: 'card' | 'title' }): ReactNode {
+  const box = size === 'card' ? 'size-10 rounded-lg [--icon:calc(var(--spacing)*5)]' : 'size-8 rounded-md [--icon:calc(var(--spacing)*4)]';
+  return (
+    <span
+      aria-hidden="true"
+      data-extra-icon={name ?? 'extra'}
+      className={`grid shrink-0 place-items-center border ${box} ${
+        on ? 'border-ok/40 bg-ok/10 text-ok' : 'border-line bg-white/5 text-muted'
+      }`}
+    >
+      <Icon name={name ?? 'extra'} />
+    </span>
+  );
+}
+
+/**
+ * The On/Off switch: a track and a knob. `role="switch"`, so `aria-checked`
+ * is what a screen reader says; the visible word is in the tooltip.
+ */
+export function ExtraSwitch({
+  on,
+  label,
+  disabled,
+  onToggle,
+  describedBy,
+  focusFirst = false,
+}: {
+  on: boolean;
+  label: string;
+  disabled: boolean;
+  onToggle: () => void;
+  describedBy?: string | undefined;
+  focusFirst?: boolean;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={on ? 'On' : 'Off'}
+      {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
+      {...(focusFirst ? { 'data-dialog-focus': '' } : {})}
+      disabled={disabled}
+      onClick={onToggle}
+      data-extra-switch={on ? 'on' : 'off'}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${focusRingTight} ${
+        on ? 'border-ok bg-ok/60' : 'border-line bg-panel-2'
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className={`inline-block size-3.5 rounded-full bg-fg shadow transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
+      />
+    </button>
+  );
+}
+
+/** On or Off for the picked cluster, as a badge. */
+export function StateBadge({ on, cluster }: { on: boolean; cluster: string }): ReactNode {
+  return (
+    <span data-extra-state={on ? 'on' : 'off'}>
+      {on ? (
+        <Pill tone="ok" title={`On for cluster ${cluster}`}>
+          On
+        </Pill>
+      ) : (
+        <Pill neutral="muted" title={`Off for cluster ${cluster}`}>
+          Off
+        </Pill>
+      )}
+    </span>
+  );
 }
