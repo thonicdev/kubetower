@@ -209,3 +209,31 @@ export const ACTIVITY_EXTRA = (cluster: string): Readonly<Record<string, unknown
     object: { kind: 'Pod', namespace: ACTIVITY_POD.namespace, name: ACTIVITY_POD.name },
   },
 });
+
+/**
+ * The same hour with names as long as Kubernetes lets them be: a 63-character
+ * namespace and workloads whose pods' names run past a hundred characters. The
+ * page must keep its columns and draw no sideways scroll; the whole name is
+ * on hover.
+ */
+const LONG: readonly (readonly [string, string])[] = [
+  ['checkout-api', 'checkout-api-settlement-reconciliation-orchestrator-eu-west-1-blue'],
+  ['payments-worker', 'payments-worker-ledger-synchronisation-batch-processor-canary-v2'],
+  ['"shop"', '"team-shop-checkout-production-eu-west-1-primary-cluster-tenant-a"'],
+  ['/shop/', '/team-shop-checkout-production-eu-west-1-primary-cluster-tenant-a/'],
+  ['"payments"', '"team-payments-settlement-production-eu-west-1-primary-tenant-b"'],
+  ['/payments/', '/team-payments-settlement-production-eu-west-1-primary-tenant-b/'],
+];
+const lengthen = <T>(value: T): T => {
+  let text = JSON.stringify(value);
+  for (const [from, to] of LONG) text = text.split(from).join(to);
+  return JSON.parse(text) as T;
+};
+export const EVENTS_LONG_PAGE: Answer = lengthen(EVENTS_PAGE);
+
+/** The page with long names, by path and query, for a cluster. */
+export const EVENTS_LONG_ANSWERS = (cluster: string): Readonly<Record<string, unknown>> => ({
+  [`${base(cluster)}?window=1h`]: EVENTS_LONG_PAGE,
+  [`${base(cluster)}?window=15m`]: EVENTS_LONG_PAGE,
+  [`${base(cluster)}?window=3h`]: EVENTS_LONG_PAGE,
+});

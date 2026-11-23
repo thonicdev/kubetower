@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router';
 import { focusRing, objectPath } from '@kubetower/ui';
 
@@ -15,7 +15,6 @@ import {
   changeShort,
   changeOf,
   changeTitle,
-  laneName,
   objectsWord,
   options,
   pluralOf,
@@ -42,6 +41,42 @@ const PLOT_COMPACT_PX = 420;
 const WINDOW_WORD: Readonly<Record<Window, string>> = { '15m': '15 min', '1h': '1 h', '3h': '3 h' };
 
 const select = `rounded-md border border-line bg-panel px-2 py-1 text-xs ${focusRing}`;
+
+/**
+ * The end of a name that tells it from its siblings: a pod's ReplicaSet and pod
+ * hashes (`-7f9c6d8b5-x2k9q`), else its last ten characters. None for a name
+ * short enough to need no cut in the middle.
+ */
+export function tailOf(name: string): string {
+  if (name.length <= 24) return '';
+  const parts = name.split('-');
+  if (parts.length >= 3) {
+    const hashes = `-${parts.slice(-2).join('-')}`;
+    if (hashes.length <= 17) return hashes;
+  }
+  return name.slice(-10);
+}
+
+/**
+ * A name cut in the middle: its start gives way with an ellipsis, its end
+ * stays. The whole name is its tooltip, and its text.
+ */
+export function CutName({ name, className = '' }: { name: string; className?: string }): ReactNode {
+  const tail = tailOf(name);
+  if (tail === '') {
+    return (
+      <span data-cut-name="" title={name} className={`min-w-0 truncate ${className}`}>
+        {name}
+      </span>
+    );
+  }
+  return (
+    <span data-cut-name="" title={name} className={`flex min-w-0 overflow-hidden ${className}`}>
+      <span className="min-w-0 truncate">{name.slice(0, name.length - tail.length)}</span>
+      <span className="shrink-0">{tail}</span>
+    </span>
+  );
+}
 
 /**
  * A source that was not read whole, in two words: a refusal for this person,
@@ -162,7 +197,13 @@ export function Controls({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <WindowPicker window={window} onWindow={onWindow} />
-      <select aria-label="Namespace" value={filters.namespace} onChange={(e) => set('namespace', e.target.value)} className={select}>
+      <select
+        aria-label="Namespace"
+        title={filters.namespace === '' ? 'Namespace' : filters.namespace}
+        value={filters.namespace}
+        onChange={(e) => set('namespace', e.target.value)}
+        className={`${select} max-w-full min-w-0 sm:max-w-72`}
+      >
         <option value="">Namespace</option>
         {opts.namespaces.map((n) => (
           <option key={n} value={n}>
@@ -313,8 +354,12 @@ export function Timeline({
   /** A narrow container, a panel's: a shorter name column and a plot sized for it. */
   compact?: boolean;
 }): ReactNode {
-  const gutter = compact ? 'w-40' : 'w-56';
-  const plot = compact ? PLOT_COMPACT_PX : PLOT_PX;
+  // The names' column: narrower on a phone, so the plot keeps its width.
+  const gutter = compact ? 'w-40' : 'w-36 sm:w-56';
+  // The plot's real width where it has been measured: the labels' rows and
+  // which way each one opens are worked out against it.
+  const plotBox = useRef<HTMLDivElement>(null);
+  const plot = useWidth(plotBox) ?? (compact ? PLOT_COMPACT_PX : PLOT_PX);
   const { drawn, total } = useMemo(() => bars(causes), [causes]);
   const shown = useMemo(() => answer.changes.filter((c) => c.kind !== 'config' || c.referenced), [answer.changes]);
   const axis = useMemo(() => axisOf(drawn, shown, answer.since, answer.generatedAt), [drawn, shown, answer.since, answer.generatedAt]);
@@ -332,10 +377,10 @@ export function Timeline({
   const litChange = (id: string): boolean => (focus === null ? false : focus.kind === 'change' ? focus.id === id : focusedCause?.since === id);
   const tick = ticks(axis);
   return (
-    <section aria-label="Timeline" data-timeline="" data-axis-start={axis.start} className="flex flex-col rounded-lg border border-line bg-panel px-3.5 py-3">
+    <section aria-label="Timeline" data-timeline="" data-axis-start={axis.start} className="flex flex-col overflow-hidden rounded-lg border border-line bg-panel px-3.5 py-3">
       <div className="relative">
         <div className="relative">
-        <div className={`pointer-events-none absolute inset-y-0 right-0 ${compact ? 'left-40' : 'left-56'}`}>
+        <div className={`pointer-events-none absolute inset-y-0 right-0 ${compact ? 'left-40' : 'left-36 sm:left-56'}`}>
           {tick.map((t) => (
             <span key={t.at} className="absolute inset-y-0 border-l border-line" style={{ left: `${String(t.at)}%` }} />
           ))}
@@ -350,7 +395,7 @@ export function Timeline({
         </div>
         <div className="relative flex">
           <div className={`${gutter} shrink-0`} />
-          <div data-changes="" className="relative min-w-0 flex-1" style={{ height: `${String(Math.max(1, rows) * LABEL_ROW_PX + 4)}px` }}>
+          <div ref={plotBox} data-changes="" className="relative min-w-0 flex-1" style={{ height: `${String(Math.max(1, rows) * LABEL_ROW_PX + 4)}px` }}>
             {shown.map((c) => (
               <ChangeMark
                 key={c.id}
@@ -385,17 +430,11 @@ export function Timeline({
                 <span
                   data-lane-name=""
                   title={detail}
-                  className={`${gutter} flex shrink-0 pr-2 text-xs ${compact ? '' : 'truncate'} ${lit && focus !== null ? 'text-fg' : 'text-muted'}`}
+                  className={`${gutter} flex min-w-0 shrink-0 overflow-hidden pr-2 text-xs ${lit && focus !== null ? 'text-fg' : 'text-muted'}`}
                 >
-                  {compact ? (
-                    // The object gives way, never the cause beside it.
-                    <>
-                      <span className="min-w-0 truncate">{b.name}</span>
-                      <span className="shrink-0">&nbsp;· {b.reason}</span>
-                    </>
-                  ) : (
-                    laneName(b)
-                  )}
+                  {/* The name gives way in its middle first, the cause beside it last. */}
+                  <CutName name={b.name} className="shrink-[999]" />
+                  <span className="min-w-0 truncate whitespace-pre">{` · ${b.reason}`}</span>
                 </span>
                 <div className="relative h-full min-w-0 flex-1">
                   <span
@@ -421,7 +460,13 @@ export function Timeline({
           </div>
           <div data-axis="" className="relative h-4 min-w-0 flex-1 text-2xs tabular-nums text-muted">
             {tick.map((t, i) => (
-              <span key={t.at} data-tick="" className={`absolute whitespace-nowrap ${i === 0 ? '' : i === tick.length - 1 ? '-translate-x-full' : '-translate-x-1/2'}`} style={{ left: `${String(t.at)}%` }}>
+              <span
+                key={t.at}
+                data-tick=""
+                // On a phone every other inner tick is left out, or their labels meet.
+                className={`absolute whitespace-nowrap ${i === 0 ? '' : i === tick.length - 1 ? '-translate-x-full' : '-translate-x-1/2'} ${i % 2 === 1 && i < tick.length - 1 ? 'max-sm:hidden' : ''}`}
+                style={{ left: `${String(t.at)}%` }}
+              >
                 {t.label}
               </span>
             ))}
@@ -441,7 +486,7 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
   const [open, setOpen] = useState(false);
   const [pages, setPages] = useState(1);
   const since = changeOf(answer, cause.since);
-  const tail = since === undefined ? `last ${ago(cause.lastSeen, answer.generatedAt)}` : `since ${changeLabel(since)} · ${ago(since.time, answer.generatedAt)}`;
+  const age = ago(since === undefined ? cause.lastSeen : since.time, answer.generatedAt);
   const shown = cause.groups.slice(0, pages * PAGE_OBJECTS);
   const key = causeKey(cause);
   const on = same(highlight.focus, 'cause', key);
@@ -464,38 +509,54 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
         <span className="shrink-0 font-semibold">
           {cause.reason} <span className="tabular-nums">× {cause.count}</span>
         </span>
-        <span className="min-w-0 truncate text-xs text-muted">
-          {objectsWord(cause)} · {tail}
+        <span className="flex min-w-0 text-xs text-muted" data-cause-summary="">
+          <span className="shrink-0 whitespace-pre">{`${objectsWord(cause)} · `}</span>
+          {since === undefined ? (
+            <span className="shrink-0">last {age}</span>
+          ) : (
+            <>
+              <span className="min-w-0 truncate" title={`since ${changeLabel(since)}`}>
+                since {changeLabel(since)}
+              </span>
+              <span className="shrink-0 whitespace-pre">{` · ${age}`}</span>
+            </>
+          )}
         </span>
       </button>
       {open ? (
-        <ul data-groups="" className="mb-2 ml-8 flex flex-col divide-y divide-line rounded-md border border-line">
+        <ul
+          data-groups=""
+          className="mb-2 ml-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,2fr)_auto] divide-y divide-line rounded-md border border-line sm:ml-8"
+        >
           {shown.map((g) => {
             const href = objectHref(cluster, g.kind, g.namespace, g.name);
-            const label = (
-              <>
-                <span className="text-muted">{g.namespace === '' ? '' : `${g.namespace}/`}</span>
-                {g.name}
-              </>
-            );
+            const where = g.namespace === '' ? g.name : `${g.namespace}/${g.name}`;
             return (
-              <li key={`${g.kind}/${g.namespace}/${g.name}`} data-group={`${g.namespace}/${g.name}`} className="flex items-center gap-2 px-2 py-1 text-xs" title={g.message}>
-                <span className="shrink-0 text-2xs text-muted">{g.kind}</span>
+              <li
+                key={`${g.kind}/${g.namespace}/${g.name}`}
+                data-group={`${g.namespace}/${g.name}`}
+                className="col-span-4 grid grid-cols-subgrid items-center gap-x-2 px-2 py-1 text-xs"
+                title={`${where}\n${g.message}`}
+              >
+                <span className="text-2xs text-muted">{g.kind}</span>
+                <span data-group-namespace="" className="min-w-0 truncate text-muted" title={g.namespace}>
+                  {g.namespace}
+                </span>
                 {href === undefined ? (
-                  <span className="min-w-0 truncate">{label}</span>
+                  <CutName name={g.name} />
                 ) : (
-                  <Link to={href} className={`min-w-0 truncate text-accent hover:underline ${focusRing}`}>
-                    {label}
+                  <Link to={href} className={`flex min-w-0 text-accent hover:underline ${focusRing}`}>
+                    <CutName name={g.name} />
                   </Link>
                 )}
-                <span className="ml-auto shrink-0 tabular-nums text-muted">
+                <span data-group-count="" className="whitespace-nowrap text-right tabular-nums text-muted">
                   × {g.count} · {ago(g.lastSeen, answer.generatedAt)}
                 </span>
               </li>
             );
           })}
           {cause.groups.length > shown.length ? (
-            <li className="px-2 py-1">
+            <li className="col-span-4 px-2 py-1">
               <button type="button" className={`text-xs text-accent underline ${focusRing}`} onClick={() => setPages((p) => p + 1)}>
                 +{cause.groups.length - shown.length}
               </button>
@@ -533,4 +594,22 @@ export function Causes({ cluster, answer, causes, highlight }: { cluster: string
       ) : null}
     </section>
   );
+}
+
+/** An element's width in pixels, followed as it changes; none before it is laid out. */
+function useWidth(box: RefObject<HTMLElement | null>): number | undefined {
+  const [width, setWidth] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const element = box.current;
+    if (element === null || typeof ResizeObserver === 'undefined') return;
+    const read = (): void => {
+      const next = element.getBoundingClientRect().width;
+      setWidth(next > 0 ? next : undefined);
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(element);
+    return () => watch.disconnect();
+  }, [box]);
+  return width;
 }
