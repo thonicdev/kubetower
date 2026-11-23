@@ -4,7 +4,7 @@ import { Pending, type Extension } from '@kubetower/ui';
 import { about } from './about';
 import { KEY, RedisProblem, getService } from './data';
 import { PAGE_PATH } from './parts';
-import { podShortcut, serviceShortcut } from './shortcut';
+import { labelledRedis, podNotChecked, podShortcut, serviceShortcut } from './shortcut';
 
 /**
  * The TypeScript half of the Redis viewer, satisfying `@kubetower/ui`'s
@@ -48,6 +48,8 @@ export const redis: Extension = {
   shortcuts: [
     { key: 'deployment', kinds: ['services'], resolve: serviceShortcut },
     { key: 'deployment', kinds: ['pods'], resolve: podShortcut },
+    // A Redis pod whose namespace could not be read: said, not left blank.
+    { key: 'unchecked', kinds: ['pods'], when: labelledRedis, resolve: podNotChecked },
   ],
   tabs: [
     {
