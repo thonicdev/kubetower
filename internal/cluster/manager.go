@@ -6,6 +6,7 @@ package cluster
 
 import (
 	gocontext "context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net"
@@ -48,8 +49,11 @@ type Manager struct {
 	dial      func(ctx gocontext.Context, network, address string) (net.Conn, error)
 	dialBound time.Duration
 
-	mu      sync.RWMutex
-	raw     *clientcmdapi.Config
+	mu  sync.RWMutex
+	raw *clientcmdapi.Config
+	// digest is the kubeconfig files' contents as raw was read from them
+	// (reload.go).
+	digest  [sha256.Size]byte
 	clients map[clientKey]*Client
 	// limiters is one token bucket per context, kept across a Reload
 	// (ratelimit.go).
@@ -145,6 +149,9 @@ func (m *Manager) Reload() error {
 		m.announced = nil
 		return nil
 	}
+	// Before the read: a file changed during it then differs from what is
+	// recorded, and the next ReloadIfChanged reads it again.
+	digest := digestFiles(m.kubeconfig)
 	raw, err := m.kubeconfig.Load()
 	if err != nil {
 		return err
@@ -153,6 +160,7 @@ func (m *Manager) Reload() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.raw = raw
+	m.digest = digest
 	// Clients are dropped rather than kept: a context whose server or
 	// credentials changed must not keep answering from the old one.
 	m.clients = map[clientKey]*Client{}

@@ -72,6 +72,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/terminal"
 	"github.com/thonicdev/kubetower/internal/update"
 	"github.com/thonicdev/kubetower/internal/web"
+	"github.com/thonicdev/kubetower/safego"
 )
 
 // defaultListen is where the console answers when nothing says otherwise.
@@ -927,6 +928,19 @@ type workers struct {
 // to undo, last opened first closed.
 func startWorkers(ctx context.Context, p *profile, inCluster bool, undo *cleanups) (*workers, error) {
 	clusters, kubeconfig, gate, readOnly, measure := p.clusters, p.kubeconfig, p.gate, p.readOnly, p.measure
+
+	// A kubeconfig edited while the console runs is read again, without a
+	// restart (internal/cluster/reload.go). Nothing to watch in the cluster.
+	// Through safego: it parses files the operator edits, and a panic there is
+	// a line in the log, not the end of the console.
+	safego.Go("kubeconfig: watching for changes", func() error {
+		clusters.Watch(ctx, cluster.WatchEvery, logf)
+		return nil
+	}, func(err error) {
+		if err != nil {
+			logf("kubeconfig: no longer watched for changes: %v", err)
+		}
+	})
 
 	// The archive, and the context everything started beside it runs under.
 	// See openArchive.
