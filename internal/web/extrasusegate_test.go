@@ -371,3 +371,21 @@ func TestTheUseReviewAnswersAnUnknownClusterAsTheAPIDoes(t *testing.T) {
 		t.Errorf("%d use reviews asked about a cluster nobody can name", n)
 	}
 }
+
+// **An API address under the old key is redirected, not lost**: a 308, which
+// keeps the method and the body, to the same address and query under the key.
+func TestAnAddressUnderTheKeyAnExtraWasPublishedUnderIsRedirected(t *testing.T) {
+	_, mux, _ := turnedOn(t, []string{fixtureKey}, fixtureKey)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		request := httptest.NewRequest(method, "/x/prod/"+fixtureLegacyKey+"/panel?ns=shop", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, request)
+		if rec.Code != http.StatusPermanentRedirect || rec.Header().Get("Location") != "/x/prod/"+fixtureKey+"/panel?ns=shop" {
+			t.Errorf("%s under %s answered %d to %q, want 308 to /x/prod/%s/panel?ns=shop", method, fixtureLegacyKey,
+				rec.Code, rec.Header().Get("Location"), fixtureKey)
+		}
+	}
+	if rec := reach(mux, alice, "/x/prod/"+fixtureKey+"/panel"); rec.Code != http.StatusOK {
+		t.Errorf("the address the redirect points to answered %d", rec.Code)
+	}
+}
