@@ -243,11 +243,6 @@ export function bars(causes: readonly Cause[]): { drawn: Bar[]; total: number } 
   return { drawn, total: all.length };
 }
 
-/** A lane's name: the object and the cause, "checkout-api · BackOff". */
-export function laneName(b: Pick<Bar, 'name' | 'reason'>): string {
-  return `${b.name} · ${b.reason}`;
-}
-
 export interface Axis {
   start: number;
   end: number;
