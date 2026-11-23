@@ -35,6 +35,8 @@ export const netinspect: Extension = {
     },
   ],
   tabs: [{ key: 'pod', label: 'Network', kinds: ['pods'], Component: lazy(() => import('./PodTab')) }],
-  shortcuts: [{ key: 'pod', kinds: ['pods'], resolve: podShortcut }],
+  // The Details line opens the pod's view enlarged over the panel, as the
+  // tab's small graph does.
+  shortcuts: [{ key: 'pod', kinds: ['pods'], resolve: podShortcut, dialog: lazy(async () => ({ default: (await import('./PodTab')).PodLarge })) }],
   columns: [{ key: 'isolation', label: 'Isolation', kinds: ['pods'], cells: isolationCells }],
 };

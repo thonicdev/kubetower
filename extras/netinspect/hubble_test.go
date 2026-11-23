@@ -351,3 +351,51 @@ func TestNoPodToShowOpensNoTunnel(t *testing.T) {
 		t.Errorf("%d tunnels opened to Hubble Relay for a person who may see no pod", h.tunnels)
 	}
 }
+
+// The page may ask for one of four periods; five minutes when it names none,
+// and anything else is refused before a tunnel is dug.
+func TestFlowsTakeTheWindowAsked(t *testing.T) {
+	fr := startRelay(t, testFlow{srcNS: "shop", srcPod: "web", dstNS: "shop", dstPod: "api", port: 80, verdict: 1})
+	h := withRelay(t, fr)
+	sinceOf := func(i int) int64 {
+		t.Helper()
+		fr.mu.Lock()
+		asked := fr.asked[i][5:]
+		fr.mu.Unlock()
+		var since int64
+		each(asked, func(num protowire.Number, _ protowire.Type, b []byte, _ uint64) {
+			if num == 7 {
+				each(b, func(n protowire.Number, _ protowire.Type, _ []byte, v uint64) {
+					if n == 1 {
+						since = int64(v)
+					}
+				})
+			}
+		})
+		return since
+	}
+	if got := flowsOf(t, h, ""); got.Window != 300 || got.State != flowsRead {
+		t.Fatalf("no window: %d (%s)", got.Window, got.State)
+	}
+	if ago := time.Now().Unix() - sinceOf(0); ago < 295 || ago > 305 {
+		t.Errorf("no window asked Relay for %d s back, want 300", ago)
+	}
+	for i, window := range []int{60, 900, 3600} {
+		got := flowsOf(t, h, fmt.Sprintf("?ns=shop&window=%d", window))
+		if got.Window != window || got.State != flowsRead {
+			t.Errorf("window %d: answered %d (%s)", window, got.Window, got.State)
+		}
+		if ago := time.Now().Unix() - sinceOf(i+1); ago < int64(window)-5 || ago > int64(window)+5 {
+			t.Errorf("window %d asked Relay for %d s back", window, ago)
+		}
+	}
+	before := h.tunnels
+	for _, bad := range []string{"7", "-60", "1h", "86400"} {
+		if w := serve(t, h, "/x/kind/netinspect/flows?window="+bad); w.Code != http.StatusBadRequest {
+			t.Errorf("window=%s: %d, want 400", bad, w.Code)
+		}
+	}
+	if h.tunnels != before {
+		t.Errorf("a refused window dug %d tunnels", h.tunnels-before)
+	}
+}

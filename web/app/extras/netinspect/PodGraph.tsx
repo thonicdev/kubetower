@@ -1,4 +1,5 @@
 import type { KeyboardEvent, ReactNode } from 'react';
+import { focusRing } from '@kubetower/ui';
 
 import { portsLabel, type Arrow, type Side } from './flows';
 import { shortLabel } from './text';
@@ -19,11 +20,13 @@ export interface Lit {
   sticky: string | null;
 }
 
-const W = 640;
-const H = 180;
-/** What the graph's side margin holds at 10px: a longer label is cut. */
-const GRAPH_CHARS = 30;
-const EDGE = 192;
+/** The small graph of the tab and the enlarged one of the dialog: its width,
+ *  the room each side keeps for its labels, what a label holds at 10px before
+ *  it is cut, and the least height. */
+const SIZES = {
+  small: { W: 640, EDGE: 192, CHARS: 30, H: 180, ROW: 0 },
+  large: { W: 900, EDGE: 320, CHARS: 54, H: 220, ROW: 30 },
+} as const;
 const OPEN_KEY = 'open';
 
 /**
@@ -40,13 +43,24 @@ export function PodGraph({
   lit,
   onHover,
   onPick,
+  large = false,
+  onEnlarge,
 }: {
   ingress: GraphSide;
   egress: GraphSide;
   lit: Record<Side, Lit>;
   onHover: (side: Side, key: string | null) => void;
   onPick: (side: Side, key: string) => void;
+  /** The dialog's graph: wider, taller with more arrows, labels whole. */
+  large?: boolean;
+  /** Pressing the graph anywhere but on an arrow opens it enlarged. */
+  onEnlarge?: () => void;
 }): ReactNode {
+  const size = large ? SIZES.large : SIZES.small;
+  const { W, EDGE } = size;
+  const most = Math.max(ingress.arrows.length, egress.arrows.length, 1);
+  const H = Math.max(size.H, 44 + most * size.ROW);
+  const GRAPH_CHARS = size.CHARS;
   const cx = W / 2;
   const cy = H / 2;
   const y = (i: number, n: number) => (n <= 1 ? cy : 22 + (i * (H - 44)) / (n - 1));
@@ -108,7 +122,14 @@ export function PodGraph({
           onMouseLeave={interactive ? () => onHover(side, null) : undefined}
           onFocus={interactive ? () => onHover(side, a.key) : undefined}
           onBlur={interactive ? () => onHover(side, null) : undefined}
-          onClick={interactive ? () => onPick(side, a.key) : undefined}
+          onClick={
+            interactive
+              ? (e) => {
+                  e.stopPropagation();
+                  onPick(side, a.key);
+                }
+              : undefined
+          }
           onKeyDown={interactive ? keys : undefined}
         >
           <title>{tip}</title>
@@ -131,8 +152,16 @@ export function PodGraph({
       );
     });
   };
-  return (
-    <svg viewBox={`0 0 ${String(W)} ${String(H)}`} role="group" aria-label="Whom the rules let this pod talk to" className="w-full max-w-2xl rounded-lg border border-line bg-panel" data-mini-graph="">
+  const svg = (
+    <svg
+      viewBox={`0 0 ${String(W)} ${String(H)}`}
+      role="group"
+      aria-label="Whom the rules let this pod talk to"
+      className={`w-full rounded-lg border border-line bg-panel ${large ? '' : 'max-w-2xl'} ${onEnlarge === undefined ? '' : 'cursor-zoom-in'}`}
+      data-mini-graph={large ? undefined : ''}
+      data-large-graph={large ? '' : undefined}
+      onClick={onEnlarge}
+    >
       <defs>
         <marker id="netinspect-pod-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent)" />
@@ -165,5 +194,21 @@ export function PodGraph({
         EGRESS
       </text>
     </svg>
+  );
+  if (onEnlarge === undefined) return svg;
+  return (
+    <div className="relative w-full max-w-2xl">
+      {svg}
+      <button
+        type="button"
+        data-enlarge=""
+        aria-label="Enlarge"
+        title="Enlarge"
+        onClick={onEnlarge}
+        className={`absolute right-1.5 bottom-1.5 flex size-6 items-center justify-center rounded-md border border-line bg-panel-2 text-xs text-muted hover:text-fg ${focusRing}`}
+      >
+        <span aria-hidden="true">⤢</span>
+      </button>
+    </div>
   );
 }

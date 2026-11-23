@@ -147,8 +147,9 @@ func prepareGoldmane(r *http.Request, h extension.Host, cluster string, _ map[st
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, ServerName: goldmaneServerName,
 		Certificates: []tls.Certificate{pair}, NextProtos: []string{"h2"}}
+	window, _ := windowOf(r)
 	return func(ctx context.Context, addr string) ([]flow, bool, error) {
-		return listGoldmane(ctx, addr, cfg, flowCap, flowWindow)
+		return listGoldmane(ctx, addr, cfg, flowCap, window)
 	}, "", ""
 }
 
