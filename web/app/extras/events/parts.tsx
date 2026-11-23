@@ -60,6 +60,12 @@ export function tailOf(name: string): string {
 /**
  * A name cut in the middle: its start gives way with an ellipsis, its end
  * stays. The whole name is its tooltip, and its text.
+ *
+ * **The end is never cut.** The box is a grid of a `minmax(0,1fr)` start and
+ * an `auto` end: at its smallest (a parent's min-content) the start's track is
+ * zero and only the end counts, and at its widest the whole name fits. With no
+ * `min-w-0` on the box, a flex or grid parent cannot make it narrower than its
+ * end; what sits beside it yields instead.
  */
 export function CutName({ name, className = '' }: { name: string; className?: string }): ReactNode {
   const tail = tailOf(name);
@@ -71,9 +77,11 @@ export function CutName({ name, className = '' }: { name: string; className?: st
     );
   }
   return (
-    <span data-cut-name="" title={name} className={`flex min-w-0 overflow-hidden ${className}`}>
+    <span data-cut-name="" title={name} className={`grid grid-cols-[minmax(0,1fr)_auto] ${className}`}>
       <span className="min-w-0 truncate">{name.slice(0, name.length - tail.length)}</span>
-      <span className="shrink-0">{tail}</span>
+      <span className="whitespace-nowrap" data-cut-name-end="">
+        {tail}
+      </span>
     </span>
   );
 }
@@ -526,7 +534,7 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
       {open ? (
         <ul
           data-groups=""
-          className="mb-2 ml-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,2fr)_auto] divide-y divide-line rounded-md border border-line sm:ml-8"
+          className="mb-2 ml-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(min-content,2fr)_auto] divide-y divide-line rounded-md border border-line sm:ml-8"
         >
           {shown.map((g) => {
             const href = objectHref(cluster, g.kind, g.namespace, g.name);
@@ -545,7 +553,7 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
                 {href === undefined ? (
                   <CutName name={g.name} />
                 ) : (
-                  <Link to={href} className={`flex min-w-0 text-accent hover:underline ${focusRing}`}>
+                  <Link to={href} className={`flex text-accent hover:underline ${focusRing}`}>
                     <CutName name={g.name} />
                   </Link>
                 )}

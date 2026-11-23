@@ -1132,7 +1132,7 @@ export const EXTRA_SCENES = {
   'extra-kubeadjust-namespace': { key: 'kubeadjust', answers: KUBEADJUST_ANSWERS, at: 'x/kubeadjust?ns=shop' },
   'extra-events': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER) },
   'extra-events-namespace': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER), at: 'x/events?namespace=shop' },
-  // The same page with names as long as Kubernetes allows (#issue).
+  // The same page with names as long as Kubernetes allows (#34).
   'extra-events-long': { key: 'events', answers: EVENTS_LONG_ANSWERS(EXTRA_CLUSTER) },
   // Not pages: the compact line on a Deployment's Details, and its Events tab, each alone.
   'extra-events-line': {

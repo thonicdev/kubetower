@@ -229,7 +229,31 @@ const lengthen = <T>(value: T): T => {
   for (const [from, to] of LONG) text = text.split(from).join(to);
   return JSON.parse(text) as T;
 };
-export const EVENTS_LONG_PAGE: Answer = lengthen(EVENTS_PAGE);
+/**
+ * Every pod named as a ReplicaSet names it, `<workload>-<rs hash>-<pod hash>`:
+ * the end that tells two pods of one workload apart is what a cut in the
+ * middle must keep, at every width.
+ */
+const RS_HASH: Readonly<Record<string, string>> = {};
+const hashed = (page: Answer): Answer => {
+  const renamed = new Map<string, string>();
+  let n = 0;
+  for (const cause of page.causes) {
+    for (const group of cause.groups) {
+      if (group.kind !== 'Pod' || group.workloadName === undefined || renamed.has(group.name)) continue;
+      const rs = (RS_HASH[group.workloadName] ??= ['7f9c6d8b5', '5d8c7b9f6', '6b7f8d9c4'][Object.keys(RS_HASH).length % 3] ?? '7f9c6d8b5');
+      renamed.set(group.name, `${group.workloadName}-${rs}-${(n * 7919 + 12345).toString(36).slice(-5).padStart(5, 'x')}`);
+      n += 1;
+    }
+  }
+  let text = JSON.stringify(page);
+  // Longest first, so a name that prefixes another is not replaced inside it.
+  for (const [from, to] of [...renamed].sort((a, b) => b[0].length - a[0].length)) {
+    text = text.split(`"${from}"`).join(`"${to}"`);
+  }
+  return JSON.parse(text) as Answer;
+};
+export const EVENTS_LONG_PAGE: Answer = hashed(lengthen(EVENTS_PAGE));
 
 /** The page with long names, by path and query, for a cluster. */
 export const EVENTS_LONG_ANSWERS = (cluster: string): Readonly<Record<string, unknown>> => ({

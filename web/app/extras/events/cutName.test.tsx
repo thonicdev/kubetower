@@ -12,6 +12,22 @@ describe('a name cut in the middle', () => {
     expect(name?.children).toHaveLength(0);
   });
 
+  it('cuts from the twenty-fifth character, never before', () => {
+    expect(tailOf('a'.repeat(24))).toBe('');
+    expect(tailOf(`${'a'.repeat(20)}-bcd`)).toBe('');
+    expect(tailOf('a'.repeat(25))).toBe('aaaaaaaaaa');
+    expect(tailOf(`${'a'.repeat(16)}-7f9c6d8b5`)).not.toBe('');
+  });
+
+  it('keeps its end out of reach of the parent: no min-w-0 and no clip on the box', () => {
+    const { container } = render(<CutName name="checkout-api-settlement-reconciliation-orchestrator-7f9c6d8b5-x2k9q" />);
+    const box = container.querySelector('[data-cut-name]');
+    expect(box?.className).toContain('grid-cols-[minmax(0,1fr)_auto]');
+    expect(box?.className).not.toContain('min-w-0');
+    expect(box?.className).not.toContain('overflow-hidden');
+    expect(box?.querySelector('[data-cut-name-end]')?.className).toContain('whitespace-nowrap');
+  });
+
   it("keeps a pod's ReplicaSet and pod hashes as its end", () => {
     expect(tailOf('checkout-api-settlement-reconciliation-orchestrator-7f9c6d8b5-x2k9q')).toBe('-7f9c6d8b5-x2k9q');
   });
@@ -29,6 +45,6 @@ describe('a name cut in the middle', () => {
     expect(cut?.textContent).toBe(name);
     expect(cut?.children[0]?.className).toContain('truncate');
     expect(cut?.children[1]?.textContent).toBe('-7f9c6d8b5-x2k9q');
-    expect(cut?.children[1]?.className).toContain('shrink-0');
+    expect(cut?.children[1]?.className).toContain('whitespace-nowrap');
   });
 });
