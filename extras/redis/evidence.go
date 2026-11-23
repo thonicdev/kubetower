@@ -23,10 +23,12 @@ import (
 // evidenceName is the `app.kubernetes.io/name` values that say Redis.
 var evidenceName = map[string]bool{"redis": true, "valkey": true}
 
-// evidenceImage is the image names that say Redis, whatever the registry,
-// path, tag or digest: `valkey/valkey:8.1`, `docker.io/bitnami/redis`,
-// `redis@sha256:…`.
-var evidenceImage = map[string]bool{"redis": true, "valkey": true}
+// engines are the words an image's path carries when it runs the server.
+var engines = []string{"redis", "valkey"}
+
+// tools are the words of an image beside the server rather than the server
+// itself: an exporter, a web client, a Sentinel, an operator.
+var tools = []string{"exporter", "commander", "insight", "sentinel", "operator", "metrics", "admin", "browser", "proxy"}
 
 // chosenPort is the port a Service's evidence picked, and why.
 type chosenPort struct {
@@ -51,20 +53,50 @@ func notAServerPort(port corev1.ServicePort) bool {
 	return false
 }
 
-// imageName is the last path segment of an image reference, without its tag
-// or digest.
-func imageName(image string) string {
-	image = strings.ToLower(image)
+// redisImage reports whether an image runs a Redis or a Valkey server, and the
+// path segment that says so. An internal registry renames images, so the word
+// may be inside a segment (`infra-valkey`, `infravalkey`, `redis-cluster`) and
+// in any segment of the path (`team/redis/server`). The registry host is not
+// the path. A segment naming a tool beside the server, and an image whose
+// last segment does, are not a server.
+func redisImage(image string) (string, bool) {
+	segments := imagePath(image)
+	if len(segments) == 0 || hasAny(segments[len(segments)-1], tools) {
+		return "", false
+	}
+	for i := len(segments) - 1; i >= 0; i-- {
+		if hasAny(segments[i], engines) && !hasAny(segments[i], tools) {
+			return segments[i], true
+		}
+	}
+	return "", false
+}
+
+// imagePath is an image reference's repository path, lower-cased, without its
+// registry host, tag or digest.
+func imagePath(image string) []string {
+	image = strings.ToLower(strings.TrimSpace(image))
 	if at := strings.IndexByte(image, '@'); at >= 0 {
 		image = image[:at]
 	}
-	if slash := strings.LastIndexByte(image, '/'); slash >= 0 {
-		image = image[slash+1:]
+	segments := strings.Split(image, "/")
+	last := segments[len(segments)-1]
+	if colon := strings.IndexByte(last, ':'); colon >= 0 {
+		segments[len(segments)-1] = last[:colon]
 	}
-	if colon := strings.IndexByte(image, ':'); colon >= 0 {
-		image = image[:colon]
+	if len(segments) > 1 && (strings.ContainsAny(segments[0], ".:") || segments[0] == "localhost") {
+		segments = segments[1:]
 	}
-	return image
+	return segments
+}
+
+func hasAny(s string, words []string) bool {
+	for _, w := range words {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // evidence picks, for each Service the port guess took nothing of, the one
@@ -122,8 +154,8 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 			continue
 		}
 		for _, container := range pod.Spec.Containers {
-			name := imageName(container.Image)
-			if !evidenceImage[name] {
+			name, ok := redisImage(container.Image)
+			if !ok {
 				continue
 			}
 			why := "its pod runs " + name
