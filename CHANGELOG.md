@@ -4,6 +4,17 @@ Every release of KubeTower, newest first. Versions are bare semver tags
 (`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
 built from its tag.
 
+## Unreleased
+
+### Changed
+
+- **The JVM Inspector is the Runtime Inspector**, key `runtime`. Nothing to
+  change on upgrade: `jvm` is still read wherever it was written - `KT_EXTRAS`
+  and the chart's `extras`, the stored switch, bookmarks and tab links, API
+  addresses under `/x/<cluster>/jvm/` (a 308 to `runtime`), and a ClusterRole
+  granting `use` on `extras.kubetower.dev/jvm`. Grant `runtime` in new roles
+  (#18).
+
 ## 0.1.1 — AWS sign-in fixes
 
 ### Fixed

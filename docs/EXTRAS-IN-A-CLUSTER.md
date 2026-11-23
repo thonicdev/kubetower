@@ -24,6 +24,12 @@ desktop.
    settings. It is asked with no namespace, so it is granted cluster-wide: a
    ClusterRole bound with a ClusterRoleBinding. Without it, a person does not
    see the extra in the menu, and its address answers 403.
+
+   **A renamed extra keeps its old grant.** `use` on the key an extra was
+   published under still grants it: since 0.2.0 the Runtime Inspector's key is
+   `runtime`, and a ClusterRole granting `use` on `jvm` keeps working. Grant
+   `runtime` in new roles; the values' `extras: [jvm]`, a stored switch and an
+   old address under `/x/<cluster>/jvm/` are read as `runtime` too.
 3. **The person's own RBAC, namespace by namespace, says what the extra shows
    and does for them.** The console reads and acts with one ServiceAccount, and
    asks the API server first, for the person signed in, with a
