@@ -25,6 +25,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const kubeadjust: Extension = {
   key: KEY,
+  icon: 'sliders',
   about,
   nav: { label: 'KubeAdjust', path: PAGE_PATH },
   routes: [

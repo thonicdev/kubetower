@@ -13,7 +13,7 @@ import type { Extension } from '../../extension';
 import { focusRing, focusRingTight } from '../../focus';
 import { KeyLayer } from '../../keyboard/layers';
 import { extraColumnShown, setExtraColumnShown } from '../resources/extraColumnMemory';
-import { AboutBadges, badgesOf, failure, isText, lockState, PinnedSetting, settingsOf, useExtraReread } from './extraParts';
+import { AboutBadges, badgesOf, ExtraGlyph, ExtraSwitch, failure, isText, lockState, PinnedSetting, settingsOf, StateBadge, useExtraReread } from './extraParts';
 
 type SettingInfo = ExtensionInfo['settings'][number];
 
@@ -59,7 +59,6 @@ export function ExtraSettingsModal({
   absent,
   own,
   onClose,
-  onAbout,
 }: {
   cluster: string;
   item: ExtensionInfo;
@@ -68,7 +67,6 @@ export function ExtraSettingsModal({
   /** What the build carries for it: its page, its columns, its own status. */
   own: Extension | undefined;
   onClose: () => void;
-  onAbout: () => void;
 }): ReactNode {
   const reread = useExtraReread(cluster);
   const reasonId = useId();
@@ -142,27 +140,23 @@ export function ExtraSettingsModal({
         }}
       >
         <div className="flex flex-wrap items-center gap-2">
+          <ExtraGlyph name={own?.icon} on={enabled} size="title" />
           {writable || shownDisabled ? (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              aria-label={`${item.label}, cluster ${cluster}`}
-              {...(reason === undefined ? {} : { 'aria-describedby': reasonId })}
+            <ExtraSwitch
+              on={enabled}
+              label={`${item.label}, cluster ${cluster}`}
               disabled={saving || !writable}
-              onClick={() => setEnabled((was) => !was)}
-              data-dialog-focus=""
-              className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs disabled:opacity-50 ${focusRingTight} ${
-                enabled ? 'border-ok/40 bg-ok/10 text-ok' : 'border-line text-muted'
-              }`}
-            >
-              <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${enabled ? 'bg-ok' : 'bg-line'}`} />
+              onToggle={() => setEnabled((was) => !was)}
+              describedBy={reason === undefined ? undefined : reasonId}
+              focusFirst
+            />
+          ) : null}
+          {writable || shownDisabled ? (
+            <span className={`text-xs font-medium ${enabled ? 'text-ok' : 'text-muted'}`} data-extra-draft={enabled ? 'on' : 'off'}>
               {enabled ? 'On' : 'Off'}
-            </button>
-          ) : (
-            <span className={`text-xs font-medium ${item.enabled ? 'text-ok' : 'text-muted'}`} data-extra-state="">
-              {item.enabled ? 'On' : 'Off'}
             </span>
+          ) : (
+            <StateBadge on={item.enabled} cluster={cluster} />
           )}
           {item.pinned ? <Pill neutral="muted">pinned</Pill> : null}
           {absent === undefined ? null : (
@@ -170,15 +164,6 @@ export function ExtraSettingsModal({
               <Pill neutral="muted">{absent}</Pill>
             </span>
           )}
-          <button
-            type="button"
-            onClick={onAbout}
-            aria-label={`About ${item.label}`}
-            data-extra-about=""
-            className={`ml-auto rounded-md border border-line px-2 py-0.5 text-xs text-fg ${focusRingTight}`}
-          >
-            About
-          </button>
         </div>
         <AboutBadges names={badgesOf(own)} />
         {reason === undefined ? null : (
