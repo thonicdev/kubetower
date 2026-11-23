@@ -137,6 +137,8 @@ export interface Graph {
   edges: GraphEdge[];
   folded: number;
   edgesTotal: number;
+  /** Some edges between the nodes sent were left out: a pair with no edge is then not known to be refused. */
+  truncated?: boolean;
 }
 
 export interface Overview {
@@ -488,14 +490,24 @@ export interface Flows {
   edges: FlowEdge[];
 }
 
-export function flowsPath(cluster: string, ns: string): string {
-  return ns === '' ? `${base(cluster)}flows` : `${base(cluster)}flows?${new URLSearchParams({ ns }).toString()}`;
+/** The periods a flows read may ask for, in seconds (`hubble.go` `flowWindows`). */
+export const FLOW_WINDOWS: readonly number[] = [60, 300, 900, 3600];
+
+/** The period asked when none is named: the server's own default. */
+export const DEFAULT_FLOW_WINDOW = 300;
+
+export function flowsPath(cluster: string, ns: string, window = DEFAULT_FLOW_WINDOW): string {
+  const query = new URLSearchParams();
+  if (ns !== '') query.set('ns', ns);
+  if (window !== DEFAULT_FLOW_WINDOW) query.set('window', String(window));
+  const tail = query.toString();
+  return tail === '' ? `${base(cluster)}flows` : `${base(cluster)}flows?${tail}`;
 }
 
-export async function getFlows(cluster: string, ns: string, signal?: AbortSignal): Promise<Flows> {
+export async function getFlows(cluster: string, ns: string, signal?: AbortSignal, window = DEFAULT_FLOW_WINDOW): Promise<Flows> {
   let body: Flows;
   try {
-    body = await request<Flows>(flowsPath(cluster, ns), signal === undefined ? { method: 'POST' } : { method: 'POST', signal });
+    body = await request<Flows>(flowsPath(cluster, ns, window), signal === undefined ? { method: 'POST' } : { method: 'POST', signal });
   } catch (error) {
     throw said(error);
   }
@@ -509,10 +521,10 @@ export async function getFlows(cluster: string, ns: string, signal?: AbortSignal
  * Observed traffic: one read when the page opens and on "Check again",
  * never on an interval - each read opens a tunnel to the flow source.
  */
-export const flowsQuery = (cluster: string, ns: string) =>
+export const flowsQuery = (cluster: string, ns: string, window = DEFAULT_FLOW_WINDOW) =>
   queryOptions({
-    queryKey: [KEY, cluster, 'flows', ns],
-    queryFn: ({ signal }) => getFlows(cluster, ns, signal),
+    queryKey: [KEY, cluster, 'flows', ns, window],
+    queryFn: ({ signal }) => getFlows(cluster, ns, signal, window),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: false,
