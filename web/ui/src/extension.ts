@@ -1,6 +1,8 @@
 import type { ComponentType } from 'react';
 import type { RouteObject } from 'react-router';
 
+import type { IconName } from './components/Icon';
+
 /**
  * The TypeScript half of the extension contract. Its Go half is
  * `extension.Extension` in this repository, and `key` is the same string in
@@ -27,6 +29,9 @@ export interface Extension {
    *  (`internal/api/router.go`) - and unique: `buildRoutes` throws at start-up
    *  on any other key, or on a key two extensions share. */
   key: string;
+  /** **Optional.** Its glyph on its card in Settings > Extra and in its About
+   *  window. Absent, the generic `extra` glyph is drawn. */
+  icon?: IconName;
   /** Where the Shell offers it. `path` is relative to `/c/:cluster`.
    *
    *  **The menu does not read `path`: the server's href is authoritative.** The

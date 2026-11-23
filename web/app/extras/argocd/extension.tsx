@@ -36,6 +36,7 @@ export const LIST_COLUMN = 'list-column';
 
 export const argocd: Extension = {
   key: KEY,
+  icon: 'delivery',
   about,
   nav: { label: 'Delivery Center', path: PAGE_PATH },
   routes: [

@@ -20,6 +20,7 @@ import { KEY, PAGE_PATH, isolationCells, podShortcut } from './data';
  */
 export const netinspect: Extension = {
   key: KEY,
+  icon: 'topology',
   about,
   nav: { label: 'Network Inspector', path: PAGE_PATH },
   routes: [
