@@ -149,3 +149,18 @@ describe('the Details line', () => {
     expect(netinspect.shortcuts?.[0]?.dialog).toBeDefined();
   });
 });
+
+describe('what the small graph held', () => {
+  it('is let go when the dialog opens, so nothing stays pressed behind it', async () => {
+    stubFlows();
+    mount();
+    const small = () => document.querySelector('[data-mini-graph] [data-arrow][data-side="egress"]') as Element;
+    fireEvent.click(small());
+    expect(small().getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(document.querySelector('[data-enlarge]') as Element);
+    expect(small().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(dialog()).toBeNull());
+    expect(small().getAttribute('aria-pressed')).toBe('false');
+  });
+});

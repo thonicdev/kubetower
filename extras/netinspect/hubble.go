@@ -247,7 +247,12 @@ func hubbleFeed(rl relay) feed {
 	return feed{source: "hubble", namespace: relayNamespace, service: relayService, port: rl.port, state: rl.state, detail: rl.detail,
 		prepare: func(r *http.Request, _ extension.Host, _ string, allowed map[string]bool) (fetcher, string, string) {
 			var whitelist []string
-			if len(allowed) <= whitelistCap {
+			if ns := r.URL.Query().Get("ns"); ns != "" {
+				// One namespace's read asks Relay for that namespace only:
+				// otherwise the cap is spent on the rest of the cluster, and a
+				// longer window reads no further back than a short one.
+				whitelist = []string{ns}
+			} else if len(allowed) <= whitelistCap {
 				for ns := range allowed {
 					whitelist = append(whitelist, ns)
 				}

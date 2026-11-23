@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { Failure, HEAD_ROW, Pending, Pill, ROW, TABLE, bodyCell, btnToggle, focusRing, formatClock, headCell } from '@kubetower/ui';
+import { Failure, HEAD_ROW, Pill, ROW, TABLE, bodyCell, btnToggle, focusRing, formatClock, headCell } from '@kubetower/ui';
 
 import { FLOW_WINDOWS, DEFAULT_FLOW_WINDOW, flowsQuery, type FlowRow } from './data';
 import { FLOW_STATE } from './parts';
@@ -22,7 +22,9 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
   const flows = useQuery({ ...flowsQuery(cluster, namespace, window), placeholderData: (previous) => previous });
   const id = `${namespace}/${pod}`;
   const data = flows.data;
-  if (data?.state === 'absent') return null;
+  // Nothing until the first answer: a cluster with no flow source would
+  // otherwise flash a panel that then goes away.
+  if (data?.state === 'absent' || (data === undefined && !flows.isError)) return null;
 
   const periods = (
     <div role="group" aria-label="Period" className="flex gap-1" data-flow-windows="">
@@ -37,7 +39,7 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
   let body: ReactNode;
   let counts: ReactNode = null;
   if (data === undefined) {
-    body = flows.isError ? <Failure error={flows.error} onRetry={() => void flows.refetch()} /> : <Pending what="the flows" />;
+    body = <Failure error={flows.error} onRetry={() => void flows.refetch()} />;
   } else if (data.state !== 'read' && data.state !== 'empty') {
     body = (
       <p role="status" data-pod-flows-state={data.state} className="text-xs text-warn" title={data.detail}>
@@ -78,16 +80,18 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
         </p>
       ) : (
         <>
-          <table className={`${TABLE} w-full`} data-pod-flows="">
+          <table className={`${TABLE} w-full table-fixed`} data-pod-flows="">
             <thead>
               <tr className={HEAD_ROW}>
-                <th className={headCell()} aria-label="Direction" />
+                <th className={`${headCell()} w-6`} aria-label="Direction" />
                 <th className={headCell()}>Peer</th>
-                <th className={headCell()}>Port</th>
-                <th className={headCell()}>Verdict</th>
-                <th className={headCell()}>Dropped by</th>
-                <th className={headCell()}>Flows</th>
-                <th className={headCell()}>Last</th>
+                <th className={`${headCell()} w-20`}>Port</th>
+                <th className={`${headCell()} w-6 sm:w-24`} aria-label="Verdict">
+                  <span className="hidden sm:inline">Verdict</span>
+                </th>
+                <th className={`${headCell()} hidden md:table-cell`}>Dropped by</th>
+                <th className={`${headCell()} w-12`}>Flows</th>
+                <th className={`${headCell()} hidden w-20 sm:table-cell`}>Last</th>
               </tr>
             </thead>
             <tbody>
@@ -114,16 +118,26 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
                     <td className={`${bodyCell()} text-muted`} title={out ? 'egress' : 'ingress'}>
                       {out ? '→' : '←'}
                     </td>
-                    <td className={bodyCell()}>{out ? r.to : r.from}</td>
-                    <td className={`${bodyCell()} tabular-nums`}>{r.port === 0 ? r.protocol : `${String(r.port)}/${r.protocol}`}</td>
+                    <td className={`${bodyCell()} truncate`} title={out ? r.to : r.from}>
+                      {out ? r.to : r.from}
+                    </td>
+                    <td className={`${bodyCell()} truncate tabular-nums`}>{r.port === 0 ? r.protocol : `${String(r.port)}/${r.protocol}`}</td>
                     <td className={bodyCell()}>
-                      <span title={r.reason}>
-                        <Pill tone={r.verdict === 'DROPPED' ? 'bad' : r.verdict === 'FORWARDED' ? 'ok' : undefined}>{r.verdict.toLowerCase()}</Pill>
+                      <span title={[r.verdict.toLowerCase(), r.reason, ...r.deniedBy].filter((x) => x !== undefined && x !== '').join('\n')}>
+                        <span className="hidden sm:inline">
+                          <Pill tone={r.verdict === 'DROPPED' ? 'bad' : r.verdict === 'FORWARDED' ? 'ok' : undefined}>{r.verdict.toLowerCase()}</Pill>
+                        </span>
+                        <span
+                          aria-label={r.verdict.toLowerCase()}
+                          className={`inline-block size-2 rounded-full sm:hidden ${r.verdict === 'DROPPED' ? 'bg-bad' : r.verdict === 'FORWARDED' ? 'bg-ok' : 'bg-muted'}`}
+                        />
                       </span>
                     </td>
-                    <td className={`${bodyCell()} text-muted`}>{r.deniedBy.join(', ')}</td>
+                    <td className={`${bodyCell()} hidden truncate text-muted md:table-cell`} title={r.deniedBy.join(', ')}>
+                      {r.deniedBy.join(', ')}
+                    </td>
                     <td className={`${bodyCell()} tabular-nums`}>{r.count}</td>
-                    <td className={`${bodyCell()} text-muted tabular-nums`} title={r.last}>
+                    <td className={`${bodyCell()} hidden text-muted tabular-nums sm:table-cell`} title={r.last}>
                       {r.last === '' ? '' : formatClock(r.last)}
                     </td>
                   </tr>

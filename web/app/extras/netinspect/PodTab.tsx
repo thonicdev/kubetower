@@ -161,7 +161,17 @@ export function PodView({ cluster, answer, large = false }: { cluster: string; a
         onHover={onHover}
         onPick={onPick}
         large={large}
-        {...(large ? {} : { onEnlarge: () => setEnlarged(true) })}
+        {...(large
+          ? {}
+          : {
+              onEnlarge: () => {
+                // What the small graph held is let go: the dialog starts clear,
+                // and nothing is left pressed behind it once it closes.
+                setSticky(null);
+                setHover(null);
+                setEnlarged(true);
+              },
+            })}
       />
       {large ? (
         <input

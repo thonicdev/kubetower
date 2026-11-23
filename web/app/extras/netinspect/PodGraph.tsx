@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { btnSecondary } from '@kubetower/ui';
 
 import { portsLabel, type Arrow, type Side } from './flows';
@@ -28,6 +28,8 @@ const SIZES = {
   large: { W: 900, EDGE: 320, CHARS: 54, H: 220, ROW: 30 },
 } as const;
 const OPEN_KEY = 'open';
+/** The narrowest the enlarged graph is drawn: below it the dialog scrolls the graph's frame, never the page. */
+const MIN_W = 320;
 
 /**
  * The pod in the middle, what may reach it on the left, what it may reach on
@@ -57,10 +59,28 @@ export function PodGraph({
   onEnlarge?: () => void;
 }): ReactNode {
   const size = large ? SIZES.large : SIZES.small;
-  const { W, EDGE } = size;
+  // The enlarged graph is drawn at the width it is given, one unit a pixel up
+  // to its own width, so its text stays at its size in a narrow window
+  // instead of shrinking with the drawing; the label room follows.
+  const [room, setRoom] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!large || el === null || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(([entry]) => {
+      if (entry !== undefined) setRoom(entry.contentRect.width);
+    });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [large]);
+  const W = large && room !== null && room > 0 ? Math.round(Math.min(size.W, Math.max(MIN_W, room))) : size.W;
+  const EDGE = Math.round((size.EDGE * W) / size.W);
   const most = Math.max(ingress.arrows.length, egress.arrows.length, 1);
   const H = Math.max(size.H, 44 + most * size.ROW);
-  const GRAPH_CHARS = size.CHARS;
+  // About 6px a character at 10px, less the gap to the arrow.
+  const GRAPH_CHARS = Math.max(10, Math.min(size.CHARS, Math.floor((EDGE - 14) / 6)));
+  /** A narrow enlarged graph: arrows too short to carry their ports. */
+  const tight = large && W < 600;
   const cx = W / 2;
   const cy = H / 2;
   const y = (i: number, n: number) => (n <= 1 ? cy : 22 + (i * (H - 44)) / (n - 1));
@@ -135,7 +155,8 @@ export function PodGraph({
           <title>{tip}</title>
           <path d={`M ${String(x1)} ${String(y1)} L ${String(x2)} ${String(y2)}`} stroke="transparent" strokeWidth={16} fill="none" />
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--color-accent)" strokeWidth={on ? 2.5 : 1.5} strokeDasharray={open ? '2 3' : '6 4'} markerEnd="url(#netinspect-pod-arrow)" />
-          {ports === '' ? null : (
+          {/* An arrow too short to carry its ports beside the names keeps them in its tooltip and its rows. */}
+          {ports === '' || tight ? null : (
             <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize="9" fill="var(--color-fg)" stroke="var(--color-panel)" strokeWidth={3} paintOrder="stroke" data-arrow-ports="">
               {ports}
             </text>
@@ -195,6 +216,13 @@ export function PodGraph({
       </text>
     </svg>
   );
+  if (large) {
+    return (
+      <div ref={box} className="w-full min-w-0" data-large-graph-box="">
+        {svg}
+      </div>
+    );
+  }
   if (onEnlarge === undefined) return svg;
   return (
     <div className="relative w-full max-w-2xl">

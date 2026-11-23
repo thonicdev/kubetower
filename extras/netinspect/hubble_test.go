@@ -399,3 +399,35 @@ func TestFlowsTakeTheWindowAsked(t *testing.T) {
 		t.Errorf("a refused window dug %d tunnels", h.tunnels-before)
 	}
 }
+
+// One namespace's read asks Relay for that namespace only, as source and as
+// destination; the cluster's read asks for every namespace the person sees.
+func TestRelayIsAskedForTheNamespaceRead(t *testing.T) {
+	fr := startRelay(t,
+		testFlow{srcNS: "shop", srcPod: "web", dstNS: "shop", dstPod: "api", port: 80, verdict: 1},
+		testFlow{srcNS: "ops", srcPod: "probe", dstNS: "ops", dstPod: "db", port: 5432, verdict: 1})
+	h := withRelay(t, fr)
+	filters := func(i int) []string {
+		t.Helper()
+		fr.mu.Lock()
+		asked := fr.asked[i][5:]
+		fr.mu.Unlock()
+		var out []string
+		each(asked, func(num protowire.Number, _ protowire.Type, b []byte, _ uint64) {
+			if num == 6 {
+				each(b, func(n protowire.Number, _ protowire.Type, v []byte, _ uint64) {
+					out = append(out, fmt.Sprintf("%d:%s", n, v))
+				})
+			}
+		})
+		return out
+	}
+	flowsOf(t, h, "")
+	if got := strings.Join(filters(0), ","); got != "2:ops/,4:ops/,2:shop/,4:shop/" {
+		t.Errorf("cluster read filters %s", got)
+	}
+	flowsOf(t, h, "?ns=shop&window=3600")
+	if got := strings.Join(filters(1), ","); got != "2:shop/,4:shop/" {
+		t.Errorf("shop read filters %s, want shop only", got)
+	}
+}
