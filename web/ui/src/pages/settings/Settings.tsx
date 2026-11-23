@@ -1,13 +1,12 @@
 import { type ReactNode } from 'react';
 import { NavLink, Navigate, useLocation, useParams, useSearchParams } from 'react-router';
 
-import { useClusters } from '../../api';
 import { Icon } from '../../components/Icon';
 import { focusRing } from '../../focus';
 import { KeyLayer } from '../../keyboard/layers';
 import { useKeyLayer } from '../../keyboard/useKeyLayer';
 import { useDeclarePageFacts } from '../../shell/pageFacts';
-import { originLabel, useNoteSettingsScroll, useSettingsBack } from '../../shell/settingsOrigin';
+import { useNoteSettingsScroll, useSettingsBack } from '../../shell/settingsOrigin';
 import { CLUSTER_PARAM, useExtraTab, useSettings, type ExtraTab as ExtraTabState } from './data';
 import { ExtraTab } from './ExtraTab';
 import { GeneralTab } from './GeneralTab';
@@ -44,8 +43,8 @@ import { InfosTab } from './InfosTab';
  *
  * ## The way back
  *
- * Opened from a console page, Settings draws a Back control before its title
- * that returns to that page exactly - its address, and its scroll - and Escape
+ * Opened from a console page, Settings draws a « ← Back » control before its
+ * title, the page's whole address in its tooltip, that returns to that page exactly - its address, and its scroll - and Escape
  * does the same where no dialog or menu holds it. The tabs replace the history
  * entry and carry the origin along, so the browser's Back leaves Settings in
  * one press. `../../shell/settingsOrigin.ts` holds the mechanism.
@@ -88,10 +87,6 @@ export function SettingsPage(): ReactNode {
   // forwarded by every move inside Settings.
   const { state } = useLocation();
   const way = useSettingsBack();
-  const listed = useClusters().data;
-  const clusterLabel = (name: string): string =>
-    (listed?.state === 'ok' ? listed.items.find((one) => one.name === name)?.label : undefined) ?? name;
-  const wayLabel = way === undefined ? '' : originLabel(way.origin.path, clusterLabel);
   useNoteSettingsScroll(way?.origin);
   useKeyLayer(
     KeyLayer.Page,
@@ -133,12 +128,11 @@ export function SettingsPage(): ReactNode {
             type="button"
             onClick={way.back}
             title={way.origin.path}
-            aria-label={`Back to ${wayLabel}`}
             data-settings-back={way.origin.path}
-            className={`flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-panel-2 ${focusRing}`}
+            className={`flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-panel-2 ${focusRing}`}
           >
             <Icon name="back" />
-            <span className="truncate">{wayLabel}</span>
+            Back
           </button>
         )}
         <h1 className="text-xl font-medium">Settings</h1>

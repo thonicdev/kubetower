@@ -8,7 +8,7 @@ import { resetKeyboardStack } from '../../keyboard/stack';
 import { createQueryClient } from '../../query/client';
 import { buildRoutes } from '../../router/routes';
 import { ShellProvider } from '../../shell/ShellContext';
-import { originLabel, originOf } from '../../shell/settingsOrigin';
+import { originOf } from '../../shell/settingsOrigin';
 import { mountApp, stubFetch, type StubRoutes } from '../../testing/harness';
 
 /**
@@ -93,14 +93,14 @@ async function openFromTopbar(router: AnyRouter): Promise<void> {
 }
 
 describe('Settings opened from a console page', () => {
-  it('draws a Back control naming the page, and returns to its exact address', async () => {
+  it('draws a plain Back control, the address in its tooltip, and returns to that exact address', async () => {
     stubFetch(routes);
     const { router } = mountApp(ORIGIN);
     await openFromTopbar(router);
 
     expect(back()?.getAttribute('title')).toBe(ORIGIN);
-    expect(back()?.textContent).toBe('Production › nope');
-    expect(back()?.getAttribute('aria-label')).toBe('Back to Production › nope');
+    expect(back()?.textContent).toBe('Back');
+    expect(back()?.querySelector('svg use')?.getAttribute('href')).toBe('#i-back');
 
     fireEvent.click(back() as HTMLButtonElement);
     await waitFor(() => {
@@ -263,15 +263,5 @@ describe('the origin', () => {
       idx: 3,
       scroll: 0,
     });
-  });
-
-  it('is named by its cluster and page', () => {
-    expect(originLabel('/')).toBe('Clusters');
-    expect(originLabel('/c/prod')).toBe('prod');
-    expect(originLabel('/c/prod/pods?namespace=shop')).toBe('prod › pods');
-    expect(originLabel('/c/prod/pods/shop/api-0')).toBe('prod › pods');
-    expect(originLabel('/c/arn%3Aaws%3Aeks/x/argocd')).toBe('arn:aws:eks › argocd');
-    expect(originLabel('/health')).toBe('health');
-    expect(originLabel('/c/prod/pods', (name) => (name === 'prod' ? 'Production' : name))).toBe('Production › pods');
   });
 });

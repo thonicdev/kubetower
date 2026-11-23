@@ -203,27 +203,3 @@ export function useRestoreSettingsScroll(): void {
     };
   }, [location, type]);
 }
-
-/**
- * A short name for an origin's address, for the Back control: the cluster and
- * the page under it (`prod › pods`, the cluster by the label the rail shows),
- * the cluster alone for its overview,
- * `Clusters` for the console's home. The whole address goes in its tooltip.
- */
-export function originLabel(path: string, clusterLabel: (name: string) => string = (name) => name): string {
-  const bare = path.split(/[?#]/)[0] ?? '';
-  const parts = bare.split('/').filter((one) => one !== '').map((one) => {
-    try {
-      return decodeURIComponent(one);
-    } catch {
-      return one;
-    }
-  });
-  if (parts.length === 0) return 'Clusters';
-  if (parts[0] === 'c' && parts[1] !== undefined) {
-    const page = parts[2] === 'x' ? parts[3] : parts[2];
-    const cluster = clusterLabel(parts[1]);
-    return page === undefined ? cluster : `${cluster} › ${page}`;
-  }
-  return parts.join(' › ');
-}
