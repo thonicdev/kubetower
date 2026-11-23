@@ -374,6 +374,76 @@ func TestTheSessionAWSHomeKeepsTheSSOTokenCacheShared(t *testing.T) {
 	}
 }
 
+// A terminal opened before the machine's first `aws sso login` is where that
+// login is typed: the session it writes has to reach the terminal's kubectl,
+// whose plugin runs under the session's own HOME.
+func TestTheSessionAWSHomeSeesASessionCreatedAfterItOpened(t *testing.T) {
+	requireSymlinks(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("AWS_CONFIG_FILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "")
+
+	cfg := eksConfig()
+	if _, err := newSessionAWSHome(t.TempDir()).separate(cfg); err != nil {
+		t.Fatalf("separating: %v", err)
+	}
+	session, _ := execEnvOf(t, cfg, "HOME")
+
+	// `aws sso login`, in that terminal, with the operator's own HOME.
+	cache := filepath.Join(home, ".aws", "sso", "cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "token.json"), []byte(`{"accessToken":"AFTER-THE-START"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(session, ".aws", "sso", "cache", "token.json"))
+	if err != nil || !strings.Contains(string(got), "AFTER-THE-START") {
+		t.Fatalf("the session written after the terminal opened is not where its kubectl looks: %q %v", got, err)
+	}
+}
+
+// A session whose plugins are not the AWS CLI creates nothing in the
+// operator's home.
+func TestTheSessionAWSHomeCreatesNoSSOCacheForAnotherPlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := eksConfig()
+	for _, user := range cfg.AuthInfos {
+		user.Exec.Command = "gke-gcloud-auth-plugin"
+		user.Exec.Args = nil
+	}
+	if _, err := newSessionAWSHome(t.TempDir()).separate(cfg); err != nil {
+		t.Fatalf("separating: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".aws")); err == nil {
+		t.Error("~/.aws was created for a plugin that is not the AWS CLI")
+	}
+}
+
+// An SSO cache that cannot be created refuses the redirect.
+func TestTheSessionAWSHomeRefusesAnSSOCacheThatCannotBeMade(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".aws"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := eksConfig()
+	if changed, err := newSessionAWSHome(t.TempDir()).separate(cfg); err == nil || changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if _, ok := execEnvOf(t, cfg, "HOME"); ok {
+		t.Error("HOME was redirected without the SSO cache")
+	}
+}
+
 // If the link cannot be made, the redirect must not happen: fixing the
 // assume-role cache by breaking every SSO context is the worse trade, and it is
 // a trade nobody would see being made.
