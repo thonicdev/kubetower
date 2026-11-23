@@ -58,12 +58,13 @@
 // (CNPG) extra's SQL door** (`extras/cnpg/sqlconn.go`): the statistics and
 // the first rows of a table, through fixed read-only statements. MIT, which
 // combines into an AGPL-3.0 work. Only `pgconn` and what it needs are linked -
-// no pool, no type registry - and only from that package, which
+// no pool - and only from that package, which
 // `extras/redis/driver_test.go` checks over every file of the module:
 //
 //	go list -deps ./cmd/kubetower | grep jackc
 //	  → pgpassfile, pgservicefile, pgx/v5/pgconn and its internal
-//	    packages (iobufpool, pgio, ctxwatch, bgreader, pgproto3)
+//	    packages (iobufpool, pgio, ctxwatch, bgreader, pgproto3), and pgtype,
+//	    which pgconn imports itself since pgx 5.9
 //
 // **Two more draw the desktop window, one per platform, and each is linked only
 // on its own.** `github.com/jchv/go-webview2` (MIT) embeds WebView2 on Windows;
@@ -105,13 +106,13 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/ebitengine/purego v0.11.2
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.9.0
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/valkey-io/valkey-go v1.0.79
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0

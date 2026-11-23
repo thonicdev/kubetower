@@ -246,7 +246,7 @@ no_drivers() {
   deps=$(go list -deps ./cmd/kubetower) || return 1
   if echo "$deps" | grep -E 'go-redis|go-sql-driver'; then echo "a database driver reaches cmd/kubetower"; return 1; fi
   if echo "$deps" | grep -E 'pgx' \
-     | grep -vxE 'github.com/jackc/pgx/v5/(pgconn|pgconn/ctxwatch|pgconn/internal/bgreader|pgproto3|internal/iobufpool|internal/pgio)'; then
+     | grep -vxE 'github.com/jackc/pgx/v5/(pgconn|pgconn/ctxwatch|pgconn/internal/bgreader|pgproto3|pgtype|internal/iobufpool|internal/pgio)'; then
     echo "a part of pgx other than pgconn reaches cmd/kubetower"; return 1
   fi
   if go list -deps -test ./... | grep -i 'kubetower-extra'; then echo "an import names a kubetower-extra module"; return 1; fi

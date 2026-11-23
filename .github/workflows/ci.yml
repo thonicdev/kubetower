@@ -368,10 +368,11 @@ jobs:
           fi
           # One exception, the Postgres (CNPG) extra's SQL door: pgx's
           # connection package and what it links, nothing else of pgx (no
-          # pool, no type registry). That only extras/cnpg imports it is
+          # pool). pgconn itself imports pgtype since pgx 5.9. That only
+          # extras/cnpg imports it is
           # extras/redis/driver_test.go, a Go test run above.
           if go list -deps ./cmd/kubetower | grep -E 'pgx' \
-             | grep -vxE 'github.com/jackc/pgx/v5/(pgconn|pgconn/ctxwatch|pgconn/internal/bgreader|pgproto3|internal/iobufpool|internal/pgio)'; then
+             | grep -vxE 'github.com/jackc/pgx/v5/(pgconn|pgconn/ctxwatch|pgconn/internal/bgreader|pgproto3|pgtype|internal/iobufpool|internal/pgio)'; then
             echo "FAIL a part of pgx other than pgconn reaches cmd/kubetower"; exit 1
           fi
           echo "ok   no database driver in cmd/kubetower's graph but pgconn"
