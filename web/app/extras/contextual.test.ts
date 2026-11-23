@@ -17,6 +17,7 @@ describe('the extras the menu offers', () => {
       {
         key: 'extra',
         label: 'Extra',
+        deferred: false,
         items: [
           { text: 'Redis viewer', href: '/c/demo/x/redis' },
           { text: 'JVM Inspector', href: '/c/demo/x/jvm' },
