@@ -2,11 +2,14 @@ package web
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/thonicdev/kubetower/internal/api"
+	"github.com/thonicdev/kubetower/internal/cluster"
 	"github.com/thonicdev/kubetower/internal/health"
 )
 
@@ -119,5 +122,42 @@ func TestOnlyAFreshRedVerdictStandsInForARead(t *testing.T) {
 	}
 	if freshRefusal(&Server{}, "prod", now) != nil {
 		t.Error("a build with no probe answered from a verdict nobody reached")
+	}
+}
+
+// Retry after correcting the kubeconfig answers from the corrected file, not
+// from the one the console started with, and does not wait for the watcher.
+func TestRetryReadsAKubeconfigEditedSinceTheStart(t *testing.T) {
+	kubeconfig := func(contexts ...string) string {
+		out := "apiVersion: v1\nkind: Config\nclusters:\n- name: remote\n  cluster:\n    server: https://prod.example:6443\ncontexts:\n"
+		for _, name := range contexts {
+			out += "- name: " + name + "\n  context: {cluster: remote, user: none}\n"
+		}
+		return out + "users:\n- name: none\n  user: {token: none}\n"
+	}
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(kubeconfig("prod")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := cluster.NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Options{Clusters: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &recordingProbe{answer: health.Cluster{State: health.StateTimeout, Detail: timedOut, CheckedAt: time.Now()}}
+	server.health = probe
+
+	if err := os.WriteFile(path, []byte(kubeconfig("prod", "staging")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, fail := apiClusters{server}.Probe(context.Background(), "staging")
+	if fail != nil {
+		t.Fatalf("a context added to the kubeconfig since the start was not found: %+v", fail.Reason)
+	}
+	if entry.Name != "staging" || len(probe.asked) != 1 || probe.asked[0] != "staging" {
+		t.Errorf("entry %q, probed %v; want staging", entry.Name, probe.asked)
 	}
 }
