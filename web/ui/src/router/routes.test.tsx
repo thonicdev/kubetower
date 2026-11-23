@@ -270,11 +270,12 @@ describe('the reserved x segment', () => {
         { path: 'x/runtime/sub', element: <p>the sub page</p> },
       ],
     };
-    const { router } = mountApp('/c/prod/x/jvm/sub?ns=shop', [extension]);
+    const { router } = mountApp('/c/prod/x/jvm/sub?ns=shop#heap', [extension]);
 
     expect(await screen.findByText('the sub page')).toBeDefined();
     expect(router.state.location.pathname).toBe('/c/prod/x/runtime/sub');
     expect(router.state.location.search).toBe('?ns=shop');
+    expect(router.state.location.hash).toBe('#heap');
   });
 
   it('says a registered extra has no page at an unknown sub-path, and links its own page', async () => {
