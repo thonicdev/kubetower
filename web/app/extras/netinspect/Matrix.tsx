@@ -1,5 +1,5 @@
 import { memo, useState, type MouseEvent, type ReactNode } from 'react';
-import { FilterBox, focusRing } from '@kubetower/ui';
+import { focusRing } from '@kubetower/ui';
 
 import type { FlowEdge, Graph, GraphNode } from './data';
 import { fold, ORDERS, TOPS, type CellData, type FoldAsk, type Order } from './fold';
@@ -54,7 +54,15 @@ export function Matrix({
     <div className="flex flex-col gap-2" data-matrix="">
       {tools ? (
         <div className="flex flex-wrap items-center gap-2" data-matrix-tools="">
-          <FilterBox name="mq" value={ask.find} onChange={(mq) => onAsk({ mq })} label="Find a namespace" placeholder="Find" />
+          <input
+            type="search"
+            name="mq"
+            value={ask.find}
+            placeholder="Find"
+            aria-label="Find a namespace"
+            onChange={(e) => onAsk({ mq: e.target.value })}
+            className={`h-8 w-48 rounded-md border border-line bg-panel-2 px-2 text-xs text-fg placeholder:text-muted ${focusRing}`}
+          />
           <div role="group" aria-label="Namespaces drawn" className="flex">
             {TOPS.map((top, i) => (
               <button
