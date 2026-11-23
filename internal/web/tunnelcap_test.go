@@ -20,6 +20,7 @@ type fakeTunnels struct {
 	mu   sync.Mutex
 	dug  int
 	last *fakeTunnel
+	pods []string
 }
 
 func (f *fakeTunnels) Open(context.Context, string, string, string, int) (metrics.Tunnel, error) {
@@ -28,6 +29,14 @@ func (f *fakeTunnels) Open(context.Context, string, string, string, int) (metric
 	f.dug++
 	f.last = &fakeTunnel{addr: fmt.Sprintf("127.0.0.1:%d", 40000+f.dug), done: make(chan struct{})}
 	return f.last, nil
+}
+
+// OpenPod is Open to a pod's port, recorded as the pod it was asked for.
+func (f *fakeTunnels) OpenPod(ctx context.Context, cluster, namespace, pod string, port int) (metrics.Tunnel, error) {
+	f.mu.Lock()
+	f.pods = append(f.pods, fmt.Sprintf("%s/%s/%s:%d", cluster, namespace, pod, port))
+	f.mu.Unlock()
+	return f.Open(ctx, cluster, namespace, pod, port)
 }
 
 type fakeTunnel struct {

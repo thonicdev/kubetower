@@ -54,13 +54,19 @@ func (h host) ForwardAsConsole(r *http.Request, name, namespace, service string,
 	if err != nil {
 		return extension.Tunnel{}, err
 	}
+	return endsWithRequest(ctx, tunnel, "console tunnel: closing it as its request ends"), nil
+}
+
+// endsWithRequest is tunnel closed when ctx ends at the latest, its Stop
+// unhooking that and closing it sooner, once either way.
+func endsWithRequest(ctx context.Context, tunnel extension.Tunnel, what string) extension.Tunnel {
 	var once sync.Once
 	stop := tunnel.Stop
 	closeOnce := func() { once.Do(stop) }
 	// Through safego: context.AfterFunc runs closeOnce on a goroutine of its
 	// own, where a panic in the tunnel's teardown would end the process.
 	unhook := context.AfterFunc(ctx, func() {
-		_ = safego.Call("console tunnel: closing it as its request ends", func() error {
+		_ = safego.Call(what, func() error {
 			closeOnce()
 			return nil
 		})
@@ -69,5 +75,5 @@ func (h host) ForwardAsConsole(r *http.Request, name, namespace, service string,
 		unhook()
 		closeOnce()
 	}
-	return tunnel, nil
+	return tunnel
 }
