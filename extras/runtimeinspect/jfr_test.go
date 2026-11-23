@@ -169,7 +169,7 @@ func TestARecordingThatIsNotConfirmedOrNotBoundedRunsNothing(t *testing.T) {
 		base + "&confirm=confirm&seconds=30%3Brm": CodeBadSeconds,
 		base + "&confirm=confirm&seconds=0x1e":    CodeBadSeconds,
 		"/x/kind/runtime/pod/shop/billing-0/app/recording?pid=abc&confirm=confirm&seconds=30": CodeBadRequest,
-		base + "&confirm=confirm&seconds=%2030%20abc":                                     CodeBadSeconds,
+		base + "&confirm=confirm&seconds=%2030%20abc":                                         CodeBadSeconds,
 	} {
 		h := newJFRHost(t)
 		rec := post(t, h, path, "")
