@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/thonicdev/kubetower/extension"
+	"github.com/thonicdev/kubetower/textutil"
 )
 
 // Go's diagnostics, read from net/http/pprof where the application serves
@@ -351,10 +352,7 @@ func contains(list []int, n int) bool {
 	return false
 }
 
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return clip(line)
-}
+func firstLine(s string) string { return textutil.FirstLineN(s, 80) }
 
 // parseGoroutines groups a `goroutine?debug=2` dump by state and stack (the
 // functions, without their arguments and lines), the largest groups first,
