@@ -411,9 +411,31 @@ describe('the sentence of a suggested extra', () => {
     expect(tile('b').querySelector('[data-extra-suggested] [title]')?.getAttribute('title')).toBe(
       '2 Redis Services in 1 namespace on this cluster.',
     );
-    expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('detected');
+    expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('Suggested');
     expect(tile('kubecron').querySelector('[data-extra-suggested]')).toBeNull();
     expect(tile('c').querySelector('[data-extra-suggested]')).toBeNull();
+  });
+
+  it('puts a suggested card first, with an accent the others do not carry (#62)', async () => {
+    answer(200, {
+      state: 'ok',
+      items: [
+        { key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' },
+        // On already: never suggested, never accented.
+        { key: 'kubecron', label: 'KubeCron', evidence: '3 CronJobs' },
+      ],
+    });
+    draw();
+    await waitFor(() => {
+      expect(tile('b').hasAttribute('data-extra-suggested-card')).toBe(true);
+    });
+    const order = [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+    expect(order).toEqual(['b', 'c', 'kubecron', 'a']);
+    expect(tile('b').className).toContain('border-accent');
+    for (const key of ['a', 'c', 'kubecron']) {
+      expect(tile(key).hasAttribute('data-extra-suggested-card')).toBe(false);
+      expect(tile(key).className).not.toContain('border-accent');
+    }
   });
 
   it('is not drawn when the suggestions could not be read', async () => {

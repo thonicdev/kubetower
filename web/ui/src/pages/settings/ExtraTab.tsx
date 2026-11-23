@@ -80,7 +80,7 @@ export function ExtraTab({
       </header>
 
       <TileGrid label="Extensions">
-        {absentLast(byLabel(items), absent).map((item) => (
+        {suggestedFirst(absentLast(byLabel(items), absent), suggested).map((item) => (
           <ExtensionCard
             key={item.key}
             cluster={cluster}
@@ -168,6 +168,12 @@ function useSuggested(cluster: string, items: readonly ExtensionInfo[]): Readonl
   return out;
 }
 
+/** The suggested extras before the others, each group in the order it came
+ *  (#62): what the cluster gives a reason to turn on is read first. */
+export function suggestedFirst(items: readonly ExtensionInfo[], suggested: ReadonlyMap<string, string>): ExtensionInfo[] {
+  return [...items.filter((item) => suggested.has(item.key)), ...items.filter((item) => !suggested.has(item.key))];
+}
+
 /** The absent extras after the others, each group in the order it came. */
 export function absentLast(items: readonly ExtensionInfo[], absent: ReadonlyMap<string, string>): ExtensionInfo[] {
   return [...items.filter((item) => !absent.has(item.key)), ...items.filter((item) => absent.has(item.key))];
@@ -229,8 +235,9 @@ function ExtensionCard({
       data-extra={item.key}
       data-on={item.enabled ? 'true' : 'false'}
       {...(absent === undefined ? {} : { 'data-extra-absent': absent })}
-      className={`flex min-w-0 flex-col gap-2.5 rounded-lg border bg-panel p-3 ${
-        item.enabled ? 'border-ok/40' : 'border-line'
+      {...(suggested === undefined ? {} : { 'data-extra-suggested-card': '' })}
+      className={`flex min-w-0 flex-col gap-2.5 rounded-lg border p-3 ${
+        item.enabled ? 'border-ok/40 bg-panel' : suggested !== undefined ? 'border-accent bg-accent/10' : 'border-line bg-panel'
       } ${absent === undefined ? '' : 'opacity-70'}`}
     >
       <div className="flex items-start gap-3">
@@ -261,7 +268,7 @@ function ExtensionCard({
             {suggested === undefined ? null : (
               <span data-extra-suggested={suggested}>
                 <Pill tone="info" title={suggested}>
-                  detected
+                  Suggested
                 </Pill>
               </span>
             )}
