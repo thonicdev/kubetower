@@ -53,7 +53,7 @@ Every file is listed in `checksums.txt`; see [`docs/INSTALL.md`](docs/INSTALL.md
 | System | What you will see | What to do |
 |---|---|---|
 | Windows, SmartScreen | "Windows protected your PC", *Unknown publisher* | **More info**, then **Run anyway** (or **Unblock** in the file's Properties; for the zip, unblock it before extracting) |
-| Windows 11, Smart App Control on | Blocked, with no override | Not possible to bypass in 0.1.0 outside the team; turning Smart App Control off works but **usually cannot be undone without reinstalling Windows** |
+| Windows 11, Smart App Control on | Blocked, with no override | No bypass for the program; run the console in a cluster through the Helm chart instead. Turning Smart App Control off works but **usually cannot be undone without reinstalling Windows** |
 | macOS, Gatekeeper | "KubeTower" cannot be opened | **System Settings > Privacy & Security > Open Anyway**, or `xattr -dr com.apple.quarantine /Applications/KubeTower.app` |
 | Linux | Nothing, except `dnf` noting the `.rpm` is not signed | Check against `checksums.txt` |
 
