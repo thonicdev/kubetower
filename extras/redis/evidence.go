@@ -30,11 +30,13 @@ var engines = []string{"redis", "valkey"}
 // the server itself: an exporter, a web or command-line client, a Sentinel,
 // an operator, a backup or a migration. Found anywhere in a word.
 var tools = []string{"exporter", "commander", "insight", "sentinel", "operator", "metrics", "admin", "browser",
-	"proxy", "backup", "dump", "shake", "tools"}
+	"proxy", "backup", "dump", "shake", "tools", "dashboard", "redisson"}
 
 // toolTokens are the short ones, taken only as a whole token between `-`,
-// `_` or `.`: `ui` is inside `build`, `cli` inside `client`.
-var toolTokens = map[string]bool{"ui": true, "cli": true, "client": true, "tool": true}
+// `_` or `.` (`ui` is inside `build`, `cli` inside `client`), or glued to an
+// engine word (`redisui`, `redisclient`).
+var toolTokens = map[string]bool{"ui": true, "cli": true, "client": true, "tool": true, "gui": true, "web": true,
+	"stat": true, "stats": true}
 
 // isTool reports whether a word names a tool beside the server.
 func isTool(word string) bool {
@@ -43,6 +45,13 @@ func isTool(word string) bool {
 	}
 	for _, token := range strings.FieldsFunc(word, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
 		if toolTokens[token] {
+			return true
+		}
+		rest := token
+		for _, engine := range engines {
+			rest = strings.ReplaceAll(rest, engine, "")
+		}
+		if rest != token && toolTokens[rest] {
 			return true
 		}
 	}
@@ -77,34 +86,46 @@ func notAServerPort(port corev1.ServicePort) bool {
 // may be inside the image's own name (`infra-valkey`, `infravalkey`,
 // `redis-cluster`). A segment above it counts only when it is exactly `redis`
 // or `valkey` (`team/redis/server`): `team-redis/web-app` or
-// `redislabs/rebloom` say who publishes an image, not what it runs. The
-// registry host is not the path. No segment may name a tool beside the
-// server (`redis/exporter/v2`, `redis-cli`).
+// `redislabs/rebloom` say who publishes an image, not what it runs, and so
+// does the first segment on Docker Hub (`redis/nginx`). The registry host is
+// not the path. Neither that segment nor any below it may name a tool beside
+// the server (`redis/exporter/v2`, `redis-cli`); one above it is a team or a
+// project (`infra-tools/redis`).
 func redisImage(image string) (string, bool) {
-	segments := imagePath(image)
+	segments, hub := imagePath(image)
 	if len(segments) == 0 {
 		return "", false
 	}
-	for _, segment := range segments {
+	at := -1
+	if hasAny(segments[len(segments)-1], engines) {
+		at = len(segments) - 1
+	} else {
+		first := 0
+		if hub {
+			first = 1
+		}
+		for i := len(segments) - 2; i >= first; i-- {
+			if segments[i] == "redis" || segments[i] == "valkey" {
+				at = i
+				break
+			}
+		}
+	}
+	if at < 0 {
+		return "", false
+	}
+	for _, segment := range segments[at:] {
 		if isTool(segment) {
 			return "", false
 		}
 	}
-	last := segments[len(segments)-1]
-	if hasAny(last, engines) {
-		return last, true
-	}
-	for i := len(segments) - 2; i >= 0; i-- {
-		if segments[i] == "redis" || segments[i] == "valkey" {
-			return segments[i], true
-		}
-	}
-	return "", false
+	return segments[at], true
 }
 
 // imagePath is an image reference's repository path, lower-cased, without its
-// registry host, tag or digest.
-func imagePath(image string) []string {
+// registry host, tag or digest, and whether it is on Docker Hub, where the
+// first segment is the publisher.
+func imagePath(image string) ([]string, bool) {
 	image = strings.ToLower(strings.TrimSpace(image))
 	if at := strings.IndexByte(image, '@'); at >= 0 {
 		image = image[:at]
@@ -114,10 +135,16 @@ func imagePath(image string) []string {
 	if colon := strings.IndexByte(last, ':'); colon >= 0 {
 		segments[len(segments)-1] = last[:colon]
 	}
+	hub := true
 	if len(segments) > 1 && (strings.ContainsAny(segments[0], ".:") || segments[0] == "localhost") {
+		switch segments[0] {
+		case "docker.io", "index.docker.io", "registry-1.docker.io":
+		default:
+			hub = false
+		}
 		segments = segments[1:]
 	}
-	return segments
+	return segments, hub
 }
 
 func hasAny(s string, words []string) bool {
@@ -135,8 +162,9 @@ func hasAny(s string, words []string) bool {
 // From a selected pod running a Redis image, whose container port the
 // Service port targets, when pods is not nil (a read scoped to one
 // namespace); then from an `app.kubernetes.io/name` or `app` label saying
-// Redis or Valkey, on the Service, its selector or a selected pod, on its
-// only candidate port or the one alone that looks like a Redis's. A Service
+// Redis or Valkey, on the Service or its selector, on its only candidate port
+// or the one alone that looks like a Redis's; then from such a label on a
+// selected pod, among the candidate ports that reach that pod. A Service
 // with several candidate ports and nothing to tell them apart is left alone:
 // a guess between two ports would dial the wrong one.
 func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.Pod) map[string]chosenPort {
@@ -160,12 +188,14 @@ func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.P
 			out[key] = chosen
 			continue
 		}
-		why, ok := byLabel(service, pods)
-		if !ok {
+		if why, ok := byLabel(service); ok {
+			if port, ok := onePort(candidates); ok {
+				out[key] = chosenPort{Name: port.Name, Port: port.Port, Why: why}
+			}
 			continue
 		}
-		if port, ok := onePort(candidates); ok {
-			out[key] = chosenPort{Name: port.Name, Port: port.Port, Why: why}
+		if chosen, ok := byPodLabel(service, candidates, pods); ok {
+			out[key] = chosen
 		}
 	}
 	return out
@@ -179,26 +209,69 @@ func labelSays(value string) bool {
 	return hasAny(value, engines) && !isTool(value)
 }
 
-// byLabel is the label saying a Service fronts a Redis: on the Service, in its
-// selector, or, when pods is not nil, on a pod it selects.
-func byLabel(service *corev1.Service, pods []*corev1.Pod) (string, bool) {
-	sets := []map[string]string{service.Labels, service.Spec.Selector}
-	if pods != nil && len(service.Spec.Selector) > 0 {
-		selector := labels.SelectorFromSet(service.Spec.Selector)
-		for _, pod := range pods {
-			if pod.Namespace == service.Namespace && selector.Matches(labels.Set(pod.Labels)) {
-				sets = append(sets, pod.Labels)
-			}
-		}
-	}
-	for _, set := range sets {
-		for _, key := range labelKeys {
-			if value := set[key]; labelSays(value) {
-				return "it is labeled " + key + "=" + value, true
-			}
+// byLabel is the label saying a Service fronts a Redis, on the Service or in
+// its selector.
+func byLabel(service *corev1.Service) (string, bool) {
+	for _, set := range []map[string]string{service.Labels, service.Spec.Selector} {
+		if why, ok := labelled(set); ok {
+			return why, true
 		}
 	}
 	return "", false
+}
+
+func labelled(set map[string]string) (string, bool) {
+	for _, key := range labelKeys {
+		if value := set[key]; labelSays(value) {
+			return "it is labeled " + key + "=" + value, true
+		}
+	}
+	return "", false
+}
+
+// byPodLabel is the port of a pod the Service selects and that is labelled a
+// Redis, among the candidates that reach it: a `web` port on 8080 in front
+// of a pod whose Redis listens on 6379 is not that Redis. A pod that declares
+// no container port lends its label to every candidate.
+func byPodLabel(service *corev1.Service, candidates []corev1.ServicePort, pods []*corev1.Pod) (chosenPort, bool) {
+	if pods == nil || len(service.Spec.Selector) == 0 {
+		return chosenPort{}, false
+	}
+	selector := labels.SelectorFromSet(service.Spec.Selector)
+	for _, pod := range pods {
+		if pod.Namespace != service.Namespace || !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		why, ok := labelled(pod.Labels)
+		if !ok {
+			continue
+		}
+		reach := candidates
+		if declaresPorts(pod) {
+			reach = nil
+			for _, port := range candidates {
+				for _, container := range pod.Spec.Containers {
+					if targets(port, container) {
+						reach = append(reach, port)
+						break
+					}
+				}
+			}
+		}
+		if port, ok := onePort(reach); ok {
+			return chosenPort{Name: port.Name, Port: port.Port, Why: why}, true
+		}
+	}
+	return chosenPort{}, false
+}
+
+func declaresPorts(pod *corev1.Pod) bool {
+	for _, container := range pod.Spec.Containers {
+		if len(container.Ports) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // onePort is the port a labelled Service's Redis is on: its only candidate,
