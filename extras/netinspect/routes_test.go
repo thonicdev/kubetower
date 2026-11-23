@@ -104,21 +104,36 @@ func TestTheGraphDrawsTheRules(t *testing.T) {
 	}
 }
 
-// The graph is bounded however many namespaces the rules join.
+// The graph is bounded however many namespaces the rules join, and a
+// cluster of a hundred namespaces is sent whole for the page to fold.
 func TestTheGraphIsBounded(t *testing.T) {
+	whole := overviewOf(t, teams(t, 120), "").Graph
+	if len(whole.Nodes) != 120 || whole.Folded != 0 {
+		t.Errorf("120 namespaces: %d nodes (%d folded), want 120 and none", len(whole.Nodes), whole.Folded)
+	}
+	g := overviewOf(t, teams(t, maxNodes+20), "").Graph
+	if len(g.Nodes) != maxNodes || g.Folded != 21 || len(g.Edges) > maxEdges {
+		t.Errorf("%d nodes (%d folded), %d edges", len(g.Nodes), g.Folded, len(g.Edges))
+	}
+	if last := g.Nodes[len(g.Nodes)-1]; last.ID != "others" || last.Label != "21 others" {
+		t.Errorf("last node %+v, want the 21 others", last)
+	}
+}
+
+// teams is n namespaces, each with a pod and a policy letting every
+// namespace in.
+func teams(t *testing.T, n int) *fakeHost {
+	t.Helper()
 	h := newHost()
-	for i := range 120 {
+	for i := range n {
 		ns := fmt.Sprintf("team-%03d", i)
 		h.namespace(t, ns, nil)
-		h.pod(t, ns, "app", fmt.Sprintf("10.1.%d.1", i), map[string]string{"app": "app"})
+		h.pod(t, ns, "app", fmt.Sprintf("10.%d.%d.1", 1+i/250, i%250), map[string]string{"app": "app"})
 		p := np(ns, "from-all", nil)
 		p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{nsPeer(nil)}}}
 		h.policy(t, p)
 	}
-	g := overviewOf(t, h, "").Graph
-	if len(g.Nodes) > maxNodes || g.Folded == 0 || len(g.Edges) > maxEdges {
-		t.Errorf("%d nodes (%d folded), %d edges", len(g.Nodes), g.Folded, len(g.Edges))
-	}
+	return h
 }
 
 func TestPodsArePaged(t *testing.T) {

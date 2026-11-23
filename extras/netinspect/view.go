@@ -12,9 +12,11 @@ const (
 	// podsPerPage is the pod rows in one answer; the page asks for the next
 	// ones with offset.
 	podsPerPage = 300
-	// maxNodes is the graph's nodes; the least connected beyond it are
-	// folded into one "others" node.
-	maxNodes = 40
+	// maxNodes is the cluster graph's nodes; the least connected beyond it
+	// are folded into one "others" node. The page draws only the busiest of
+	// them and folds the rest itself, so this bounds the answer, not the
+	// picture: a namespace kept here can still be found and drawn.
+	maxNodes = 300
 	// maxEdges is the graph's edges, the busiest kept.
 	maxEdges = 2_000
 	// maxRows caps the namespace and policy tables.
