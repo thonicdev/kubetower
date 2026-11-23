@@ -333,8 +333,9 @@ function page(key: PageKey): Pick<RouteObject, 'lazy' | 'hydrateFallbackElement'
   };
 }
 
-/** `/settings` leads to General, keeping the `?cluster=` it was opened with. */
+/** `/settings` leads to General, keeping the `?cluster=` it was opened with
+ *  and the way back it carries (`shell/settingsOrigin.ts`). */
 function SettingsIndex(): ReactNode {
-  const { search } = useLocation();
-  return <Navigate to={{ pathname: '/settings/general', search }} replace />;
+  const { search, state } = useLocation();
+  return <Navigate to={{ pathname: '/settings/general', search }} state={state} replace />;
 }

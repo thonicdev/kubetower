@@ -6,6 +6,7 @@ import { getNav, listExtensionSuggestions, setExtensionEnabled } from '../api/en
 import { queryKeys, useCapabilities } from '../api/queries';
 import type { ExtensionSuggestion } from '../api/types';
 import { btnPrimary, btnSecondary } from '../components/buttons';
+import { useOpenSettings } from './settingsOrigin';
 import { dismissSuggestion, dismissedSuggestions, isDismissed } from './suggestionMemory';
 
 /**
@@ -46,6 +47,7 @@ export function Suggestions(): ReactNode {
     staleTime: 5 * 60_000,
   });
   const [dismissed, setDismissed] = useState(dismissedSuggestions);
+  const openSettings = useOpenSettings().onClick;
   if (!on || suggestions.data?.state !== 'ok') return null;
   const shown = suggestions.data.items.filter((item) => item.absent !== true && !isDismissed(dismissed, cluster, item.key));
   if (shown.length === 0) return null;
@@ -72,7 +74,7 @@ export function Suggestions(): ReactNode {
             <span className="font-medium text-fg">{`${String(shown.length)} extras`}</span>{' '}
             <span className="text-muted">{shown.map((item) => item.label).join(' · ')}</span>
           </p>
-          <Link to={`/settings/extra?cluster=${encodeURIComponent(cluster)}`} className={btnPrimary} data-suggestion-see="">
+          <Link to={`/settings/extra?cluster=${encodeURIComponent(cluster)}`} onClick={openSettings(`/settings/extra?cluster=${encodeURIComponent(cluster)}`)} className={btnPrimary} data-suggestion-see="">
             See
           </Link>
           <button type="button" className={btnSecondary} onClick={dismissAll} data-suggestion-dismiss="">
