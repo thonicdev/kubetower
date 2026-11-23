@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
+
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 // eksKubeconfig is one EKS context whose exec block runs `aws eks get-token`
@@ -182,5 +185,174 @@ func TestWatchReadsAFileThatAppearsInTheList(t *testing.T) {
 	}
 	if len(said) != 1 {
 		t.Errorf("logged %q, want one line for the one reload", said)
+	}
+}
+
+// twoContexts writes alpha and beta, each on its own server, with current
+// pointing at one of them.
+func twoContexts(t *testing.T, path, current, betaServer string) {
+	t.Helper()
+	body := fmt.Sprintf(`apiVersion: v1
+kind: Config
+current-context: %s
+clusters:
+- name: alpha
+  cluster: {server: "https://alpha.invalid"}
+- name: beta
+  cluster: {server: %q}
+contexts:
+- name: alpha
+  context: {cluster: alpha, user: alpha}
+- name: beta
+  context: {cluster: beta, user: beta}
+users:
+- name: alpha
+  user: {token: TEST-TOKEN-alpha}
+- name: beta
+  user: {token: TEST-TOKEN-beta}
+`, current, betaServer)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// `kubectl config use-context` and kubectx truncate the file, then write it.
+// Read in between, the kubeconfig is empty: the clusters must not leave the
+// console for that tick, and the write that follows is what is applied.
+func TestATruncatedSaveKeepsThePreviousKubeconfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	twoContexts(t, path, "alpha", "https://beta.invalid")
+	m, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	m.now = func() time.Time { return now }
+
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := m.ReloadIfChanged(); changed || err != nil {
+		t.Fatalf("an emptied file was applied: changed=%v err=%v", changed, err)
+	}
+	if got := m.Contexts(); !slices.Equal(got, []string{"alpha", "beta"}) {
+		t.Fatalf("the clusters left the console while the file was being rewritten: %v", got)
+	}
+
+	now = now.Add(time.Second)
+	twoContexts(t, path, "beta", "https://beta.invalid")
+	if changed, err := m.ReloadIfChanged(); !changed || err != nil {
+		t.Fatalf("the rewritten file: changed=%v err=%v", changed, err)
+	}
+	if got := m.Contexts(); !slices.Equal(got, []string{"alpha", "beta"}) {
+		t.Errorf("contexts %v after the rewrite", got)
+	}
+}
+
+// A file really emptied stays empty, and is believed once it has lasted.
+func TestAFileThatStaysEmptyIsAppliedOnceItHasLasted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	twoContexts(t, path, "alpha", "https://beta.invalid")
+	m, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, step := range []time.Duration{0, 2 * time.Second} {
+		now = now.Add(step)
+		if changed, _ := m.ReloadIfChanged(); changed {
+			t.Fatalf("applied %v after it was first seen", step)
+		}
+	}
+	now = now.Add(2 * time.Second)
+	if changed, err := m.ReloadIfChanged(); !changed || err != nil {
+		t.Fatalf("an empty file that lasted %v was never applied: changed=%v err=%v", settleFor+time.Second, changed, err)
+	}
+	if got := m.Contexts(); len(got) != 0 {
+		t.Errorf("contexts %v, want none", got)
+	}
+}
+
+// A file that cannot be read keeps the previous kubeconfig too.
+func TestAnUnreadableFileKeepsThePreviousKubeconfig(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file modes do not refuse a read here")
+	}
+	path := filepath.Join(t.TempDir(), "config")
+	twoContexts(t, path, "alpha", "https://beta.invalid")
+	m, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	if changed, err := m.ReloadIfChanged(); changed || err == nil {
+		t.Fatalf("an unreadable file: changed=%v err=%v", changed, err)
+	}
+	if got := m.Contexts(); !slices.Equal(got, []string{"alpha", "beta"}) {
+		t.Errorf("the previous kubeconfig was lost: %v", got)
+	}
+}
+
+// Switching `current-context`, which this manager never reads, keeps every
+// connection; an edit to one context drops that context's clients alone.
+func TestOnlyTheClientsOfAChangedContextAreRebuilt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	twoContexts(t, path, "alpha", "https://beta.invalid")
+	m, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha, _ := m.Client("alpha")
+	beta, _ := m.Client("beta")
+
+	twoContexts(t, path, "beta", "https://beta.invalid")
+	if changed, err := m.ReloadIfChanged(); !changed || err != nil {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if a, _ := m.Client("alpha"); a != alpha {
+		t.Error("alpha was rebuilt for a change of current-context")
+	}
+	if b, _ := m.Client("beta"); b != beta {
+		t.Error("beta was rebuilt for a change of current-context")
+	}
+
+	twoContexts(t, path, "beta", "https://beta-moved.invalid")
+	if changed, err := m.ReloadIfChanged(); !changed || err != nil {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if a, _ := m.Client("alpha"); a != alpha {
+		t.Error("alpha was rebuilt for an edit to beta")
+	}
+	b, _ := m.Client("beta")
+	if b == beta || b.Config.Host != "https://beta-moved.invalid" {
+		t.Errorf("beta still answers from %s", b.Config.Host)
+	}
+}
+
+// sameContext is what decides which clients survive a reload, and whether a
+// client finished after its context changed is kept.
+func TestSameContextTellsAMovedContextFromAnUnchangedOne(t *testing.T) {
+	old := clientcmdapi.NewConfig()
+	old.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://old.invalid"}
+	old.AuthInfos["u"] = &clientcmdapi.AuthInfo{Token: "t"}
+	old.Contexts["x"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+
+	moved := clientcmdapi.NewConfig()
+	moved.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://new.invalid"}
+	moved.AuthInfos["u"] = &clientcmdapi.AuthInfo{Token: "t"}
+	moved.Contexts["x"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+	moved.CurrentContext = "x"
+
+	if !sameContext(old, old, "x") || sameContext(old, moved, "x") || sameContext(old, moved, "absent") {
+		t.Fatal("sameContext does not tell a moved context from an unchanged one")
 	}
 }

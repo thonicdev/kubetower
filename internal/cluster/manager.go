@@ -6,7 +6,6 @@ package cluster
 
 import (
 	gocontext "context"
-	"crypto/sha256"
 	"fmt"
 	"log"
 	"net"
@@ -49,11 +48,16 @@ type Manager struct {
 	dial      func(ctx gocontext.Context, network, address string) (net.Conn, error)
 	dialBound time.Duration
 
+	// now is the clock ReloadIfChanged times a held-back read with; nil is
+	// time.Now. A field so a test can move it.
+	now func() time.Time
+
 	mu  sync.RWMutex
 	raw *clientcmdapi.Config
-	// digest is the kubeconfig files' contents as raw was read from them
-	// (reload.go).
-	digest  [sha256.Size]byte
+	// files is the kubeconfig files as raw was read from them, and pending a
+	// read held back as a save caught halfway (reload.go).
+	files   []fileRead
+	pending pendingRead
 	clients map[clientKey]*Client
 	// limiters is one token bucket per context, kept across a Reload
 	// (ratelimit.go).
@@ -137,8 +141,8 @@ func NewManager(paths ...string) (*Manager, error) {
 	return m, nil
 }
 
-// Reload re-reads the kubeconfig from disk, so a change is picked up without a
-// restart.
+// Reload re-reads the kubeconfig from disk and applies it, whatever it holds.
+// ReloadIfChanged is the careful form a running console uses.
 func (m *Manager) Reload() error {
 	if m.inCluster {
 		// No file to re-read: the one context is the pod, whose token the
@@ -149,23 +153,39 @@ func (m *Manager) Reload() error {
 		m.announced = nil
 		return nil
 	}
-	// Before the read: a file changed during it then differs from what is
-	// recorded, and the next ReloadIfChanged reads it again.
-	digest := digestFiles(m.kubeconfig)
-	raw, err := m.kubeconfig.Load()
+	read, err := m.read()
 	if err != nil {
 		return err
 	}
+	m.apply(read)
+	return nil
+}
 
+// apply makes a read the kubeconfig in use.
+//
+// Only the clients of a context that changed are dropped (sameContext): a
+// switch of `current-context`, which this manager never reads, or an edit to
+// another context keeps every connection and the credentials it holds.
+func (m *Manager) apply(read kubeconfigRead) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.raw = raw
-	m.digest = digest
-	// Clients are dropped rather than kept: a context whose server or
-	// credentials changed must not keep answering from the old one.
-	m.clients = map[clientKey]*Client{}
-	m.announced = nil
-	return nil
+	previous := m.raw
+	m.raw = read.raw
+	m.files = read.files
+	m.pending = pendingRead{}
+	for key := range m.clients {
+		if !sameContext(previous, read.raw, key.context) {
+			delete(m.clients, key)
+		}
+	}
+	for key := range m.announced {
+		// Keyed subject NUL context (firstMention); a process-wide one has no
+		// context and stays said.
+		_, context, _ := strings.Cut(key, "\x00")
+		if context != "" && !sameContext(previous, read.raw, context) {
+			delete(m.announced, key)
+		}
+	}
 }
 
 // Contexts lists the kubeconfig context names, sorted, exactly as they are
@@ -362,18 +382,21 @@ func (m *Manager) client(context string, streaming bool) (*Client, error) {
 		return nil, fmt.Errorf("unknown cluster %q", context)
 	}
 
-	// The same loading rules Reload uses, so a context on the rail cannot
-	// resolve to another file's entry when opened. Under the server profile
-	// there is no merge: the one context is the pod. Everything after this block
-	// applies to both.
+	// Built from the kubeconfig in use, not from the files again, so a context
+	// on the rail cannot resolve to another file's entry when opened, nor to an
+	// edit the manager has not taken. Under the server profile there is no
+	// merge: the one context is the pod. Everything after this block applies to
+	// both.
+	m.mu.RLock()
+	snapshot := m.raw
+	m.mu.RUnlock()
 	var cfg *rest.Config
 	var err error
 	if m.inCluster {
 		cfg, err = m.inClusterRestConfig(context)
 	} else {
-		cfg, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-			m.kubeconfig.loadingRules(),
-			&clientcmd.ConfigOverrides{CurrentContext: context},
+		cfg, err = clientcmd.NewNonInteractiveClientConfig(*snapshot, context,
+			&clientcmd.ConfigOverrides{CurrentContext: context}, m.kubeconfig.loadingRules(),
 		).ClientConfig()
 	}
 	if err != nil {
@@ -484,6 +507,12 @@ func (m *Manager) client(context string, streaming bool) (*Client, error) {
 	if raced, ok := m.clients[key]; ok {
 		m.mu.Unlock()
 		return raced, nil
+	}
+	if !sameContext(snapshot, m.raw, context) {
+		// The kubeconfig changed this context while it was being built: this
+		// request has its client, and the next one builds from the new entry.
+		m.mu.Unlock()
+		return client, nil
 	}
 	m.clients[key] = client
 	m.mu.Unlock()
