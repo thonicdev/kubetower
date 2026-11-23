@@ -24,6 +24,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const pending: Extension = {
   key: KEY,
+  icon: 'hourglass',
   about,
   // No menu entry: a Pending pod's tile opens the window, which leads to the page.
   nav: { label: 'Pod Debugging', path: PAGE_PATH, menu: false },

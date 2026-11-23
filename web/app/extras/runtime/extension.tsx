@@ -23,6 +23,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const runtimeInspector: Extension = {
   key: KEY,
+  icon: 'coffee',
   // Published as the JVM Inspector until 0.2.0: its bookmarks and tab links.
   legacyKeys: ['jvm'],
   about,
