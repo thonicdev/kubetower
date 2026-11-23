@@ -10,11 +10,12 @@ const KINDS = [
 ] as const;
 
 /**
- * The buttons that open Hubble UI (Cilium) and Whisker (Calico) in a new tab,
- * for the UIs this cluster has, and nothing where it has neither.
+ * The buttons that open Hubble UI (Cilium) and Whisker (Calico), for the UIs
+ * this cluster has, and nothing where it has neither.
  *
  * An address set in the extra's settings is a link. Without one the button
- * opens a tunnel with the console's own port-forward, which exists only where
+ * opens a tunnel with the console's own port-forward and then becomes a link
+ * to it, opened in a new tab or the default browser. The tunnel exists only where
  * the console can hand the browser a loopback address; where it cannot (the
  * server profile) there is no button for a UI that has no address configured.
  * `namespace` is the one the page or the pod is about, if any.
@@ -43,6 +44,8 @@ export function FlowUIButtons({ cluster, namespace }: { cluster: string; namespa
 function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' | 'whisker'; label: string; ui: FlowUI; cluster: string; namespace: string }): ReactNode {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  /** The open forward's address, once there is one: the button becomes a link to it. */
+  const [opened, setOpened] = useState<string | null>(null);
   const href = ui.url === undefined ? undefined : externalHref(configuredHref(kind, ui.url, namespace));
   if (ui.url !== undefined) {
     if (href === undefined) return null;
@@ -55,15 +58,24 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
   const tunnel = ui.tunnel;
   if (tunnel === undefined) return null;
 
-  const open = (): void => {
-    // The tab is opened inside the click, before the forward is awaited, or the
-    // browser takes it for a pop-up.
-    const tab = window.open('', '_blank');
-    if (tab === null) {
-      setFailure('The browser blocked the new tab');
-      return;
+  // The forward is opened first and the UI is then an ordinary link to it, as
+  // the Ports panel draws one: a browser opens it in a tab, the desktop's own
+  // window hands it to the default browser. No blank window is asked for
+  // ahead of the forward - the desktop window refuses every window a page
+  // opens, and hands on only http and https addresses
+  // (`internal/launch/nativewindownav.go`).
+  if (opened !== null) {
+    const link = externalHref(opened + tunnelSuffix(kind, namespace));
+    if (link !== undefined) {
+      return (
+        <a href={link} target="_blank" rel="noopener noreferrer" data-flow-ui={kind} data-flow-ui-open="" title={link} className={btnSecondary}>
+          {label} ↗
+        </a>
+      );
     }
-    tab.opener = null;
+  }
+
+  const open = (): void => {
     setPending(true);
     setFailure(null);
     openForward({
@@ -76,16 +88,14 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
     })
       .then((forward) => {
         const scheme: Scheme = forward.scheme ?? 'http';
-        const link = externalHref(forwardLink(forward, scheme) + tunnelSuffix(kind, namespace));
-        if (link === undefined) {
-          tab.close();
+        const base = forwardLink(forward, scheme);
+        if (externalHref(base + tunnelSuffix(kind, namespace)) === undefined) {
           setFailure('The tunnel opened at an address that cannot be linked');
           return;
         }
-        tab.location.href = link;
+        setOpened(base);
       })
       .catch((error: unknown) => {
-        tab.close();
         setFailure(error instanceof Error ? error.message : String(error));
       })
       .finally(() => setPending(false));
@@ -94,7 +104,7 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
   return (
     <>
       <button type="button" data-flow-ui={kind} disabled={pending} onClick={open} className={btnSecondary}>
-        {label}
+        {pending ? `${label}…` : label}
       </button>
       {failure === null ? null : (
         <span role="alert" className="text-xs text-bad">

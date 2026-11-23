@@ -70,34 +70,34 @@ describe('FlowUIButtons', () => {
     expect(screen.queryByRole('button', { name: 'Hubble UI' })).toBeNull();
   });
 
-  it('opens the tunnel in a new tab at the forward, with the namespace for Hubble UI', async () => {
+  it('opens the tunnel, then links to it with the namespace for Hubble UI, asking for no window', async () => {
     const fetch = stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
-    const tab = { opener: {} as unknown, location: { href: '' }, close: vi.fn() };
-    const open = vi.fn(() => tab);
+    // The desktop window refuses every window a page opens: window.open answers null.
+    const open = vi.fn(() => null);
     vi.stubGlobal('open', open);
     mount('shop');
     fireEvent.click(await screen.findByRole('button', { name: 'Hubble UI' }));
-    await waitFor(() => expect(tab.location.href).not.toBe(''));
-    expect(open).toHaveBeenCalledWith('', '_blank');
-    expect(tab.opener).toBeNull();
-    expect(tab.location.href).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):41000\/\?namespace=shop$/);
+    const link = await screen.findByRole('link', { name: /Hubble UI/ });
+    expect(link.getAttribute('href')).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):41000\/\?namespace=shop$/);
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
     const post = fetch.mock.calls.find((c) => c[0] === '/api/forwards');
     expect(JSON.parse((post?.[1] as RequestInit).body as string)).toEqual({
       cluster: 'kind', namespace: 'kube-system', service: 'hubble-ui', remotePort: 80, portName: 'http',
     });
   });
 
-  it('opens Whisker on its general view, with no namespace', async () => {
+  it('links Whisker to its general view, with no namespace', async () => {
     stub({ whisker: { tunnel: TUNNEL_WHISKER } });
-    const tab = { opener: {} as unknown, location: { href: '' }, close: vi.fn() };
-    vi.stubGlobal('open', vi.fn(() => tab));
     mount('shop');
     fireEvent.click(await screen.findByRole('button', { name: 'Whisker' }));
-    await waitFor(() => expect(tab.location.href).not.toBe(''));
-    expect(tab.location.href).toMatch(/:41000\/$/);
+    const link = await screen.findByRole('link', { name: /Whisker/ });
+    expect(link.getAttribute('href')).toMatch(/:41000\/$/);
   });
 
-  it('closes the tab and says why when the tunnel is refused', async () => {
+  it('says why, and draws no link, when the tunnel is refused', async () => {
     const fetch = stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
     fetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
@@ -108,13 +108,11 @@ describe('FlowUIButtons', () => {
       if (init?.method === 'POST') return json(403, { title: 'Forbidden', status: 403, detail: 'You may not forward to pods in kube-system.' });
       return json(599, {});
     });
-    const tab = { opener: {} as unknown, location: { href: '' }, close: vi.fn() };
-    vi.stubGlobal('open', vi.fn(() => tab));
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Hubble UI' }));
-    expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(tab.close).toHaveBeenCalled();
-    expect(tab.location.href).toBe('');
+    expect((await screen.findByRole('alert')).textContent).toContain('kube-system');
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Hubble UI' })).toBeTruthy();
   });
 
   it('has no tunnel button where the console cannot forward, unless an address is configured', async () => {
