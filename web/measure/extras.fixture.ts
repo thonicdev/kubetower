@@ -1165,6 +1165,18 @@ export const EXTRA_SCENES = {
   'extra-netinspect-namespace': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.namespace },
   'extra-netinspect-service': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.service },
   // Not a page: the Network tab of a pod, alone.
+  // ledger-db-0's line on its Details, whose press opens the enlarged view.
+  'extra-netinspect-tile-ledger': {
+    key: 'netinspect',
+    answers: {
+      ...NETINSPECT_ANSWERS,
+      [`/api/c/${EXTRA_CLUSTER}/nav`]: {
+        state: 'ok',
+        data: { groups: [{ key: 'extra', label: 'Extra', items: [{ text: 'Network Inspector', href: `/c/${EXTRA_CLUSTER}/x/netinspect` }], deferred: false }] },
+      },
+    },
+    shortcut: { kind: 'pods', namespace: 'payments', name: 'ledger-db-0' },
+  },
   'extra-netinspect-tab': { key: 'netinspect', answers: NETINSPECT_ANSWERS, tab: { key: 'pod', kind: 'pods', namespace: 'payments', name: 'ledger-db-0' } },
   'extra-netinspect-calico': { key: 'netinspect', answers: NETINSPECT_NEW_ANSWERS, at: NETINSPECT_NEW_AT.calico },
   'extra-netinspect-admin': { key: 'netinspect', answers: NETINSPECT_NEW_ANSWERS, at: NETINSPECT_NEW_AT.admin },

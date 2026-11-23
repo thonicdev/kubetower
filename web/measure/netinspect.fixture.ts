@@ -2524,7 +2524,42 @@ const SERVICE: Verdict = {
   "unevaluated": []
 };
 
+// payments' flows, as the enlarged view of ledger-db-0 reads them over each
+// period: the same pairs, more of them the further back the read goes.
+const PAYMENTS_ROWS: ReadonlyArray<[string, string, number, string, number, string[]]> = [
+  ['payments/ledger-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'FORWARDED', 212, []],
+  ['payments/ledger-7d9f8b6c5d-blxrb', 'payments/ledger-db-0', 5432, 'FORWARDED', 187, []],
+  ['monitoring/prometheus-0', 'payments/ledger-db-0', 9187, 'FORWARDED', 20, []],
+  ['shop/checkout-api-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'DROPPED', 6, ['payments/ledger-db-deny']],
+  ['batch/nightly-report-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'DROPPED', 2, ['payments/default-deny']],
+  ['payments/ledger-db-0', 'kube-system/coredns-7d9f8b6c5d-akxqb', 53, 'FORWARDED', 44, []],
+  ['payments/ledger-db-0', 'payments/ledger-db-1', 5432, 'FORWARDED', 96, []],
+  ['payments/gateway-7d9f8b6c5d-akxqb', 'payments/ledger-7d9f8b6c5d-akxqb', 8080, 'FORWARDED', 310, []],
+];
+
+function paymentsFlows(window: number): Flows {
+  const scale = window / 300;
+  const rows = PAYMENTS_ROWS.map(([from, to, port, verdict, count, deniedBy]) => ({
+    from,
+    to,
+    port,
+    protocol: port === 53 ? 'UDP' : 'TCP',
+    verdict,
+    ...(verdict === 'DROPPED' ? { reason: 'POLICY_DENIED' } : {}),
+    deniedBy,
+    count: Math.max(1, Math.round(count * scale)),
+    last: '2026-03-11T09:39:40Z',
+  }));
+  const forwarded = rows.filter((r) => r.verdict === 'FORWARDED').reduce((n, r) => n + r.count, 0);
+  const dropped = rows.filter((r) => r.verdict === 'DROPPED').reduce((n, r) => n + r.count, 0);
+  return { ...FLOWS, window, read: forwarded + dropped, forwarded, dropped, rows, edges: [] };
+}
+
 export const NETINSPECT_ANSWERS: Readonly<Record<string, unknown>> = {
+  '/x/production/netinspect/flows?ns=payments': paymentsFlows(300),
+  '/x/production/netinspect/flows?ns=payments&window=60': paymentsFlows(60),
+  '/x/production/netinspect/flows?ns=payments&window=900': paymentsFlows(900),
+  '/x/production/netinspect/flows?ns=payments&window=3600': paymentsFlows(3600),
   '/x/production/netinspect/': CLUSTER,
   '/x/production/netinspect/?ns=shop': SHOP,
   "/x/production/netinspect/verdict?from=shop%2Fstorefront-7d9f8b6c5d-akxqb&to=payments%2Fgateway-7d9f8b6c5d-akxqb&port=8443": DENIED,

@@ -47,7 +47,9 @@ import (
 // listing is made before the tunnel is opened.
 
 const (
-	flowCap      = 2_000
+	flowCap = 2_000
+	// flowWindow is how far back the flows go when the page names no
+	// window; flowWindows are the ones it may name (`?window=`, seconds).
 	flowWindow   = 5 * time.Minute
 	flowDeadline = 10 * time.Second
 	// maxMessage is the largest one GetFlows answer may be: a flow is a few
@@ -203,6 +205,26 @@ func findRelay(r *http.Request, h extension.Host, cluster string) relay {
 	return relay{state: flowsUnreachable, detail: "The Hubble Relay Service has no port."}
 }
 
+// flowWindows are the periods a read may ask for, as the metrics' span
+// buttons offer them. Beyond an hour Hubble's ring buffer and Goldmane's
+// aggregation hold little anyway, and the read is bounded by flowCap.
+var flowWindows = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, time.Hour}
+
+// windowOf is the period `?window=` names, in seconds: flowWindow when it is
+// absent, and false when it names anything but one of flowWindows.
+func windowOf(r *http.Request) (time.Duration, bool) {
+	raw := r.URL.Query().Get("window")
+	if raw == "" {
+		return flowWindow, true
+	}
+	for _, w := range flowWindows {
+		if raw == strconv.Itoa(int(w/time.Second)) {
+			return w, true
+		}
+	}
+	return 0, false
+}
+
 // fetcher reads the flows through the tunnel at addr: at most flowCap, from
 // the last flowWindow, truncated when there may be more.
 type fetcher func(ctx context.Context, addr string) ([]flow, bool, error)
@@ -223,16 +245,22 @@ type feed struct {
 // hubbleFeed is Hubble Relay as findRelay found it.
 func hubbleFeed(rl relay) feed {
 	return feed{source: "hubble", namespace: relayNamespace, service: relayService, port: rl.port, state: rl.state, detail: rl.detail,
-		prepare: func(_ *http.Request, _ extension.Host, _ string, allowed map[string]bool) (fetcher, string, string) {
+		prepare: func(r *http.Request, _ extension.Host, _ string, allowed map[string]bool) (fetcher, string, string) {
 			var whitelist []string
-			if len(allowed) <= whitelistCap {
+			if ns := r.URL.Query().Get("ns"); ns != "" {
+				// One namespace's read asks Relay for that namespace only:
+				// otherwise the cap is spent on the rest of the cluster, and a
+				// longer window reads no further back than a short one.
+				whitelist = []string{ns}
+			} else if len(allowed) <= whitelistCap {
 				for ns := range allowed {
 					whitelist = append(whitelist, ns)
 				}
 				sort.Strings(whitelist)
 			}
+			window, _ := windowOf(r)
 			return func(ctx context.Context, addr string) ([]flow, bool, error) {
-				return getFlows(ctx, addr, flowCap, time.Now().Add(-flowWindow), whitelist)
+				return getFlows(ctx, addr, flowCap, time.Now().Add(-window), whitelist)
 			}, "", ""
 		}}
 }
@@ -260,7 +288,8 @@ func findFeed(r *http.Request, h extension.Host, cluster string) feed {
 // observe reads the flows for namespace ("" for the cluster), filtered for
 // the person through rd, whose listing was made before this is called.
 func (rd *read) observe(r *http.Request, h extension.Host, cluster, namespace string) Flows {
-	out := Flows{Mode: "observed", Window: int(flowWindow / time.Second), Rows: []FlowRow{}, Edges: []FlowEdge{}}
+	window, _ := windowOf(r)
+	out := Flows{Mode: "observed", Window: int(window / time.Second), Rows: []FlowRow{}, Edges: []FlowEdge{}}
 	fd := findFeed(r, h, cluster)
 	if fd.state != "" {
 		if fd.state != flowsAbsent {
