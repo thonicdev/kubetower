@@ -63,6 +63,7 @@ const PostgresTab = lazy(() => import('./PostgresTab'));
 
 export const cnpg: Extension = {
   key: KEY,
+  icon: 'database',
   about,
   nav: { label: 'Postgres (CNPG)', path: PAGE_PATH },
   routes: [

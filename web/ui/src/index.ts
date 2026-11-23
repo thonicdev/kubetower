@@ -127,6 +127,7 @@ export { useDebounced } from './components/useDebounced';
 // tints and why the neutral pill exists; `tone` is the server's grade as a
 // string, so an extra passes it through rather than mapping it.
 export { Pill, type PillProps } from './components/Pill';
+export type { IconName } from './components/Icon';
 
 // How the console writes an instant and a span: an extra draws no time of its own.
 export { formatInstant, formatClock, shortDuration } from './components/instant';
