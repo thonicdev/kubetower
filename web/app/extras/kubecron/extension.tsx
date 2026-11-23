@@ -22,6 +22,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const kubecron: Extension = {
   key: KEY,
+  icon: 'clock',
   about,
   nav: { label: 'KubeCron', path: PAGE_PATH },
   routes: [

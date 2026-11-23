@@ -23,6 +23,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const jvm: Extension = {
   key: KEY,
+  icon: 'coffee',
   about,
   // No menu entry: reached from a Java pod's tab and tile.
   nav: { label: 'JVM Inspector', path: PAGE_PATH, menu: false },
