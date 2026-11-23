@@ -34,12 +34,12 @@ import (
 	"github.com/thonicdev/kubetower/extras/certmanager"
 	"github.com/thonicdev/kubetower/extras/cnpg"
 	"github.com/thonicdev/kubetower/extras/events"
-	"github.com/thonicdev/kubetower/extras/jvm"
 	"github.com/thonicdev/kubetower/extras/kubeadjust"
 	"github.com/thonicdev/kubetower/extras/kubecron"
 	"github.com/thonicdev/kubetower/extras/netinspect"
 	"github.com/thonicdev/kubetower/extras/pending"
 	"github.com/thonicdev/kubetower/extras/redis"
+	"github.com/thonicdev/kubetower/extras/runtimeinspect"
 	"github.com/thonicdev/kubetower/extras/security"
 )
 
@@ -468,7 +468,7 @@ func extraCases() []extraCase {
 		totals:  []string{"/?ns=" + seen},
 		details: []string{"/objects/certificates.cert-manager.io/{ns}/cert-{m}"},
 	}, {
-		name: "JVM", ext: jvm.New(),
+		name: "Runtime", ext: runtimeinspect.New(),
 		objects: perNamespace(func(ns, m string) []object {
 			return []object{pod(ns, "java-"+m, "Running", func(doc map[string]any) {
 				c := doc["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)

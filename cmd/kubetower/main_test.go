@@ -48,12 +48,12 @@ func TestTheBinaryRegistersItsExtras(t *testing.T) {
 	if err := app.Register(extras()...); err != nil {
 		t.Fatalf("the core refused this binary's extras: %v", err)
 	}
-	if got := app.Keys(); !slices.Equal(got, []string{"argocd", "certmanager", "cnpg", "dns", "events", "jvm", "kubeadjust", "kubecron", "netinspect", "pending", "redis", "security"}) {
-		t.Fatalf("registered keys = %v, want [argocd certmanager cnpg dns events jvm kubeadjust kubecron netinspect pending redis security]", got)
+	if got := app.Keys(); !slices.Equal(got, []string{"argocd", "certmanager", "cnpg", "dns", "events", "kubeadjust", "kubecron", "netinspect", "pending", "redis", "runtime", "security"}) {
+		t.Fatalf("registered keys = %v, want [argocd certmanager cnpg dns events kubeadjust kubecron netinspect pending redis runtime security]", got)
 	}
 	// The labels are what the menu draws, so they are asserted as the operator
 	// reads them, in menu order.
-	for i, want := range []string{"Cert Manager", "Delivery Center", "Event Intelligence", "DNS", "JVM Inspector", "KubeAdjust", "KubeCron", "Network Inspector", "Pod Debugging", "Postgres (CNPG)", "Redis viewer", "Security Center"} {
+	for i, want := range []string{"Cert Manager", "Delivery Center", "Event Intelligence", "DNS", "Runtime Inspector", "KubeAdjust", "KubeCron", "Network Inspector", "Pod Debugging", "Postgres (CNPG)", "Redis viewer", "Security Center"} {
 		if got := app.Extensions()[i].Label(); got != want {
 			t.Fatalf("label %d = %q, want %q", i, got, want)
 		}

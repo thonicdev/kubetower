@@ -66,6 +66,7 @@ module.exports = {
         'forward',
         'helm',
         'jvm',
+        'runtime',
         'kubeadjust',
         'kubecron',
         'launch',

@@ -54,7 +54,7 @@ on:
       - 'extras/cnpg/**'
       - 'extras/dns/**'
       - 'extras/events/**'
-      - 'extras/jvm/**'
+      - 'extras/runtimeinspect/**'
       - 'extras/kubeadjust/**'
       - 'extras/kubecron/**'
       - 'extras/netinspect/**'

@@ -27,6 +27,11 @@ export interface Extension {
    *  (`internal/api/router.go`) - and unique: `buildRoutes` throws at start-up
    *  on any other key, or on a key two extensions share. */
   key: string;
+  /** Every key it was published under before, each held to the same pattern.
+   *  A bookmark to `/c/{cluster}/x/<old>/…` is redirected to `x/<key>/…`, and
+   *  a `?tab=x.<old>.<tab>` opens `x.<key>.<tab>`: the Go side's `Legacy()`
+   *  keeps the switch, this keeps the links. One-way, never written back. */
+  legacyKeys?: readonly string[];
   /** Where the Shell offers it. `path` is relative to `/c/:cluster`.
    *
    *  **The menu does not read `path`: the server's href is authoritative.** The

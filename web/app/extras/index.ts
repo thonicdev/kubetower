@@ -5,12 +5,12 @@ import { certmanager } from './certmanager';
 import { cnpg } from './cnpg';
 import { dns } from './dns';
 import { events } from './events';
-import { jvm } from './jvm';
 import { kubeadjust } from './kubeadjust';
 import { kubecron } from './kubecron';
 import { netinspect } from './netinspect';
 import { pending } from './pending';
 import { redis } from './redis';
+import { runtimeInspector } from './runtime';
 import { security } from './security';
 
 /**
@@ -24,4 +24,4 @@ import { security } from './security';
  * `routes.test.ts` beside it checks this same list, so an extra added here is
  * checked without anyone remembering to add it there.
  */
-export const extras: Extension[] = [certmanager, argocd, events, dns, jvm, kubeadjust, kubecron, netinspect, pending, cnpg, redis, security];
+export const extras: Extension[] = [certmanager, argocd, events, dns, runtimeInspector, kubeadjust, kubecron, netinspect, pending, cnpg, redis, security];

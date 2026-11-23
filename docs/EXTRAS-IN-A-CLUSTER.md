@@ -119,7 +119,7 @@ Nothing is read with the console's rights. What Connect shows is what the
 cluster's application user may read in its database, whoever presses it: the
 Kubernetes gates above decide who may connect, not which tables they see.
 
-### JVM Inspector (`jvm`)
+### Runtime Inspector (`runtime`, formerly `jvm`)
 
 | What | Whose rights | How the person is narrowed |
 |---|---|---|

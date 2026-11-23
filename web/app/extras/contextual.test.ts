@@ -5,9 +5,9 @@ import { extras } from './index';
 // Which extras have a page in the menu and which are reached only from the
 // panel of what they are about: the operator's decision.
 describe('the extras the menu offers', () => {
-  it('leaves out JVM Inspector, Pod Debugging and the Redis viewer, and only them', () => {
+  it('leaves out Runtime Inspector, Pod Debugging and the Redis viewer, and only them', () => {
     const contextual = extras.filter((one) => one.nav.menu === false).map((one) => one.key).sort();
-    expect(contextual).toEqual(['jvm', 'pending', 'redis']);
+    expect(contextual).toEqual(['pending', 'redis', 'runtime']);
   });
 
   it('still gives each contextual extra a tab or a tile to be reached from', () => {

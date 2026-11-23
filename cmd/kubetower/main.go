@@ -18,12 +18,12 @@ import (
 	"github.com/thonicdev/kubetower/extras/cnpg"
 	"github.com/thonicdev/kubetower/extras/dns"
 	"github.com/thonicdev/kubetower/extras/events"
-	"github.com/thonicdev/kubetower/extras/jvm"
 	"github.com/thonicdev/kubetower/extras/kubeadjust"
 	"github.com/thonicdev/kubetower/extras/kubecron"
 	"github.com/thonicdev/kubetower/extras/netinspect"
 	"github.com/thonicdev/kubetower/extras/pending"
 	"github.com/thonicdev/kubetower/extras/redis"
+	"github.com/thonicdev/kubetower/extras/runtimeinspect"
 	"github.com/thonicdev/kubetower/extras/security"
 )
 
@@ -36,7 +36,7 @@ func extras() []extension.Extension {
 		argocd.New(),
 		events.New(),
 		dns.New(),
-		jvm.New(),
+		runtimeinspect.New(),
 		kubeadjust.New(),
 		kubecron.New(),
 		netinspect.New(),

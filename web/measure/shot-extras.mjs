@@ -43,7 +43,7 @@ const EXTRAS = {
   argocd: { ready: ['[data-argo-project] [data-app]', '[data-argo-catalogue]'] },
   kubecron: { ready: ['section[aria-label="Heatmap"]', 'table tbody tr'] },
   kubeadjust: { ready: ['h1'] },
-  jvm: { ready: ['[data-jvm-container]'] },
+  runtime: { ready: ['[data-jvm-container]'] },
   netinspect: { ready: ['[data-matrix] [data-cell], [data-mini-graph]', '[data-verdict], [data-direction]'] },
   pending: { ready: ['[data-node-bars]'] },
   events: { ready: ['[data-timeline] [data-bar]', '[data-cause]'] },
@@ -95,10 +95,10 @@ const MORE = {
   ],
   // The tile on a Java pod's Details, and the JVM tab of that pod after
   // Inspect, each photographed alone.
-  jvm: [
+  runtime: [
     // The page with the panel open on a pod, before Inspect: the button and its line.
     {
-      scene: 'extra-jvm-panel',
+      scene: 'extra-runtime-panel',
       file: 'page-panel.png',
       ready: ['[data-jvm-container]'],
       async act(page) {
@@ -107,9 +107,9 @@ const MORE = {
         await page.mouse.move(VIEWPORT.width - 2, VIEWPORT.height - 2);
       },
     },
-    { scene: 'extra-jvm-tile', file: 'pod-tile.png', ready: ['[data-shortcut-meter]'], element: '[data-shot]' },
+    { scene: 'extra-runtime-tile', file: 'pod-tile.png', ready: ['[data-shortcut-meter]'], element: '[data-shot]' },
     {
-      scene: 'extra-jvm-tab',
+      scene: 'extra-runtime-tab',
       file: 'pod-tab-inspected.png',
       ready: ['[data-jvm-inspect]'],
       element: '[data-shot]',
@@ -122,7 +122,7 @@ const MORE = {
     // The thread dump's section alone, after its button, with the blocked
     // worker-a's stack open under the deadlock.
     {
-      scene: 'extra-jvm-threads',
+      scene: 'extra-runtime-threads',
       file: 'thread-dump.png',
       ready: ['[data-jvm-thread-dump]'],
       element: '[data-jvm-threads]',
@@ -136,7 +136,7 @@ const MORE = {
     },
     // The class histogram's section alone, after its confirmation and Run.
     {
-      scene: 'extra-jvm-histogram',
+      scene: 'extra-runtime-histogram',
       file: 'class-histogram.png',
       ready: ['[data-jvm-histogram-start]'],
       element: '[data-jvm-histogram]',
@@ -150,7 +150,7 @@ const MORE = {
     },
     // The heap dump's confirmation, as it stands before anything runs.
     {
-      scene: 'extra-jvm-threads',
+      scene: 'extra-runtime-threads',
       file: 'heap-dump-confirm.png',
       ready: ['[data-jvm-heap-dump]'],
       element: '[role="dialog"]',
@@ -162,7 +162,7 @@ const MORE = {
     },
     // The flight recorder's section alone: the durations, and its confirmation.
     {
-      scene: 'extra-jvm-threads',
+      scene: 'extra-runtime-threads',
       file: 'flight-recorder.png',
       ready: ['[data-jvm-jfr]'],
       element: '[data-jvm-jfr]',
@@ -172,7 +172,7 @@ const MORE = {
       },
     },
     {
-      scene: 'extra-jvm-threads',
+      scene: 'extra-runtime-threads',
       file: 'flight-recorder-confirm.png',
       ready: ['[data-jvm-jfr]'],
       element: '[role="dialog"]',
@@ -185,7 +185,7 @@ const MORE = {
     },
     // The memory history's section alone, after its button.
     {
-      scene: 'extra-jvm-history',
+      scene: 'extra-runtime-history',
       file: 'memory-history.png',
       ready: ['[data-jvm-history-start]'],
       element: '[data-jvm-history]',

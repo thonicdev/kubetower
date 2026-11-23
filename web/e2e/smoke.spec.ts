@@ -214,7 +214,7 @@ test('the topbar controls do what they say', async ({ page }) => {
   // pressed.
   await page.getByRole('link', { name: 'Extra', exact: true }).click();
   await expect(page).toHaveURL(/\/settings\/extra/);
-  for (const key of ['argocd', 'kubecron', 'kubeadjust', 'redis', 'jvm']) {
+  for (const key of ['argocd', 'kubecron', 'kubeadjust', 'redis', 'runtime']) {
     const toggle = page.locator(`[data-extra="${key}"] [role="switch"]`);
     await expect(toggle).toBeVisible({ timeout: 30_000 });
     await expect(toggle).toHaveAttribute('aria-checked', 'false');

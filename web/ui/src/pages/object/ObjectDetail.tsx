@@ -32,7 +32,7 @@ import { trail, useDeclarePageFacts } from '../../shell/pageFacts';
 import { useShellIfPresent } from '../../shell/ShellContext';
 import { ValueView } from '../../state/Result';
 import { isGoneObject, Pending, StateNotice } from '../../state/StateNotice';
-import { answers, contributedActivity, contributedTabs, enabledExtensions, marksOf, type ContributedTab } from './extensionTabs';
+import { answers, contributedActivity, contributedTabs, currentTabAddress, enabledExtensions, marksOf, type ContributedTab } from './extensionTabs';
 import { kindListPath, objectPath, selectorPath, type ObjectIdentity } from './address';
 import { Addresses, Certificates } from './Certificates';
 import { Containers } from './Containers';
@@ -178,7 +178,10 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
   const [addressedTab, setTab] = useUrlParameter('tab');
   // The two tabs Activity replaced still name it, so an older link lands on
   // what it was pointing at.
-  const tab = addressedTab !== undefined && ACTIVITY_SOURCES.includes(addressedTab) ? 'activity' : addressedTab;
+  // An extension renamed since keeps its old tab addresses.
+  const shell = useShellIfPresent();
+  const current = currentTabAddress(shell?.extensions ?? [], addressedTab);
+  const tab = current !== undefined && ACTIVITY_SOURCES.includes(current) ? 'activity' : current;
   const location = useLocation();
   /* The empty address is Details, so `''` and `'details'` are the same tab. A
      value nobody recognizes — an old link, a typo — is Details too rather than a
@@ -228,7 +231,6 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
     The menu is asked only when some extension offers a tab for this kind, so a
     panel no extension adds to makes no extra request.
   */
-  const shell = useShellIfPresent();
   const offered = contributedTabs(shell?.extensions ?? [], identity.kind);
   const offeredActivity = contributedActivity(shell?.extensions ?? [], identity.kind);
   const nav = useNav(identity.cluster, offered.length > 0 || offeredActivity !== undefined);

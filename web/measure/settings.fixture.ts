@@ -43,7 +43,7 @@ export const SETTINGS_EXTRA_ITEMS: readonly ExtensionInfo[] = [
   ]),
   row('kubeadjust', 'KubeAdjust', 'Whether requests and limits fit what pods use', false),
   row('redis', 'Redis viewer', 'Redis and Valkey Services, read only', false),
-  row('jvm', 'JVM Inspector', 'Heap, threads and GC of Java pods', false),
+  row('runtime', 'Runtime Inspector', 'Heap, threads and GC of Java pods', false),
   row('netinspect', 'Network Inspector', 'What NetworkPolicies allow', false),
   row('pending', 'Pod Debugging', 'Why a pod waits', true),
   row('cnpg', 'Postgres (CNPG)', 'CloudNativePG clusters', false),

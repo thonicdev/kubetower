@@ -253,13 +253,43 @@ export function buildRoutes(extensions: readonly Extension[]): RouteObject[] {
  */
 function extensionRoutes(extensions: readonly Extension[]): RouteObject[] {
   const seen = new Set<string>();
-  return extensions.flatMap((extension) => {
-    if (seen.has(extension.key)) {
-      throw new Error(`Two extensions share the key "${extension.key}"; each key names one extension's pages.`);
+  for (const extension of extensions) {
+    for (const key of [extension.key, ...(extension.legacyKeys ?? [])]) {
+      if (seen.has(key)) {
+        throw new Error(`Two extensions share the key "${key}"; each key names one extension's pages.`);
+      }
+      seen.add(key);
     }
-    seen.add(extension.key);
-    return routesOf(extension);
+  }
+  return extensions.flatMap((extension) => [...routesOf(extension), ...legacyRoutesOf(extension)]);
+}
+
+/**
+ * The routes that carry a bookmark to an extension's old key, `x/<old>` and
+ * everything under it, to the same place under its key, query included. Each
+ * old key is held to `KEY_PATTERN`, as a key is.
+ */
+function legacyRoutesOf(extension: Extension): RouteObject[] {
+  return (extension.legacyKeys ?? []).flatMap((old) => {
+    if (!KEY_PATTERN.test(old)) {
+      throw new Error(`The extension "${extension.key}" names the legacy key ${JSON.stringify(old)}, which cannot name a route.`);
+    }
+    const element = <LegacyRedirect from={old} to={extension.key} />;
+    return [
+      { path: `${EXTENSION}/${old}`, element },
+      { path: `${EXTENSION}/${old}/*`, element },
+    ];
   });
+}
+
+/** Replaces the `x/<from>` segment of the address with `x/<to>`. */
+function LegacyRedirect({ from, to }: { from: string; to: string }): ReactNode {
+  const { pathname, search, hash } = useLocation();
+  const old = `/${EXTENSION}/${from}`;
+  const at = pathname.indexOf(old);
+  const rest = pathname.slice(at + old.length);
+  const target = `${pathname.slice(0, at)}/${EXTENSION}/${to}${rest}${search}${hash}`;
+  return <Navigate replace to={target} />;
 }
 
 /** Lowercase letters, digits and inner hyphens, 2 to 40 characters - the

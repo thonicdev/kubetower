@@ -7,6 +7,7 @@ import type { Extension, ExtensionTabProps } from '../../extension';
 import { ShellProvider } from '../../shell/ShellContext';
 import { renderWithClient, stubFetch, type StubReply } from '../../testing/harness';
 import type { ObjectIdentity } from './address';
+import { currentTabAddress } from './extensionTabs';
 import { ObjectDetail } from './ObjectDetail';
 
 /**
@@ -29,6 +30,7 @@ function Runs({ cluster, kind, namespace, name }: ExtensionTabProps) {
 
 const kubecron: Extension = {
   key: 'kubecron',
+  legacyKeys: ['scheduled'],
   nav: { label: 'KubeCron', path: 'x/kubecron' },
   routes: [],
   tabs: [{ key: 'runs', label: 'KubeCron', kinds: ['pods', 'jobs', 'cronjobs'], Component: Runs }],
@@ -106,6 +108,24 @@ describe("an extension's tab in the object panel", () => {
     mount(pod, '/c/prod/pods?tab=x.kubecron.runs');
     expect(await screen.findByTestId('runs')).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'KubeCron' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('opens from an address written under its legacy key', async () => {
+    stubFetch({ [PATH]: ok, '/api/c/prod/nav': menu('kubecron') });
+    mount(pod, '/c/prod/pods?tab=x.scheduled.runs');
+    expect(await screen.findByTestId('runs')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'KubeCron' }).getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('currentTabAddress', () => {
+  it('rewrites a legacy key to the current one and leaves every other value alone', () => {
+    expect(currentTabAddress([kubecron], 'x.scheduled.runs')).toBe('x.kubecron.runs');
+    expect(currentTabAddress([kubecron], 'x.kubecron.runs')).toBe('x.kubecron.runs');
+    expect(currentTabAddress([kubecron], 'x.other.runs')).toBe('x.other.runs');
+    expect(currentTabAddress([kubecron], 'x.scheduled')).toBe('x.scheduled');
+    expect(currentTabAddress([kubecron], 'events')).toBe('events');
+    expect(currentTabAddress([kubecron], undefined)).toBeUndefined();
   });
 });
 

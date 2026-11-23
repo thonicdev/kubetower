@@ -15,7 +15,7 @@ import { EVENTS_ANSWERS } from './events.fixture';
 import { jvmClassHistogram } from './jvm-histogram.fixture';
 import { jvmMemoryHistory } from './jvm-history.fixture';
 import { jvmThreadDump } from './jvm-threads.fixture';
-import type { Container as JvmContainer, Inspection as JvmInspection, Inventory as JvmInventory, PodAnswer as JvmPod } from '../app/extras/jvm/data';
+import type { Container as JvmContainer, Inspection as JvmInspection, Inventory as JvmInventory, PodAnswer as JvmPod } from '../app/extras/runtime/data';
 import type { Deployment as RedisDeployment, InstanceAnswer, Inventory } from '../app/extras/redis/data';
 import { BADGE_ANSWERS, CASES as BADGE_CASES } from './netinspect-badges.fixture';
 import { NETINSPECT_ANSWERS, NETINSPECT_AT, NETINSPECT_NEW_ANSWERS, NETINSPECT_NEW_AT } from './netinspect.fixture';
@@ -805,7 +805,7 @@ export const CNPG_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
 };
 
 /* -------------------------------------------------------------------------- */
-/* The JVM Inspector                                                           */
+/* The Runtime Inspector                                                       */
 /* -------------------------------------------------------------------------- */
 
 const MIB = 1024 * 1024;
@@ -933,7 +933,7 @@ const JVM_INVENTORY: JvmInventory = {
 };
 
 export const JVM_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
-  [base('jvm')]: JVM_INVENTORY,
+  [base('runtime')]: JVM_INVENTORY,
 };
 
 /**
@@ -1049,7 +1049,7 @@ const JVM_INSPECTION: JvmInspection = {
   notes: [],
 };
 
-const JVM_POD_PATH = `/x/${EXTRA_CLUSTER}/jvm/pod/shop/billing-7c9f4d-x2kq`;
+const JVM_POD_PATH = `/x/${EXTRA_CLUSTER}/runtime/pod/shop/billing-7c9f4d-x2kq`;
 
 export const JVM_TAB_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
   [JVM_POD_PATH]: JVM_POD,
@@ -1066,7 +1066,7 @@ export const JVM_TILE_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
   [JVM_POD_PATH]: JVM_POD,
   [`/api/c/${EXTRA_CLUSTER}/nav`]: {
     state: 'ok',
-    data: { groups: [{ key: 'extra', label: 'Extra', items: [{ text: 'JVM Inspector', href: `/c/${EXTRA_CLUSTER}/x/jvm` }], deferred: false }] },
+    data: { groups: [{ key: 'extra', label: 'Extra', items: [{ text: 'Runtime Inspector', href: `/c/${EXTRA_CLUSTER}/x/runtime` }], deferred: false }] },
   },
 };
 
@@ -1155,7 +1155,7 @@ export const EXTRA_SCENES = {
   'extra-dns-refused': { key: 'dns', answers: dnsStats(new ExtraProblem(DNS_REFUSED.status, DNS_REFUSED.body)) },
   'extra-dns-failed': { key: 'dns', answers: dnsStats(new ExtraProblem(DNS_FAILED.status, DNS_FAILED.body)) },
   'extra-redis': { key: 'redis', answers: REDIS_ANSWERS },
-  'extra-jvm': { key: 'jvm', answers: JVM_ANSWERS },
+  'extra-runtime': { key: 'runtime', answers: JVM_ANSWERS },
   'extra-netinspect': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.cluster },
   'extra-netinspect-namespace': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.namespace },
   'extra-netinspect-service': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.service },
@@ -1202,16 +1202,16 @@ export const EXTRA_SCENES = {
   'extra-pending-workload': { key: 'pending', answers: PENDING_WORKLOAD_ANSWERS(EXTRA_CLUSTER), tab: PENDING_CHECKOUT },
   'extra-pending-refused': { key: 'pending', answers: PENDING_WORKLOAD_ANSWERS(EXTRA_CLUSTER), tab: PENDING_REFUSED },
   // The page with a pod's JVM tab open beside the list.
-  'extra-jvm-panel': { key: 'jvm', answers: { ...JVM_ANSWERS, ...JVM_TAB_ANSWERS } },
+  'extra-runtime-panel': { key: 'runtime', answers: { ...JVM_ANSWERS, ...JVM_TAB_ANSWERS } },
   // Not a page: the JVM tab of one pod, drawn as the object panel draws it.
-  'extra-jvm-tab': {
-    key: 'jvm',
+  'extra-runtime-tab': {
+    key: 'runtime',
     answers: JVM_TAB_ANSWERS,
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // The same tab on a JVM started with -XX:+DisableAttachMechanism: Inspect is refused.
-  'extra-jvm-attach-disabled': {
-    key: 'jvm',
+  'extra-runtime-attach-disabled': {
+    key: 'runtime',
     answers: {
       ...JVM_TAB_ANSWERS,
       [`${JVM_POD_PATH}/app/inspect`]: new ExtraProblem(422, {
@@ -1223,26 +1223,26 @@ export const EXTRA_SCENES = {
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // The same tab, for its thread dump: the deadlock of the Go tests' JDK 21 dump.
-  'extra-jvm-threads': {
-    key: 'jvm',
+  'extra-runtime-threads': {
+    key: 'runtime',
     answers: JVM_TAB_ANSWERS,
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // The same tab, for its class histogram: the JDK 21 histogram of the Go tests.
-  'extra-jvm-histogram': {
-    key: 'jvm',
+  'extra-runtime-histogram': {
+    key: 'runtime',
     answers: JVM_TAB_ANSWERS,
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // The same tab, for its memory history: a week of a container that restarted.
-  'extra-jvm-history': {
-    key: 'jvm',
+  'extra-runtime-history': {
+    key: 'runtime',
     answers: JVM_TAB_ANSWERS,
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // Not a page either: the tile the extra draws at the top of the pod's Details.
-  'extra-jvm-tile': {
-    key: 'jvm',
+  'extra-runtime-tile': {
+    key: 'runtime',
     answers: JVM_TILE_ANSWERS,
     shortcut: { kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
