@@ -11,7 +11,7 @@ import {
   CERTMANAGER_TAB,
 } from './certmanager.fixture';
 import { DNS_ANSWERS, DNS_FAILED, DNS_FORWARD_ANSWERS, DNS_NO_METRICS_ANSWERS, DNS_REFUSED } from './dns.fixture';
-import { EVENTS_ANSWERS } from './events.fixture';
+import { EVENTS_ANSWERS, EVENTS_LONG_ANSWERS } from './events.fixture';
 import { jvmClassHistogram } from './jvm-histogram.fixture';
 import { jvmMemoryHistory } from './jvm-history.fixture';
 import { jvmThreadDump } from './jvm-threads.fixture';
@@ -1132,6 +1132,8 @@ export const EXTRA_SCENES = {
   'extra-kubeadjust-namespace': { key: 'kubeadjust', answers: KUBEADJUST_ANSWERS, at: 'x/kubeadjust?ns=shop' },
   'extra-events': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER) },
   'extra-events-namespace': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER), at: 'x/events?namespace=shop' },
+  // The same page with names as long as Kubernetes allows (#34).
+  'extra-events-long': { key: 'events', answers: EVENTS_LONG_ANSWERS(EXTRA_CLUSTER) },
   // Not pages: the compact line on a Deployment's Details, and its Events tab, each alone.
   'extra-events-line': {
     key: 'events',
