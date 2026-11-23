@@ -406,6 +406,44 @@ func TestTheSessionAWSHomeSeesASessionCreatedAfterItOpened(t *testing.T) {
 	}
 }
 
+// A session whose plugins are not the AWS CLI creates nothing in the
+// operator's home.
+func TestTheSessionAWSHomeCreatesNoSSOCacheForAnotherPlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := eksConfig()
+	for _, user := range cfg.AuthInfos {
+		user.Exec.Command = "gke-gcloud-auth-plugin"
+		user.Exec.Args = nil
+	}
+	if _, err := newSessionAWSHome(t.TempDir()).separate(cfg); err != nil {
+		t.Fatalf("separating: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".aws")); err == nil {
+		t.Error("~/.aws was created for a plugin that is not the AWS CLI")
+	}
+}
+
+// An SSO cache that cannot be created refuses the redirect.
+func TestTheSessionAWSHomeRefusesAnSSOCacheThatCannotBeMade(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".aws"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	cfg := eksConfig()
+	if changed, err := newSessionAWSHome(t.TempDir()).separate(cfg); err == nil || changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if _, ok := execEnvOf(t, cfg, "HOME"); ok {
+		t.Error("HOME was redirected without the SSO cache")
+	}
+}
+
 // If the link cannot be made, the redirect must not happen: fixing the
 // assume-role cache by breaking every SSO context is the worse trade, and it is
 // a trade nobody would see being made.

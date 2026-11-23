@@ -11,6 +11,8 @@ import (
 
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/thonicdev/kubetower/internal/ekstoken"
 )
 
 // Giving each context its own AWS CLI credential cache.
@@ -72,7 +74,7 @@ type awsHome struct {
 	Base string
 	// SSODir is the operator's own ~/.aws/sso, linked into every per-context
 	// home so the session token stays shared and renewable, whether or not it
-	// exists yet (defaultAWSHome). Empty shares nothing.
+	// exists yet (linkSSO). Empty shares nothing.
 	SSODir string
 	// ConfigFile and CredentialsFile are the shared ~/.aws/config and
 	// ~/.aws/credentials. Set only when the process environment does not already
@@ -96,21 +98,20 @@ func defaultAWSHome() awsHome {
 	}
 	aws := filepath.Join(home, ".aws")
 
-	// **Linked whether or not it exists yet.** A machine that has never run
-	// `aws sso login` has no ~/.aws/sso when this process starts, and the first
-	// login creates it later. Deciding from its existence here left every
-	// private home without the link for the life of the process: the login
-	// landed in ~/.aws/sso, the plugin looked in its own empty one, and the
-	// context kept failing as an expired session until a restart. separate()
-	// creates the directory instead, as the CLI's own first login would.
+	// SSODir is set whether or not it exists yet: a machine that has never run
+	// `aws sso login` has none at start, and the first login creates it later.
+	// separate() makes it for an `aws` plugin, so that login is seen through the
+	// link instead of being missed until a restart.
 	h := awsHome{Base: filepath.Join(os.TempDir(), awsHomeDirName), SSODir: filepath.Join(aws, "sso")}
-	// Asked once, before any context: a private home without the SSO token
-	// cache authenticates nothing on an SSO profile, so without the link the
-	// whole mechanism is off.
-	if err := canSymlink(h.Base); err != nil {
-		h.Off = fmt.Sprintf("this host cannot create the symlink that shares the SSO token "+
-			"cache (%v), so every context keeps the shared AWS credential cache. On Windows "+
-			"that is the symlink privilege; Developer Mode grants it", err)
+	if info, err := os.Stat(h.SSODir); err == nil && info.IsDir() {
+		// Asked once, before any context: a private home without the SSO token
+		// cache authenticates nothing on an SSO profile, so without the link the
+		// whole mechanism is off.
+		if err := canSymlink(h.Base); err != nil {
+			h.Off = fmt.Sprintf("this host cannot create the symlink that shares the SSO token "+
+				"cache (%v), so every context keeps the shared AWS credential cache. On Windows "+
+				"that is the symlink privilege; Developer Mode grants it", err)
+		}
 	}
 	if os.Getenv("AWS_CONFIG_FILE") == "" {
 		h.ConfigFile = filepath.Join(aws, "config")
@@ -150,13 +151,8 @@ func (h awsHome) separate(cfg *rest.Config, context string) (string, bool, error
 	}
 	if h.SSODir != "" {
 		// Before the environment is written: without the SSO cache the redirect
-		// must not happen. Created when absent, 0700 as the CLI makes it, so the
-		// link is never dangling and a later first login is seen through it.
-		err := os.MkdirAll(h.SSODir, 0o700)
-		if err == nil {
-			err = shareDirectory(h.SSODir, filepath.Join(dir, ".aws", "sso"))
-		}
-		if err != nil {
+		// must not happen.
+		if err := linkSSO(h.SSODir, filepath.Join(dir, ".aws", "sso"), ekstoken.UsesAWSCLI(cfg.ExecProvider)); err != nil {
 			// Remove the unused directory: nothing prunes this temporary tree.
 			_ = os.RemoveAll(dir)
 			return "", false, fmt.Errorf("sharing the SSO token cache into the AWS home for %q: %w", context, err)
@@ -199,6 +195,43 @@ func addEnv(env []clientcmdapi.ExecEnvVar, name, value string) []clientcmdapi.Ex
 		return env
 	}
 	return append(env, clientcmdapi.ExecEnvVar{Name: name, Value: value})
+}
+
+// linkSSO links the operator's SSO token cache into a private home.
+//
+// When it does not exist yet and the plugin is the AWS CLI, it is created, 0700
+// as the CLI makes it: the first `aws sso login` then lands where the link
+// points. When it cannot be linked after being created here (a Windows host
+// without the symlink privilege), it is taken back out and the home goes
+// without the link, which is what such a host had before; the same failure on
+// a directory that was already there is an error, and nothing is redirected.
+// Any other plugin gets the link only to a directory that exists, and nothing
+// is created for it.
+func linkSSO(ssoDir, link string, aws bool) error {
+	if isDir(ssoDir) {
+		return shareDirectory(ssoDir, link)
+	}
+	if !aws {
+		return nil
+	}
+	parent := filepath.Dir(ssoDir)
+	hadParent := isDir(parent)
+	if err := os.MkdirAll(ssoDir, 0o700); err != nil {
+		return fmt.Errorf("making the SSO token cache at %s: %w", ssoDir, err)
+	}
+	if err := shareDirectory(ssoDir, link); err != nil {
+		// Empty directories only: os.Remove refuses anything else.
+		_ = os.Remove(ssoDir)
+		if !hadParent {
+			_ = os.Remove(parent)
+		}
+	}
+	return nil
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // shareDirectory makes link a symlink to target, idempotently.

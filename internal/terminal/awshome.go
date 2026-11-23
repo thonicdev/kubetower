@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/thonicdev/kubetower/internal/ekstoken"
 )
 
 // Giving each terminal session its own AWS CLI credential cache.
@@ -68,7 +70,8 @@ type sessionAWSHome struct {
 	// Dir is the per-session HOME.
 	Dir string
 	// SSODir is the operator's own ~/.aws/sso, linked into Dir so the session
-	// token stays shared and renewable, created if absent. Empty shares nothing.
+	// token stays shared and renewable, whether or not it exists yet
+	// (linkSessionSSO). Empty shares nothing.
 	SSODir string
 	// ConfigFile and CredentialsFile are the shared ~/.aws/config and
 	// ~/.aws/credentials, set only when this process's environment does not
@@ -93,8 +96,8 @@ func newSessionAWSHome(workdir string) sessionAWSHome {
 	aws := filepath.Join(home, ".aws")
 
 	// Whether or not it exists yet: a terminal opened before the machine's first
-	// `aws sso login` is where that login is typed, and its kubectl must see the
-	// session it creates (separate makes the directory).
+	// `aws sso login` is where that login is typed, and its kubectl has to see
+	// the session it writes (linkSessionSSO).
 	h := sessionAWSHome{Dir: filepath.Join(workdir, sessionAWSHomeDir), SSODir: filepath.Join(aws, "sso")}
 	if os.Getenv("AWS_CONFIG_FILE") == "" {
 		h.ConfigFile = filepath.Join(aws, "config")
@@ -139,11 +142,11 @@ func (h sessionAWSHome) separate(cfg *clientcmdapi.Config) (bool, error) {
 		// Before any environment is written: without its SSO token cache the home
 		// authenticates nothing on an SSO profile, so if this fails the redirect must
 		// not happen.
-		err := os.MkdirAll(h.SSODir, 0o700)
-		if err == nil {
-			err = shareAWSDirectory(h.SSODir, filepath.Join(h.Dir, ".aws", "sso"))
+		aws := false
+		for _, exec := range targets {
+			aws = aws || ekstoken.UsesAWSCLI(exec)
 		}
-		if err != nil {
+		if err := linkSessionSSO(h.SSODir, filepath.Join(h.Dir, ".aws", "sso"), aws); err != nil {
 			return false, fmt.Errorf("sharing the SSO token cache into the session AWS home: %w", err)
 		}
 	}
@@ -183,6 +186,37 @@ func addExecEnv(env []clientcmdapi.ExecEnvVar, name, value string) []clientcmdap
 		return env
 	}
 	return append(env, clientcmdapi.ExecEnvVar{Name: name, Value: value})
+}
+
+// linkSessionSSO is internal/cluster's linkSSO for a session's home: created
+// for an `aws` plugin when missing, taken back out with no link where the link
+// cannot be made on a directory created here, linked only where it exists for
+// any other plugin.
+func linkSessionSSO(ssoDir, link string, aws bool) error {
+	if isAWSDir(ssoDir) {
+		return shareAWSDirectory(ssoDir, link)
+	}
+	if !aws {
+		return nil
+	}
+	parent := filepath.Dir(ssoDir)
+	hadParent := isAWSDir(parent)
+	if err := os.MkdirAll(ssoDir, 0o700); err != nil {
+		return fmt.Errorf("making the SSO token cache at %s: %w", ssoDir, err)
+	}
+	if err := shareAWSDirectory(ssoDir, link); err != nil {
+		// Empty directories only: os.Remove refuses anything else.
+		_ = os.Remove(ssoDir)
+		if !hadParent {
+			_ = os.Remove(parent)
+		}
+	}
+	return nil
+}
+
+func isAWSDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // shareAWSDirectory makes link a symlink to target, idempotently.

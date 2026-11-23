@@ -443,6 +443,64 @@ func TestNoSSODirectoryThatCanBeMadeRefusesTheRedirect(t *testing.T) {
 	}
 }
 
+// An empty SSODir shares nothing, and that is not a failure.
+func TestNoSSODirectoryIsNotAFailure(t *testing.T) {
+	home, _ := awsHomeForTest(t)
+	home.SSODir = ""
+
+	cfg := &rest.Config{ExecProvider: execConfig()}
+	dir, changed, err := home.separate(cfg, "STAGING-EKS-1_OWNER")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".aws", "sso")); err == nil {
+		t.Error("a link was made to nothing")
+	}
+}
+
+// A plugin that is not the AWS CLI (kubelogin, gke-gcloud-auth-plugin) has no
+// SSO cache to share: nothing is created in the operator's home for it.
+func TestNoSSOCacheIsCreatedForAnotherPlugin(t *testing.T) {
+	home, root := awsHomeForTest(t)
+	home.SSODir = filepath.Join(root, "user", ".aws", "sso")
+
+	exec := execConfig()
+	exec.Command = "kubelogin"
+	exec.Args = []string{"get-token"}
+	cfg := &rest.Config{ExecProvider: exec}
+	if _, changed, err := home.separate(cfg, "AKS-1"); err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "user", ".aws")); err == nil {
+		t.Error("~/.aws was created for a plugin that is not the AWS CLI")
+	}
+}
+
+// Where the link cannot be made (a Windows host without the symlink
+// privilege), a directory created here is taken back out and the context
+// keeps its private home without the link, as such a host always had.
+func TestASSOCacheThatCannotBeLinkedIsTakenBackOut(t *testing.T) {
+	home, root := awsHomeForTest(t)
+	user := filepath.Join(root, "user")
+	if err := os.MkdirAll(user, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home.SSODir = filepath.Join(user, ".aws", "sso")
+	// A real directory where the link belongs: the link fails on every platform.
+	if err := os.MkdirAll(filepath.Join(homeFor(home.Base, "SHOP-EKS-1"), ".aws", "sso"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &rest.Config{ExecProvider: execConfig()}
+	_, changed, err := home.separate(cfg, "SHOP-EKS-1")
+	if err != nil || !changed {
+		t.Fatalf("the context lost its private home: changed=%v err=%v", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(user, ".aws")); err == nil {
+		t.Error("~/.aws was left behind by a link that could not be made")
+	}
+}
+
 // Base empty is the switch that turns the whole thing off — no home directory to
 // read the shared config out of, so no redirect that could find a profile.
 func TestWithNoBaseNothingIsRedirected(t *testing.T) {
