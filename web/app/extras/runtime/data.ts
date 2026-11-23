@@ -958,3 +958,82 @@ export async function classHistogram(
   }
   return body;
 }
+
+// --- Go's pprof (`pprof.go`) ----------------------------------------------------
+
+/** `GET …/{container}/pprof`: where pprof listens and whether it answered. */
+export interface PprofState {
+  port: number;
+  source: 'annotation' | 'port' | 'default';
+  reachable: boolean;
+  detail?: string;
+}
+
+/** Goroutines in one state with one stack. */
+export interface GoroutineGroup {
+  state: string;
+  count: number;
+  frames: string[];
+  longest?: string;
+}
+
+/** `POST …/pprof/goroutines`. */
+export interface Goroutines {
+  total: number;
+  groups: GoroutineGroup[];
+  truncated: boolean;
+  raw: string;
+}
+
+/** The profiles downloaded, and the seconds each may last: the route refuses any other. */
+export const PPROF_SECONDS = { profile: [10, 30, 60], trace: [5, 10] } as const;
+export type PprofDownload = 'heap' | 'profile' | 'trace';
+
+const PPROF_EXT: Readonly<Record<PprofDownload, string>> = { heap: '.heap.pb.gz', profile: '.cpu.pb.gz', trace: '.trace' };
+
+function pprofPath(cluster: string, namespace: string, name: string, container: string): string {
+  return `${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/pprof`;
+}
+
+export function pprofQuery(cluster: string, namespace: string, name: string, container: string) {
+  return queryOptions({
+    queryKey: [KEY, 'pprof', cluster, namespace, name, container] as const,
+    queryFn: async ({ signal }) => {
+      try {
+        return await request<PprofState>(pprofPath(cluster, namespace, name, container), { signal });
+      } catch (error) {
+        throw problemOf(error);
+      }
+    },
+    staleTime: 30_000,
+    gcTime: 60_000,
+    retry: false,
+  });
+}
+
+export async function goroutines(cluster: string, namespace: string, name: string, container: string): Promise<Goroutines> {
+  let body: Goroutines;
+  try {
+    body = await request<Goroutines>(`${pprofPath(cluster, namespace, name, container)}/goroutines`, { method: 'POST' });
+  } catch (error) {
+    throw problemOf(error);
+  }
+  if (!Array.isArray(body.groups)) throw new EnvelopeError('The Runtime Inspector answered without the goroutines', body);
+  return body;
+}
+
+export async function pprofDownload(
+  cluster: string,
+  namespace: string,
+  name: string,
+  container: string,
+  profile: PprofDownload,
+  seconds?: number,
+): Promise<Downloaded> {
+  const query = seconds === undefined ? '' : `?seconds=${String(seconds)}`;
+  try {
+    return await download(`${pprofPath(cluster, namespace, name, container)}/${profile}${query}`, `${name}-${container}${PPROF_EXT[profile]}`);
+  } catch (error) {
+    throw problemOf(error);
+  }
+}
