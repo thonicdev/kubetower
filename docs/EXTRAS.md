@@ -135,6 +135,29 @@ whatever failed spelled out - and they are what makes an empty page readable:
 
 ---
 
+## How the Runtime Inspector reads a runtime
+
+Each container is read from its pod's spec alone; nothing runs in it. The
+strongest hint decides: a command line (`java`, `node`, `npm`, `python3`,
+`gunicorn`, `uvicorn`…) over an environment variable (`JAVA_TOOL_OPTIONS`,
+`NODE_OPTIONS`, `PYTHONUNBUFFERED`, `GOMEMLIMIT`…) over the image's name. A
+mesh proxy (`istio-proxy`, `linkerd-proxy`, envoy) and a container named
+`*-exporter` are not read. An init container that runs to completion is not
+read; a native sidecar is.
+
+The pod's annotation wins over every hint:
+
+```yaml
+metadata:
+  annotations:
+    kubetower.io/runtime: python                 # every container
+    kubetower.io/runtime: app=go,metrics=none    # per container; none takes one out
+```
+
+The Runtime column names each runtime a pod or workload runs (`Java · Go`),
+toned by the worst Java container's heap risk where there is one. A pod gets a
+tab per runtime: JVM, Go, Node.js, Python.
+
 ## The Runtime Inspector’s JVM tab
 
 The Runtime Inspector’s page reads pod specs only and runs nothing. On a pod whose

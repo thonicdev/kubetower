@@ -1,8 +1,8 @@
 import { lazy } from 'react';
-import { Pending, type Extension } from '@kubetower/ui';
+import { Pending, type Extension, type ExtensionTabProps } from '@kubetower/ui';
 
 import { about } from './about';
-import { COLUMN_KINDS, KEY, getPod, javaColumn } from './data';
+import { COLUMN_KINDS, KEY, RUNTIME_LABEL, javaColumn, sharedPod } from './data';
 import { TAB, podTile } from './shortcut';
 
 /**
@@ -35,9 +35,9 @@ export const runtimeInspector: Extension = {
       hydrateFallbackElement: <Pending what="this page" />,
     },
   ],
-  // "Java" on every pod the spec shows as Java, and on the workloads that own
-  // them, toned by the worst container's risk.
-  columns: [{ key: 'heap', label: 'Java', kinds: COLUMN_KINDS, cells: javaColumn }],
+  // The runtimes of every pod the spec shows one for, and of the workloads
+  // that own them; toned by the worst Java container's risk where there is one.
+  columns: [{ key: 'heap', label: 'Runtime', kinds: COLUMN_KINDS, cells: javaColumn }],
   // A tile at the top of a Java pod's Details, from its spec alone: the
   // runtime, the risk, the heap against the limit; it opens the JVM tab.
   shortcuts: [{ key: 'pod', kinds: ['pods'], resolve: podTile }],
@@ -46,14 +46,19 @@ export const runtimeInspector: Extension = {
       key: TAB,
       label: 'JVM',
       kinds: ['pods'],
-      probe: async ({ cluster, namespace, name }, signal) => {
-        if (namespace === undefined || namespace === '') return false;
-        // A rejection draws no tab: the tab is for a pod the spec says is
-        // Java, and a pod the console could not read is not shown to be one.
-        const pod = await getPod(cluster, namespace, name, signal);
-        return pod.java;
-      },
+      // A rejection draws no tab: the tab is for a pod the spec says is
+      // Java, and a pod the console could not read is not shown to be one.
+      probe: async ({ cluster, namespace, name }) =>
+        namespace !== undefined && namespace !== '' && (await sharedPod(cluster, namespace, name)).java,
       Component: lazy(() => import('./JVMTab')),
     },
+    ...(['go', 'node', 'python'] as const).map((runtime) => ({
+      key: runtime,
+      label: RUNTIME_LABEL[runtime],
+      kinds: ['pods'],
+      probe: async ({ cluster, namespace, name }: ExtensionTabProps) =>
+        namespace !== undefined && namespace !== '' && ((await sharedPod(cluster, namespace, name)).runtimes ?? []).includes(runtime),
+      Component: lazy(() => import('./RuntimeTab').then((m) => ({ default: m.tabFor(runtime) }))),
+    })),
   ],
 };

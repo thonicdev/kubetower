@@ -17,6 +17,9 @@ import memoryHistory from './assets/memory-history.png';
  */
 export const about: ExtensionAbout = {
   description:
+    'Reads which runtime each container runs, Java, Go, Node.js or Python, from its pod’s spec alone (the command line, ' +
+    'the environment, the image, or the kubetower.io/runtime annotation, which wins), shows it in a "Runtime" column ' +
+    'and gives a pod a tab per runtime. ' +
     'Finds the pods that probably run Java, from their spec alone: the image, a command line that starts java, ' +
     'the Java environment variables. For each Java container it estimates the maximum heap from the options the ' +
     'JVM reads and the memory limit, and warns when the heap leaves too little room under the limit and the ' +

@@ -23,7 +23,7 @@ export const ROW_STEP = 100;
 
 /** One reason to think a container runs a JVM, and what it was read from. */
 export interface Hint {
-  source: 'image' | 'command' | 'env';
+  source: 'image' | 'command' | 'env' | 'annotation';
   reason: string;
 }
 
@@ -54,11 +54,21 @@ export interface Risk {
   sentence: string;
 }
 
+/** The runtimes the spec can show (`extras/runtimeinspect/runtimes.go`). */
+export type Runtime = 'java' | 'go' | 'node' | 'python';
+
+/** Each runtime as a badge names it. */
+export const RUNTIME_LABEL: Readonly<Record<Runtime, string>> = { java: 'Java', go: 'Go', node: 'Node.js', python: 'Python' };
+
 export interface Container {
   name: string;
   image: string;
+  /** What the spec says it runs; empty is "not seen from the spec". Optional
+   *  for an answer that predates it. */
+  runtime?: Runtime | '';
   /** False is "not seen from the spec", never "not Java". */
   java: boolean;
+  /** What `runtime` rests on. */
   hints: Hint[];
   request: Memory | null;
   limit: Memory | null;
@@ -97,6 +107,8 @@ export interface Pod {
   name: string;
   phase: string;
   java: boolean;
+  /** Its containers' runtimes, each once. Optional for an answer that predates it. */
+  runtimes?: Runtime[];
   containers: Container[];
   /** Null for a pod nothing controls. Optional for an answer that predates it. */
   owner?: Owner | null;
@@ -348,6 +360,23 @@ export async function getPod(cluster: string, namespace: string, name: string, s
     throw new EnvelopeError('The JVM Inspector answered without the pod’s containers', body);
   }
   return body;
+}
+
+/** The pod's answers still in flight, so that the runtime tabs' probes on one
+ *  pod, asked together, read it once. Dropped as they settle. */
+const shared = new Map<string, Promise<PodAnswer>>();
+
+/** `getPod`, shared between the callers that ask within the same moment. No
+ *  signal: one caller leaving does not cancel the others' read. */
+export function sharedPod(cluster: string, namespace: string, name: string): Promise<PodAnswer> {
+  const path = podPath(cluster, namespace, name);
+  const found = shared.get(path);
+  if (found !== undefined) return found;
+  const asked = getPod(cluster, namespace, name);
+  shared.set(path, asked);
+  const drop = () => shared.delete(path);
+  asked.then(drop, drop);
+  return asked;
 }
 
 export function podQuery(cluster: string, namespace: string, name: string) {

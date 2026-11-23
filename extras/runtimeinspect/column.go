@@ -3,13 +3,14 @@ package runtimeinspect
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/thonicdev/kubetower/extension"
 )
 
-// ColumnCell is one cell of the "Java" column in the console's lists, the
+// ColumnCell is one cell of the "Runtime" column in the console's lists, the
 // shape `@kubetower/ui`'s ExtensionCell declares.
 type ColumnCell struct {
 	Text string `json:"text"`
@@ -96,7 +97,35 @@ func containerLine(pod string, c Container) string {
 	return name + ": " + heap + " of " + limit + " (" + grade + ")"
 }
 
-// pageHref is the JVM Inspector's page narrowed to one namespace and a search.
+// runtimeNames are the runtimes as a cell names them.
+var runtimeNames = map[string]string{
+	runtimeJava: "Java", runtimeGo: "Go", runtimeNode: "Node.js", runtimePython: "Python",
+}
+
+// runtimesLabel is the cell's text: each runtime once, `Java · Go`.
+func runtimesLabel(runtimes []string) string {
+	names := make([]string, 0, len(runtimes))
+	for _, r := range runtimes {
+		names = append(names, runtimeNames[r])
+	}
+	return strings.Join(names, " · ")
+}
+
+// runtimeLine is one container that is not Java in a hint: its runtime and
+// the first thing it rests on.
+func runtimeLine(pod string, c Container) string {
+	name := c.Name
+	if pod != "" {
+		name = pod + "/" + c.Name
+	}
+	line := name + ": " + runtimeNames[c.Runtime]
+	if len(c.Hints) > 0 {
+		line += " (" + c.Hints[0].Reason + ")"
+	}
+	return line
+}
+
+// pageHref is the Runtime Inspector's page narrowed to one namespace and a search.
 func pageHref(cluster, namespace, find string) string {
 	q := url.Values{"ns": {namespace}, "q": {find}}
 	return "/c/" + url.PathEscape(cluster) + "/x/" + Key + "?" + q.Encode()
@@ -112,7 +141,7 @@ func (JVM) column(h extension.Host) http.Handler {
 		cluster, kind := r.PathValue("cluster"), r.URL.Query().Get("kind")
 		owner, ok := columnKinds[kind]
 		if !ok {
-			writeProblem(w, http.StatusBadRequest, CodeBadRequest, "The Java column is drawn on pods and on the "+
+			writeProblem(w, http.StatusBadRequest, CodeBadRequest, "The Runtime column is drawn on pods and on the "+
 				"workloads that own them, not on "+quote(kind)+".", nil)
 			return
 		}
@@ -121,13 +150,15 @@ func (JVM) column(h extension.Host) http.Handler {
 			writeReadFailure(w, cluster, err)
 			return
 		}
-		pods, _, _ := scan(page.Items)
+		pods, _, _ := scanAny(page.Items)
 		page.Items = nil
 
 		type gathered struct {
-			worst Container
-			lines []string
-			pods  int
+			worst    Container
+			java     bool
+			runtimes []string
+			lines    []string
+			pods     int
 		}
 		by := map[string]*gathered{}
 		var order []string
@@ -155,17 +186,21 @@ func (JVM) column(h extension.Host) http.Handler {
 			}
 			g.pods++
 			for _, c := range p.Containers {
+				if !slices.Contains(g.runtimes, c.Runtime) {
+					g.runtimes = append(g.runtimes, c.Runtime)
+				}
+				pod := ""
+				if owner != "" {
+					pod = p.Name
+				}
 				if c.Risk == nil {
+					g.lines = append(g.lines, runtimeLine(pod, c))
 					continue
 				}
-				if g.lines == nil || severity(c.Risk.Level) > severity(g.worst.Risk.Level) {
-					g.worst = c
+				if !g.java || severity(c.Risk.Level) > severity(g.worst.Risk.Level) {
+					g.worst, g.java = c, true
 				}
-				if owner == "" {
-					g.lines = append(g.lines, containerLine("", c))
-				} else {
-					g.lines = append(g.lines, containerLine(p.Name, c))
-				}
+				g.lines = append(g.lines, containerLine(pod, c))
 			}
 		}
 
@@ -180,16 +215,16 @@ func (JVM) column(h extension.Host) http.Handler {
 			if len(hint) > 4 {
 				hint = append(hint[:4:4], "and "+strconv.Itoa(len(g.lines)-4)+" more")
 			}
+			label := runtimesLabel(g.runtimes)
 			prefix := ""
 			if owner != "" {
-				prefix = strconv.Itoa(g.pods) + " Java " + plural(g.pods, "pod") + ". "
+				prefix = strconv.Itoa(g.pods) + " " + label + " " + plural(g.pods, "pod") + ". "
 			}
-			out[key] = ColumnCell{
-				Text: "Java",
-				Tone: toneOf(g.worst.Risk.Level),
-				Hint: prefix + strings.Join(hint, "; "),
-				Href: pageHref(cluster, namespace, name),
+			cell := ColumnCell{Text: label, Hint: prefix + strings.Join(hint, "; ")}
+			if g.java {
+				cell.Tone, cell.Href = toneOf(g.worst.Risk.Level), pageHref(cluster, namespace, name)
 			}
+			out[key] = cell
 		}
 		writeJSON(w, http.StatusOK, out)
 	})

@@ -3,11 +3,12 @@ package runtimeinspect
 import (
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/thonicdev/kubetower/extension"
 )
 
-// Suggest is whether the cluster runs probable Java pods, for the banner that
+// Suggest is whether the cluster runs pods of a runtime it knows, for the banner that
 // offers to turn the inspector on (extension.Suggester).
 //
 // One pod list through Host.List, reviewed for the person behind r, read
@@ -19,10 +20,19 @@ func (JVM) Suggest(r *http.Request, h extension.Host, cluster string) (string, e
 	if err != nil {
 		return "", err
 	}
-	pods, _, _ := scan(page.Items)
+	pods, _, _ := scanAny(page.Items)
 	if len(pods) == 0 {
 		return "", nil
 	}
+	var runtimes []string
+	for _, p := range pods {
+		for _, r := range p.Runtimes {
+			if !slices.Contains(runtimes, r) {
+				runtimes = append(runtimes, r)
+			}
+		}
+	}
+	slices.SortFunc(runtimes, func(a, b string) int { return providerOrder(a) - providerOrder(b) })
 	namespaces := map[string]bool{}
 	for _, p := range pods {
 		namespaces[p.Namespace] = true
@@ -31,7 +41,7 @@ func (JVM) Suggest(r *http.Request, h extension.Host, cluster string) (string, e
 	if !page.Complete {
 		floor = "At least "
 	}
-	return fmt.Sprintf("%s%d probable Java %s in %d %s", floor, len(pods), plural(len(pods), "pod"),
+	return fmt.Sprintf("%s%d probable %s %s in %d %s", floor, len(pods), runtimesLabel(runtimes), plural(len(pods), "pod"),
 		len(namespaces), plural(len(namespaces), "namespace")), nil
 }
 
@@ -45,6 +55,6 @@ func plural(n int, word string) string {
 var _ extension.Suggester = JVM{}
 
 // Component names what Suggest looks for (extension.Component).
-func (JVM) Component() string { return "Java pods" }
+func (JVM) Component() string { return "Java, Go, Node.js or Python pods" }
 
 var _ extension.Component = JVM{}
