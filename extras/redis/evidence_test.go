@@ -145,6 +145,45 @@ func TestAPodBehindAnEvidencedServiceIsAMember(t *testing.T) {
 	}
 }
 
+// Labels that only contain the word, on the Service, its selector or its pod,
+// say what it fronts; a tool's label does not.
+func TestALabelContainingTheWordIsEvidence(t *testing.T) {
+	h := newHost()
+	h.fronted(t, "rv", "a", map[string]string{"app": "redis"}, map[string]string{"x": "a"},
+		[]corev1.ServicePort{{Name: "client", Port: 7000}}, "example/cache:1")
+	h.fronted(t, "rv", "b", nil, map[string]string{"app.kubernetes.io/name": "redis-cluster"},
+		[]corev1.ServicePort{{Name: "client", Port: 7001}}, "example/cache:1")
+	h.fronted(t, "rv", "c", nil, map[string]string{"app": "infra-valkey"},
+		[]corev1.ServicePort{{Name: "client", Port: 7002}}, "example/cache:1")
+	h.fronted(t, "rv", "d", map[string]string{"app": "redis-exporter"}, map[string]string{"x": "d"},
+		[]corev1.ServicePort{{Name: "scrape", Port: 7003}}, "example/cache:1")
+	want := []string{
+		"rv/a:7000 it is labeled app=redis",
+		"rv/b:7001 it is labeled app.kubernetes.io/name=redis-cluster",
+		"rv/c:7002 it is labeled app=infra-valkey",
+	}
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// With a second port, the one alone that looks like a Redis's is the server.
+func TestALabelPicksTheRedisPortAmongSeveral(t *testing.T) {
+	h := newHost()
+	h.fronted(t, "rv", "tls", map[string]string{"app": "valkey"}, map[string]string{"x": "tls"}, []corev1.ServicePort{
+		{Name: "redis-tls", Port: 7000},
+		{Name: "admin-ui", Port: 7001},
+	}, "example/cache:1")
+	h.fronted(t, "rv", "num", map[string]string{"app": "valkey"}, map[string]string{"x": "num"}, []corev1.ServicePort{
+		{Name: "a", Port: 6380},
+		{Name: "b", Port: 7001},
+	}, "example/cache:1")
+	want := []string{"rv/num:6380 it is labeled app=valkey", "rv/tls:7000 it is labeled app=valkey"}
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
 // Nothing to tell two ports apart: neither is guessed.
 func TestTwoPortsAndOnlyALabelAreLeftAlone(t *testing.T) {
 	h := newHost()
