@@ -289,14 +289,14 @@ var bareGo = map[string]allowance{
 	// The process's own plumbing: no cluster's answer is read on them.
 	"internal/launch/run.go:Run": {2, "the update check (a GitHub release, not a cluster) and the macOS window's " +
 		"fact refresh - process plumbing"},
-	"internal/launch/run.go:serve":                  {1, "the HTTP server's Serve - process plumbing; a panic in Serve is fatal by design"},
-	"internal/launch/run.go:watchWindowStop":        {1, "the signal watcher - process plumbing; no cluster is asked"},
-	"internal/launch/appwindow.go:(package level)":  {1, "waits on the browser process it started, nothing else"},
-	"internal/audit/audit.go:Log.write":             {1, "one Write to the audit sink, bounded by a timer; the bytes are the console's own record"},
-	"internal/auth/oidc.go:Auth.Start":              {1, "single sign-on discovery against the identity provider, not a cluster"},
-	"internal/archive/archive.go:Archive.Start":     {1, "the pruner of the archive's own files on this disk; no cluster is asked"},
-	"internal/forward/forward.go:Manager.Open":      {1, "waits on a tunnel's Done and frees its local port; reads nothing from the cluster"},
-	"internal/web/tunnelcap.go:counted": {1, "waits on a tunnel's Done and gives its slot back"},
+	"internal/launch/run.go:serve":                 {1, "the HTTP server's Serve - process plumbing; a panic in Serve is fatal by design"},
+	"internal/launch/run.go:watchWindowStop":       {1, "the signal watcher - process plumbing; no cluster is asked"},
+	"internal/launch/appwindow.go:(package level)": {1, "waits on the browser process it started, nothing else"},
+	"internal/audit/audit.go:Log.write":            {1, "one Write to the audit sink, bounded by a timer; the bytes are the console's own record"},
+	"internal/auth/oidc.go:Auth.Start":             {1, "single sign-on discovery against the identity provider, not a cluster"},
+	"internal/archive/archive.go:Archive.Start":    {1, "the pruner of the archive's own files on this disk; no cluster is asked"},
+	"internal/forward/forward.go:Manager.Open":     {1, "waits on a tunnel's Done and frees its local port; reads nothing from the cluster"},
+	"internal/web/tunnelcap.go:counted":            {1, "waits on a tunnel's Done and gives its slot back"},
 
 	// The terminal's byte relays: they copy a socket to a PTY or a pipe and
 	// back, and decode nothing a cluster sent. The cluster-facing ones - the
