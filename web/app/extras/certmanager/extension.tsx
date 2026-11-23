@@ -27,6 +27,7 @@ const Tab = lazy(() => import('./CertificateTab'));
  */
 export const certmanager: Extension = {
   key: KEY,
+  icon: 'certificate',
   about,
   nav: { label: 'Cert Manager', path: PAGE_PATH },
   routes: [

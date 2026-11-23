@@ -14,6 +14,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const dns: Extension = {
   key: KEY,
+  icon: 'globe',
   about,
   nav: { label: 'DNS', path: PAGE_PATH },
   routes: [

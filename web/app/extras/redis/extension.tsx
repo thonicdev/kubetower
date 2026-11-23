@@ -27,6 +27,7 @@ import { podShortcut, serviceShortcut } from './shortcut';
  */
 export const redis: Extension = {
   key: KEY,
+  icon: 'layers',
   about,
   // In the menu's Extra group: the inventory lists every Redis the cluster
   // runs. The tab and tile below still open one from its Service or Pod.
