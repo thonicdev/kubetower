@@ -214,17 +214,59 @@ func TestRefusedPodsLeaveTheLabel(t *testing.T) {
 	}
 }
 
-func TestImageName(t *testing.T) {
+// An image an internal registry renamed still says what it runs: the word may
+// be inside a segment and in any segment of the path; a tool beside the
+// server is not one.
+func TestRedisImage(t *testing.T) {
 	for image, want := range map[string]string{
-		"valkey/valkey:8.1":                   "valkey",
-		"docker.io/bitnami/valkey:8.1.3":      "valkey",
-		"redis":                               "redis",
-		"registry:5000/team/redis@sha256:abc": "redis",
-		"ghcr.io/x/redis-exporter:1":          "redis-exporter",
-		"Valkey/Valkey":                       "valkey",
+		"valkey/valkey:8.1":                            "valkey",
+		"docker.io/bitnami/valkey:8.1.3":               "valkey",
+		"redis":                                        "redis",
+		"registry:5000/team/redis@sha256:abc":          "redis",
+		"Valkey/Valkey":                                "valkey",
+		"registry.example.com/infra/infravalkey:8":     "infravalkey",
+		"registry.example.com/infra/infra-valkey:8.1":  "infra-valkey",
+		"registry.example.com/platform/infraredis:7.2": "infraredis",
+		"docker.io/bitnami/redis-cluster:7.2":          "redis-cluster",
+		"redis/redis-stack-server:7.4":                 "redis-stack-server",
+		"registry.example.com/redis/server:7":          "redis",
+		"ghcr.io/x/redis-exporter:1":                   "",
+		"oliver006/redis_exporter:v1.62":               "",
+		"rediscommander/redis-commander:latest":        "",
+		"redis/redisinsight:2":                         "",
+		"bitnami/redis-sentinel:7.2":                   "",
+		"registry.example.com/redis/exporter:1":        "",
+		"quay.io/opstree/redis-operator:v0.18":         "",
+		"nginx:1.27":                                   "",
+		"redis.registry.example.com/team/nginx:1":      "",
+		"registry.example.com/infra/infravalky:8":      "",
 	} {
-		if got := imageName(image); got != want {
-			t.Errorf("imageName(%q) = %q, want %q", image, got, want)
+		got, ok := redisImage(image)
+		if ok != (want != "") || got != want {
+			t.Errorf("redisImage(%q) = %q, %v; want %q", image, got, ok, want)
 		}
+	}
+}
+
+// A Valkey from an internal registry, renamed, behind a port named neither
+// like a Redis nor on 6379.
+func TestARenamedValkeyImageIsFound(t *testing.T) {
+	h := newHost()
+	h.fronted(t, "rv", "valkey", nil, cacheSelector,
+		[]corev1.ServicePort{{Name: "tcp-6380", Port: 6380, TargetPort: intstr.FromInt32(6380)}},
+		"registry.example.com/infra/infravalkey:8", 6380)
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, []string{"rv/valkey:6380 its pod runs infravalkey"}) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// An exporter's image behind the only port is not a Redis.
+func TestAnExporterImageIsNotARedis(t *testing.T) {
+	h := newHost()
+	h.fronted(t, "rv", "exporter", nil, cacheSelector,
+		[]corev1.ServicePort{{Name: "scrape", Port: 9200, TargetPort: intstr.FromInt32(9200)}},
+		"registry.example.com/infra/redis-exporter:1", 9200)
+	if got := doors(t, h, "rv"); len(got) != 0 {
+		t.Fatalf("doors = %v", got)
 	}
 }
