@@ -176,6 +176,29 @@ when it opens and greys every action when it does not answer.
 No other pprof endpoint is asked, no signal is sent (`SIGQUIT` ends a Go
 program) and no debugger attaches.
 
+## The Runtime Inspector’s Node.js tab
+
+A Node.js container's tab says whether its inspector answers, through a
+tunnel to the pod. The port is `--inspect=[host:]port` or `--inspect-port`
+from the command line or `NODE_OPTIONS`, else 9229.
+
+**Open inspector** is a confirmed click that changes the process: it runs
+`node -e` with a fixed script in the container (`create pods/exec`, recorded)
+that calls `process._debugProcess(pid)` on the container's Node.js process, as
+`node inspect -p` does. The inspector then **stays open until the process
+restarts**, on the pod's loopback, and anyone who reaches that port can run
+code in the process. A process started with `--disable-sigusr1` cannot be
+opened, and the button is greyed. No `SIGUSR2` is ever sent: without
+`--report-on-signal` it ends the process.
+
+Once open, each a fixed DevTools method:
+
+| Action | Method | Gives |
+|---|---|---|
+| Heap snapshot (confirmed: pauses the process, can double its memory) | `HeapProfiler.takeHeapSnapshot` | `.heapsnapshot`, for Chrome DevTools |
+| CPU profile, 10, 30 or 60 s | `Profiler.start`, `Profiler.stop` | `.cpuprofile` |
+| Diagnostic report | `Runtime.evaluate` of `JSON.stringify(process.report.getReport())` | the report, secret-looking environment values masked |
+
 ## The Runtime Inspector’s JVM tab
 
 The Runtime Inspector’s page reads pod specs only and runs nothing. On a pod whose

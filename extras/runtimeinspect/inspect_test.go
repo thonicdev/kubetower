@@ -415,8 +415,9 @@ func TestOnlyTheWhitelistCanBeSent(t *testing.T) {
 	}
 }
 
-// Host.Exec is called from one place, runner.exec, which takes its argv from
-// jcmdArgv, listArgv, heapDumpArgv or fileArgv only.
+// Host.Exec is called from two places: runner.exec, which takes its argv from
+// jcmdArgv, listArgv, heapDumpArgv or fileArgv only, and the Node.js
+// inspector's open, which takes its argv from nodeOpenArgv only.
 func TestNothingElseCallsExec(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -431,7 +432,7 @@ func TestNothingElseCallsExec(t *testing.T) {
 			t.Fatal(err)
 		}
 		n := strings.Count(string(src), ".Exec(")
-		if want := map[bool]int{true: 1, false: 0}[f == "jcmd.go"]; n != want {
+		if want := map[bool]int{true: 1, false: 0}[f == "jcmd.go" || f == "node.go"]; n != want {
 			t.Errorf("%s calls Exec %d times, want %d", f, n, want)
 		}
 	}

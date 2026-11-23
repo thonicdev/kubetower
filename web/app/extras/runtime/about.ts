@@ -33,6 +33,7 @@ export const about: ExtensionAbout = {
     'confirmation that it runs a full GC and pauses the application. A Flight recorder control records the JVM for 30 seconds to 5 minutes, after a ' +
     'confirmation, and downloads the file for JDK Mission Control; the file is removed from the container.',
   reads: [
+    'On a Node.js pod’s tab: whether its inspector answers; once it is open, on a click, a heap snapshot (confirmed), a CPU profile, and the diagnostic report with its secret-looking environment values masked',
     'On a Go pod’s tab, on a click: its goroutines and profiles, from net/http/pprof where it serves it (the port from kubetower.io/pprof-port, a port named pprof, or 6060)',
     'Pods, and their containers’ images, command lines, environment and memory requests and limits',
     'Each Java container’s working set now, from metrics-server, where the cluster runs one',
@@ -43,6 +44,7 @@ export const about: ExtensionAbout = {
     'On a click of Memory history: seven days of the pod’s containers’ working set, from the cluster’s Prometheus where the console reaches one',
   ],
   permissions: [
+    'create pods/exec, for the Node.js tab, which opens the inspector with node in the container on a confirmed click (process._debugProcess, recorded)',
     'create pods/portforward, for the Go tab, which reads net/http/pprof through a tunnel to the pod (Goroutines, Heap profile, CPU profile, Trace)',
     'list pods',
     'list pods (metrics.k8s.io), for the working sets',
