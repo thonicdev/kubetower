@@ -89,6 +89,21 @@ const EVERY_GLYPH: readonly IconName[] = [
   'starred',
   // Something could not be read in full.
   'warning',
+  // One per shipped extra, on its card and in its About window.
+  'certificate',
+  'delivery',
+  'database',
+  'globe',
+  'pulse',
+  'coffee',
+  'sliders',
+  'clock',
+  'topology',
+  'hourglass',
+  'layers',
+  'shield',
+  // About an extra.
+  'info',
 ];
 
 describe('the sheet carries every glyph a control can ask for', () => {
