@@ -10,56 +10,41 @@ import {
 } from '../../api';
 import { Icon } from '../../components/Icon';
 import { Pill } from '../../components/Pill';
-import { Tile, TileGrid } from '../../components/Tile';
+import { TileGrid } from '../../components/Tile';
+import type { Extension } from '../../extension';
 import { focusRingTight } from '../../focus';
 import { useShellIfPresent } from '../../shell/ShellContext';
 import { ExtraPreview } from './ExtraPreview';
 import { ExtraSettingsModal } from './ExtraSettingsModal';
-import { AboutBadges, badgesOf, lockState, useExtraReread, WriteFailure } from './extraParts';
+import { badgesOf, ExtraGlyph, ExtraSwitch, lockState, StateBadge, useExtraReread, WriteFailure } from './extraParts';
 
 /**
- * Extra: one tile per extension the build carries (`extras.Catalogue()`,
- * nothing it does not carry), for one cluster, drawn with the console's shared
- * `Tile`: the name, one line of purpose, on or off, and the button.
+ * Extra: one card per extension the build carries (`extras.Catalogue()`,
+ * nothing it does not carry), for one cluster.
+ *
+ * **A card**: the extra's glyph (`Extension.icon`), its name and one line of
+ * purpose, the On/Off switch, a row of badges (On or Off for the cluster,
+ * pinned, its component absent, detected, locked, the tools it works with),
+ * and two buttons side by side, Edit and About. Detail goes in tooltips.
  *
  * **Every extension is off until it is turned on, on every profile, and every
- * one is listed with a button**. The
- * server says, per row, whether the person looking may press it (`writable`)
- * and, where not, why (`locked`, `reason`) - the page decides nothing about who
- * may, and the writes refuse on their own:
+ * one is listed**. The server says, per row, whether the person looking may
+ * press its switch (`writable`) and, where not, why (`locked`, `reason`) - the
+ * page decides nothing about who may, and the writes refuse on their own:
  *
- * - **writable**: a switch, and the extension's settings as checkboxes. A
- *   switch and a checkbox write one thing each, one request each
- *   (`setExtensionEnabled`, `setExtensionSetting`), and the listing is read
- *   again after - the tile draws what the console keeps, never what was
- *   pressed.
- * - **`values`** (a cluster whose chart's values do not name it),
- *   **`pinned`** (`KT_EXTRAS` on the desktop or in a container) and
- *   **`unregistered`** (several replicas, or a cluster with no state volume):
- *   the switch, disabled, at its state, and the reason under it - every extra
- *   is listed with its button, and the reason says why it cannot move.
- * - **`use`** (a cluster where the person does not hold the `use` permission on it):
- *   no switch - the button is not offered - and the reason.
+ * - **writable**: the switch writes one thing, one request
+ *   (`setExtensionEnabled`), and the listing is read again after - the card
+ *   draws what the console keeps, never what was pressed.
+ * - **`values`**, **`pinned`**, **`unregistered`**: the switch, disabled, at
+ *   its state, and the server's reason on one line under the badges.
+ * - **`use`** (no `use` permission on the cluster): no switch, and the reason.
  *
- * A non-writable tile draws its settings at their value, with nothing to press.
- * The cluster the tiles are about is the picker's, beside the heading.
- *
- * **A tile never grows.** It draws the name, the state, the switch (which
- * works without opening anything), the server's reason where the switch cannot
- * move, a refused write, and an Edit button. Edit - or a click on the tile -
- * opens `ExtraSettingsModal`: the extra's switch, settings, columns and status
- * in a window with Save and Cancel. The grid keeps its shape.
- *
- * **About** opens the extra's preview window (`ExtraPreview.tsx`): what it does,
- * reads and needs - the `about` its UI half carries - and the button that turns
- * it on; for deciding, and for the settings step before turning one on.
- * The window is drawn from the row the listing holds now, so it follows every
- * re-read, and closes on its own when the row leaves the listing (another
- * cluster picked). A switch pressed in it that the console accepted closes it,
- * and its sentence (« Delta Center is now on for cluster prod. ») is said
- * above the tiles, in a live region that is always there so a screen reader
- * hears it.
- *
+ * **Edit** opens `ExtraSettingsModal` (switch, settings, columns, status, with
+ * Save and Cancel). **About** opens `ExtraPreview`: what the extra does, reads
+ * and needs, with Close as its only button - nothing is switched from there.
+ * Both windows are drawn from the row the listing holds now, so they follow
+ * every re-read, and close on their own when the row leaves the listing
+ * (another cluster picked).
  */
 export function ExtraTab({
   cluster,
@@ -70,81 +55,60 @@ export function ExtraTab({
   clusters: readonly Cluster[];
   items: readonly ExtensionInfo[];
 }): ReactNode {
-  // The extras this build carries, for what each says about itself. Absent
-  // outside a Shell (a test that renders the page alone): the window then says
-  // what the server's row says, and nothing more.
+  // The extras this build carries, for their glyph and what each says about
+  // itself. Absent outside a Shell (a test that renders the page alone).
   const shipped = useShellIfPresent()?.extensions;
+  const own = (key: string): Extension | undefined => shipped?.find((extension) => extension.key === key);
   // Which window is open, and on which cluster: one opened on another cluster
   // is not reopened by coming back to it.
-  const [open, setOpen] = useState<{ cluster: string; key: string } | null>(null);
+  const [open, setOpen] = useState<{ cluster: string; key: string; what: 'about' | 'edit' } | null>(null);
   const opened = open?.cluster === cluster ? items.find((item) => item.key === open.key) : undefined;
-  // Which settings window is open, on which cluster; one per extra and cluster.
-  const [editing, setEditing] = useState<{ cluster: string; key: string } | null>(null);
-  const editedItem = editing?.cluster === cluster ? items.find((item) => item.key === editing.key) : undefined;
-  // What the last switch pressed in a window did, on the cluster it was
-  // pressed on: another cluster picked does not carry it along.
-  const [said, setSaid] = useState<{ cluster: string; text: string } | null>(null);
   const absent = useAbsent(cluster, items);
   const suggested = useSuggested(cluster, items);
+  const on = items.filter((item) => item.enabled).length;
 
   return (
     <section className="flex flex-col gap-3" data-extras="">
-      <header className="flex flex-wrap items-end gap-x-6 gap-y-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-medium">Extra pages</h2>
-          {/* Always drawn, empty until a window's switch takes: a live region
-              that appears with its sentence is not reliably read out. */}
-          <p role="status" className="text-xs text-ok" data-extras-said="">
-            {said?.cluster === cluster ? said.text : ''}
-          </p>
-        </div>
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 className="text-base font-medium">Extra pages</h2>
+        <span data-extras-count="" title={`${on} of ${items.length} on for this cluster`}>
+          <Pill neutral="muted">
+            {on}/{items.length} on
+          </Pill>
+        </span>
         <ClusterPicker cluster={cluster} clusters={clusters} />
       </header>
 
-      <TileGrid label="Extensions" align="start">
+      <TileGrid label="Extensions">
         {absentLast(byLabel(items), absent).map((item) => (
-          <ExtensionTile
+          <ExtensionCard
             key={item.key}
             cluster={cluster}
             item={item}
+            own={own(item.key)}
             absent={absent.get(item.key)}
-            tools={badgesOf(shipped?.find((extension) => extension.key === item.key))}
             suggested={suggested.get(item.key)}
-            onEdit={() => {
-              setSaid(null);
-              setEditing({ cluster, key: item.key });
-            }}
+            onEdit={() => setOpen({ cluster, key: item.key, what: 'edit' })}
+            onAbout={() => setOpen({ cluster, key: item.key, what: 'about' })}
           />
         ))}
       </TileGrid>
-      {editedItem === undefined ? null : (
+      {opened === undefined || open === null ? null : open.what === 'edit' ? (
         <ExtraSettingsModal
-          key={`${cluster}/${editedItem.key}`}
-          cluster={cluster}
-          item={editedItem}
-          absent={absent.get(editedItem.key)}
-          own={shipped?.find((extension) => extension.key === editedItem.key)}
-          onClose={() => setEditing(null)}
-          onAbout={() => {
-            setSaid(null);
-            setEditing(null);
-            setOpen({ cluster, key: editedItem.key });
-          }}
-        />
-      )}
-      {opened === undefined ? null : (
-        <ExtraPreview
-          // A new window per extra and per cluster: the settings step and a
-          // failure belong to the one they were met on.
           key={`${cluster}/${opened.key}`}
           cluster={cluster}
           item={opened}
-          about={shipped?.find((extension) => extension.key === opened.key)?.about}
+          absent={absent.get(opened.key)}
+          own={own(opened.key)}
           onClose={() => setOpen(null)}
-          onDone={(text) => {
-            setOpen(null);
-            setSaid({ cluster, text });
-          }}
+        />
+      ) : (
+        <ExtraPreview
+          key={`${cluster}/${opened.key}`}
+          cluster={cluster}
+          item={opened}
+          own={own(opened.key)}
+          onClose={() => setOpen(null)}
         />
       )}
     </section>
@@ -210,89 +174,83 @@ export function absentLast(items: readonly ExtensionInfo[], absent: ReadonlyMap<
 }
 
 /**
- * Which cluster the tiles are about, written beside them so the tile's blast
- * radius is always visible. With several clusters the choice is the rail's
- * icons (`Rail.tsx`), which are always drawn then, so there is no second control.
+ * Which cluster the cards are about, beside them so the switch's blast radius
+ * is always visible. With several clusters the choice is the rail's icons
+ * (`Rail.tsx`), which are always drawn then, so there is no second control.
  */
 function ClusterPicker({ cluster, clusters }: { cluster: string; clusters: readonly Cluster[] }): ReactNode {
   const known = clusters.find((one) => one.name === cluster);
   return (
-    <p className="text-xs text-muted" data-extras-cluster={cluster}>
-      Cluster <span className="font-mono text-fg">{known?.label ?? cluster}</span>
-    </p>
+    <span
+      className="ml-auto flex items-center gap-1.5 text-xs text-muted"
+      data-extras-cluster={cluster}
+      title={`Cluster ${cluster}`}
+    >
+      <Icon name="cluster" />
+      <span className="font-mono text-fg">{known?.label ?? cluster}</span>
+    </span>
   );
 }
 
-function ExtensionTile({
+function ExtensionCard({
   cluster,
   item,
+  own,
   absent,
-  tools,
   suggested,
   onEdit,
+  onAbout,
 }: {
   cluster: string;
   item: ExtensionInfo;
+  /** What the build carries for it: its glyph and its tool badges. */
+  own: Extension | undefined;
   /** Its short state where the cluster does not run its component. */
   absent: string | undefined;
-  /** The tools it works with, from its `about.badges`. */
-  tools: readonly string[] | undefined;
   /** The banner's sentence where the cluster gives a reason to turn it on. */
   suggested: string | undefined;
   onEdit: () => void;
+  onAbout: () => void;
 }): ReactNode {
   const reread = useExtraReread(cluster);
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => setExtensionEnabled(cluster, item.key, enabled),
     onSettled: reread,
   });
-  // Strictly: a row from a server older than `writable` is not one the person
-  // may change.
   const writable = item.writable;
   const { shownDisabled, reason } = lockState(item);
   const reasonId = useId();
-  const busy = toggle.isPending;
   const failed = toggle.error;
-
-  const action = writable || shownDisabled ? (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={item.enabled}
-      aria-label={`${item.label}, cluster ${cluster}`}
-      {...(reason === undefined ? {} : { 'aria-describedby': reasonId })}
-      disabled={busy || !writable}
-      onClick={() => toggle.mutate(!item.enabled)}
-      className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs disabled:opacity-50 ${focusRingTight} ${
-        item.enabled ? 'border-ok/40 bg-ok/10 text-ok' : 'border-line text-muted'
-      }`}
-    >
-      <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${item.enabled ? 'bg-ok' : 'bg-line'}`} />
-      {item.enabled ? 'On' : 'Off'}
-    </button>
-  ) : (
-    <span className={`text-xs font-medium ${item.enabled ? 'text-ok' : 'text-muted'}`} data-extra-state="">
-      {item.enabled ? 'On' : 'Off'}
-    </span>
-  );
-
-  const detail = item.summary === undefined || item.summary === '' ? undefined : <span>{item.summary}</span>;
+  const summary = item.summary === undefined || item.summary === '' ? undefined : item.summary;
+  const tools = badgesOf(own);
 
   return (
-    <Tile
+    <li
       data-extra={item.key}
       data-on={item.enabled ? 'true' : 'false'}
-      title={item.label}
-      onOpen={onEdit}
-      tone={item.enabled ? 'ok' : 'off'}
-      dim={absent !== undefined}
       {...(absent === undefined ? {} : { 'data-extra-absent': absent })}
-      badges={
-        item.pinned || absent !== undefined ? (
-          <>
+      className={`flex min-w-0 flex-col gap-2.5 rounded-lg border bg-panel p-3 ${
+        item.enabled ? 'border-ok/40' : 'border-line'
+      } ${absent === undefined ? '' : 'opacity-70'}`}
+    >
+      <div className="flex items-start gap-3">
+        <ExtraGlyph name={own?.icon} on={item.enabled} />
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-medium text-fg" title={item.label}>
+            {item.label}
+          </h3>
+          {summary === undefined ? null : (
+            <p className="truncate text-xs text-muted" title={summary} data-extra-summary="">
+              {summary}
+            </p>
+          )}
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1" data-extra-badges="">
+            <StateBadge on={item.enabled} cluster={cluster} />
             {item.pinned ? (
               <span data-extra-pinned="">
-                <Pill neutral="muted">pinned</Pill>
+                <Pill neutral="muted" title="Set by the deployment (KT_EXTRAS)">
+                  pinned
+                </Pill>
               </span>
             ) : null}
             {absent === undefined ? null : (
@@ -300,39 +258,54 @@ function ExtensionTile({
                 <Pill neutral="muted">{absent}</Pill>
               </span>
             )}
-          </>
-        ) : undefined
-      }
-      detail={detail}
-      action={action}
-    >
-      {/* The tile never grows. Under its summary, in this order: the
-          suggestion, the server's reason, a refused write, the tool badges,
-          then the Edit button. */}
-      {suggested === undefined ? null : (
-        <p className="text-xs text-muted" data-extra-suggested="">
-          {suggested}
-        </p>
-      )}
+            {suggested === undefined ? null : (
+              <span data-extra-suggested={suggested}>
+                <Pill tone="info" title={suggested}>
+                  detected
+                </Pill>
+              </span>
+            )}
+            {tools?.map((name) => (
+              <span key={name} data-extra-tool="">
+                <Pill neutral="muted">{name}</Pill>
+              </span>
+            ))}
+          </div>
+        </div>
+        {writable || shownDisabled ? (
+          <ExtraSwitch
+            on={item.enabled}
+            label={`${item.label}, cluster ${cluster}`}
+            disabled={toggle.isPending || !writable}
+            onToggle={() => toggle.mutate(!item.enabled)}
+            describedBy={reason === undefined ? undefined : reasonId}
+          />
+        ) : null}
+      </div>
+
       {reason === undefined ? null : (
-        <p id={reasonId} className="text-xs text-muted" data-extra-reason={item.locked ?? ''}>
-          {reason}
+        <p id={reasonId} className="flex min-w-0 items-center gap-1.5 text-xs text-muted" data-extra-reason={item.locked ?? ''}>
+          <Icon name="lock" />
+          <span className="truncate" title={reason}>
+            {reason}
+          </span>
         </p>
       )}
       {failed === null ? null : <WriteFailure error={failed} />}
-      <AboutBadges names={tools} />
-      <button
-        type="button"
-        onClick={onEdit}
-        aria-label={`Edit ${item.label}`}
-        data-extra-edit=""
-        className={`flex items-center gap-1.5 self-start rounded-md border border-line px-2 py-0.5 text-xs text-fg ${focusRingTight}`}
-      >
-        <span aria-hidden="true" className="size-3.5">
+
+      <div className="mt-auto flex items-center gap-2 border-t border-line pt-2.5">
+        <button type="button" onClick={onEdit} aria-label={`Edit ${item.label}`} data-extra-edit="" className={CARD_BUTTON}>
           <Icon name="settings" />
-        </span>
-        Edit
-      </button>
-    </Tile>
+          Edit
+        </button>
+        <button type="button" onClick={onAbout} aria-label={`About ${item.label}`} data-extra-about="" className={CARD_BUTTON}>
+          <Icon name="info" />
+          About
+        </button>
+      </div>
+    </li>
   );
 }
+
+/** Edit and About: the same size, side by side. */
+const CARD_BUTTON = `flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-fg hover:bg-panel-2 ${focusRingTight}`;
