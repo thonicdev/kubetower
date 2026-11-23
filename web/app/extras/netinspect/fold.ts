@@ -27,6 +27,15 @@ export const OTHERS = 'others';
 /** At most this many ends no rule names (`entity:world`) get a column. */
 const ENTITY_COLUMNS = 10;
 
+/** The peers that name every pod of the cluster: a rule's empty peer, and Cilium's `all` and `cluster` entities. */
+const EVERYONE = new Set(['anyone', 'entity:all', 'entity:cluster']);
+
+/** Whether a rule whose peer is `everyone` covers the node: `cluster` names the cluster's pods only. */
+function covers(everyone: string, n: GraphNode): boolean {
+  if (everyone !== 'entity:cluster') return true;
+  return n.kind === 'namespace' || n.kind === 'others';
+}
+
 export interface FoldAsk {
   /** Only the namespaces whose name holds this, case-insensitive. */
   find: string;
@@ -170,14 +179,23 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     }
     return c;
   };
+  const add = (key: string, e: (typeof graph.edges)[number]) => {
+    const c = at(key);
+    const what = `${e.ports.join(', ')} · ${e.policies.join(', ')}`;
+    const list = e.kind === 'deny' ? c.deny : e.kind === 'allow' ? c.allow : c.unevaluated;
+    if (!list.includes(what)) list.push(what);
+  };
   for (const e of graph.edges) {
     const from = drawn(e.from);
     const to = drawn(e.to);
     if (from === undefined || to === undefined) continue;
-    const c = at(`${from}>${to}`);
-    const what = `${e.ports.join(', ')} · ${e.policies.join(', ')}`;
-    const list = e.kind === 'deny' ? c.deny : e.kind === 'allow' ? c.allow : c.unevaluated;
-    if (!list.includes(what)) list.push(what);
+    add(`${from}>${to}`, e);
+    // A rule whose peer is everyone speaks for every pair it covers, not
+    // only for the Anyone row or column: without this, every other cell
+    // toward an isolated namespace would read refused.
+    const covered = (id: string) => nodes.filter((n) => n.id !== id && covers(id, n));
+    if (EVERYONE.has(e.from)) for (const n of covered(from)) add(`${n.id}>${to}`, e);
+    if (EVERYONE.has(e.to)) for (const n of covered(to)) add(`${from}>${n.id}`, e);
   }
   for (const e of seen) {
     const from = drawn(e.from);

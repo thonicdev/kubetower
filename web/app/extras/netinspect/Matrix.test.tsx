@@ -120,3 +120,22 @@ describe('a cluster where every namespace lets every namespace in', () => {
     expect(document.querySelector('[data-matrix-cut]')).not.toBeNull();
   });
 });
+
+describe('a namespace open to everyone', () => {
+  it('reads refused from no namespace', () => {
+    const isolated = (i: number): GraphNode => ({ ...ns(i), isolatedIn: 2 });
+    const g: Graph = {
+      scope: 'cluster',
+      nodes: [isolated(0), isolated(1), isolated(2), { id: 'anyone', label: 'Anyone', kind: 'anyone', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 }],
+      edges: [{ kind: 'allow', from: 'anyone', to: 'ns:team-001', side: 'ingress', ports: ['every port'], policies: ['open-to-all'], rules: 1 }],
+      folded: 0,
+      edgesTotal: 1,
+    };
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams())} onAsk={() => undefined} onNamespace={() => undefined} />);
+    const column = [...document.querySelectorAll('[data-cell$=">ns:team-001"]')];
+    expect(column).toHaveLength(4);
+    expect(column.map((c) => c.getAttribute('data-state'))).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
+    // A column no rule opens is still refused.
+    expect(document.querySelector('[data-cell="ns:team-000>ns:team-002"]')?.getAttribute('data-state')).toBe('refused');
+  });
+});
