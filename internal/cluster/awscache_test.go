@@ -381,19 +381,65 @@ func TestTheRedirectIsRefusedWhenTheSSOCacheCannotBeShared(t *testing.T) {
 	}
 }
 
-// An installation with no SSO profiles has no directory to share, and that is
-// not a failure.
-func TestNoSSODirectoryIsNotAFailure(t *testing.T) {
-	home, _ := awsHomeForTest(t)
-	home.SSODir = ""
+// A machine that has never signed in to AWS SSO has no ~/.aws/sso when the
+// console starts, and the first `aws sso login` creates it afterwards. The
+// private home built before that login must still see the session it writes:
+// otherwise the plugin reads an empty cache of its own and the context fails
+// as an expired session until the console is restarted.
+func TestASessionCreatedAfterStartIsSeenThroughThePrivateHome(t *testing.T) {
+	requireSymlinks(t)
+	user := t.TempDir()
+	t.Setenv("HOME", user)
+	t.Setenv("USERPROFILE", user)
+	t.Setenv("AWS_CONFIG_FILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "")
+	shared := filepath.Join(user, ".aws", "sso")
+
+	home := defaultAWSHome()
+	home.Base = filepath.Join(t.TempDir(), "homes")
+	if home.Off != "" {
+		t.Fatalf("the separation is off on a host that can symlink: %s", home.Off)
+	}
 
 	cfg := &rest.Config{ExecProvider: execConfig()}
-	dir, changed, err := home.separate(cfg, "STAGING-EKS-1_OWNER")
+	dir, changed, err := home.separate(cfg, "SHOP-EKS-1")
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, ".aws", "sso")); err == nil {
-		t.Error("a link was made to nothing")
+	if info, err := os.Stat(shared); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("the operator's SSO cache directory was not made 0700: %v %v", info, err)
+	}
+
+	// `aws sso login`, in a terminal, after the client was built.
+	if err := os.MkdirAll(filepath.Join(shared, "cache"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, "cache", "946d9ed4319dab98.json"), []byte(`{"accessToken":"redacted"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	through := filepath.Join(dir, ".aws", "sso", "cache", "946d9ed4319dab98.json")
+	if _, err := os.Stat(through); err != nil {
+		t.Fatalf("the session written after start is not readable where the plugin looks (%s): %v", through, err)
+	}
+}
+
+// A home directory that cannot hold ~/.aws/sso refuses the redirect, as a link
+// that cannot be made does: the plugin then reads the operator's own files.
+func TestNoSSODirectoryThatCanBeMadeRefusesTheRedirect(t *testing.T) {
+	home, root := awsHomeForTest(t)
+	blocker := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home.SSODir = filepath.Join(blocker, "sso")
+
+	cfg := &rest.Config{ExecProvider: execConfig()}
+	if _, changed, err := home.separate(cfg, "STAGING-EKS-1_OWNER"); err == nil || changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if got := envOf(cfg)["HOME"]; got != "" {
+		t.Errorf("HOME was set to %q despite the failure", got)
 	}
 }
 
@@ -648,16 +694,18 @@ func TestASeparationThatCannotWorkCreatesNothing(t *testing.T) {
 // so leaving it is pure accumulation.
 func TestARefusedSeparationTakesItsDirectoryBackOut(t *testing.T) {
 	base := t.TempDir()
-	// An SSO source that does not exist, so shareDirectory cannot succeed **on
-	// every platform**: a symlink to a missing target is legal on Unix and is
-	// created without complaint, while Windows refuses the call for an unrelated
-	// reason. shareDirectory stats its target, which is also what stops a
-	// dangling link being mistaken for a working SSO cache.
-	h := awsHome{Base: base, SSODir: filepath.Join(base, "absent", "sso")}
+	// An SSO source that cannot be made, so sharing it fails **on every
+	// platform**: its parent is a file. Outside base, so that what is left under
+	// base is only what the refusal failed to take back.
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := awsHome{Base: base, SSODir: filepath.Join(blocker, "sso")}
 	cfg := &rest.Config{ExecProvider: &clientcmdapi.ExecConfig{Command: "aws"}}
 
 	if _, changed, err := h.separate(cfg, "SHOP-EKS-1"); err == nil {
-		t.Fatal("sharing a missing SSO directory was reported as success")
+		t.Fatal("sharing an SSO directory that cannot exist was reported as success")
 	} else if changed {
 		t.Error("separate reported a change on a path that failed")
 	}

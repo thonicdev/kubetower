@@ -68,8 +68,7 @@ type sessionAWSHome struct {
 	// Dir is the per-session HOME.
 	Dir string
 	// SSODir is the operator's own ~/.aws/sso, linked into Dir so the session
-	// token stays shared and renewable. Empty when there is no such directory, as
-	// on an installation with no SSO profiles.
+	// token stays shared and renewable, created if absent. Empty shares nothing.
 	SSODir string
 	// ConfigFile and CredentialsFile are the shared ~/.aws/config and
 	// ~/.aws/credentials, set only when this process's environment does not
@@ -93,10 +92,10 @@ func newSessionAWSHome(workdir string) sessionAWSHome {
 	}
 	aws := filepath.Join(home, ".aws")
 
-	h := sessionAWSHome{Dir: filepath.Join(workdir, sessionAWSHomeDir)}
-	if info, err := os.Stat(filepath.Join(aws, "sso")); err == nil && info.IsDir() {
-		h.SSODir = filepath.Join(aws, "sso")
-	}
+	// Whether or not it exists yet: a terminal opened before the machine's first
+	// `aws sso login` is where that login is typed, and its kubectl must see the
+	// session it creates (separate makes the directory).
+	h := sessionAWSHome{Dir: filepath.Join(workdir, sessionAWSHomeDir), SSODir: filepath.Join(aws, "sso")}
 	if os.Getenv("AWS_CONFIG_FILE") == "" {
 		h.ConfigFile = filepath.Join(aws, "config")
 	}
@@ -140,7 +139,11 @@ func (h sessionAWSHome) separate(cfg *clientcmdapi.Config) (bool, error) {
 		// Before any environment is written: without its SSO token cache the home
 		// authenticates nothing on an SSO profile, so if this fails the redirect must
 		// not happen.
-		if err := shareAWSDirectory(h.SSODir, filepath.Join(h.Dir, ".aws", "sso")); err != nil {
+		err := os.MkdirAll(h.SSODir, 0o700)
+		if err == nil {
+			err = shareAWSDirectory(h.SSODir, filepath.Join(h.Dir, ".aws", "sso"))
+		}
+		if err != nil {
 			return false, fmt.Errorf("sharing the SSO token cache into the session AWS home: %w", err)
 		}
 	}

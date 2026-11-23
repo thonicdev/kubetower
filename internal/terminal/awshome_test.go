@@ -374,6 +374,38 @@ func TestTheSessionAWSHomeKeepsTheSSOTokenCacheShared(t *testing.T) {
 	}
 }
 
+// A terminal opened before the machine's first `aws sso login` is where that
+// login is typed: the session it writes has to reach the terminal's kubectl,
+// whose plugin runs under the session's own HOME.
+func TestTheSessionAWSHomeSeesASessionCreatedAfterItOpened(t *testing.T) {
+	requireSymlinks(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("AWS_CONFIG_FILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "")
+
+	cfg := eksConfig()
+	if _, err := newSessionAWSHome(t.TempDir()).separate(cfg); err != nil {
+		t.Fatalf("separating: %v", err)
+	}
+	session, _ := execEnvOf(t, cfg, "HOME")
+
+	// `aws sso login`, in that terminal, with the operator's own HOME.
+	cache := filepath.Join(home, ".aws", "sso", "cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "token.json"), []byte(`{"accessToken":"AFTER-THE-START"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(session, ".aws", "sso", "cache", "token.json"))
+	if err != nil || !strings.Contains(string(got), "AFTER-THE-START") {
+		t.Fatalf("the session written after the terminal opened is not where its kubectl looks: %q %v", got, err)
+	}
+}
+
 // If the link cannot be made, the redirect must not happen: fixing the
 // assume-role cache by breaking every SSO context is the worse trade, and it is
 // a trade nobody would see being made.
