@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
-import { btnSecondary, externalHref, forwardLink, openForward, useCapabilities, type Scheme } from '@kubetower/ui';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { btnSecondary, externalHref, forwardLink, forwardsQuery, openForward, queryKeys, useCapabilities, type Forward } from '@kubetower/ui';
 
 import { configuredHref, tunnelSuffix, uisQuery, type FlowUI } from './data';
 
@@ -35,17 +35,36 @@ export function FlowUIButtons({ cluster, namespace }: { cluster: string; namespa
   return (
     <span className="flex flex-wrap items-center gap-2" data-flow-uis="">
       {shown.map(({ kind, label, ui }) => (
-        <FlowUIButton key={kind} kind={kind} label={label} ui={ui} cluster={cluster} namespace={namespace} />
+        // Keyed by the cluster too: a press on one cluster never leaves its
+        // state on the next one's button.
+        <FlowUIButton key={`${cluster}/${kind}`} kind={kind} label={label} ui={ui} cluster={cluster} namespace={namespace} />
       ))}
     </span>
   );
 }
 
 function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' | 'whisker'; label: string; ui: FlowUI; cluster: string; namespace: string }): ReactNode {
+  const client = useQueryClient();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  /** The open forward's address, once there is one: the button becomes a link to it. */
-  const [opened, setOpened] = useState<string | null>(null);
+  /** Set by a press that opened the forward: the link that replaces the button takes the focus. */
+  const [focusLink, setFocusLink] = useState(false);
+  const link = useRef<HTMLAnchorElement>(null);
+  const tunnel = ui.url === undefined ? ui.tunnel : undefined;
+  // The forwards this process holds, as the Ports panel reads them: the link
+  // is drawn from the live list, so a tunnel the server closed (its pod went
+  // away) turns back into a button that opens it again.
+  const live = useQuery(forwardsQuery(tunnel !== undefined));
+  const forward =
+    tunnel === undefined
+      ? undefined
+      : live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
+  useEffect(() => {
+    if (focusLink && link.current !== null) {
+      link.current.focus();
+      setFocusLink(false);
+    }
+  }, [focusLink, forward?.id]);
   const href = ui.url === undefined ? undefined : externalHref(configuredHref(kind, ui.url, namespace));
   if (ui.url !== undefined) {
     if (href === undefined) return null;
@@ -55,20 +74,30 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
       </a>
     );
   }
-  const tunnel = ui.tunnel;
   if (tunnel === undefined) return null;
 
-  // The forward is opened first and the UI is then an ordinary link to it, as
-  // the Ports panel draws one: a browser opens it in a tab, the desktop's own
-  // window hands it to the default browser. No blank window is asked for
-  // ahead of the forward - the desktop window refuses every window a page
-  // opens, and hands on only http and https addresses
-  // (`internal/launch/nativewindownav.go`).
-  if (opened !== null) {
-    const link = externalHref(opened + tunnelSuffix(kind, namespace));
-    if (link !== undefined) {
+  // An open forward is an ordinary link to the UI, as the Ports panel draws
+  // one: a browser opens it in a tab, the desktop's own window hands it to the
+  // default browser. No blank window is asked for ahead of the forward - the
+  // desktop window refuses every window a page opens, and hands on only http,
+  // https and mailto addresses (`internal/launch/nativewindownav.go`).
+  if (forward !== undefined) {
+    const to = externalHref(forwardLink(forward, forward.scheme ?? 'http') + tunnelSuffix(kind, namespace));
+    if (to !== undefined) {
       return (
-        <a href={link} target="_blank" rel="noopener noreferrer" data-flow-ui={kind} data-flow-ui-open="" title={link} className={btnSecondary}>
+        <a
+          ref={link}
+          href={to}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-flow-ui={kind}
+          data-flow-ui-open=""
+          title={to}
+          // Asked again on the way out, so a tunnel closed meanwhile is a
+          // button again when the person comes back.
+          onClick={() => void client.invalidateQueries({ queryKey: queryKeys.forwards })}
+          className={btnSecondary}
+        >
           {label} ↗
         </a>
       );
@@ -86,14 +115,15 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
       ...(tunnel.portName === undefined || tunnel.portName === '' ? {} : { portName: tunnel.portName }),
       ...(tunnel.appProtocol === undefined || tunnel.appProtocol === '' ? {} : { appProtocol: tunnel.appProtocol }),
     })
-      .then((forward) => {
-        const scheme: Scheme = forward.scheme ?? 'http';
-        const base = forwardLink(forward, scheme);
-        if (externalHref(base + tunnelSuffix(kind, namespace)) === undefined) {
+      .then((made) => {
+        if (externalHref(forwardLink(made, made.scheme ?? 'http') + tunnelSuffix(kind, namespace)) === undefined) {
           setFailure('The tunnel opened at an address that cannot be linked');
           return;
         }
-        setOpened(base);
+        // Into the shared list at once, then read again, as the Ports panel does.
+        client.setQueryData<Forward[]>(queryKeys.forwards, (before) => [...(before ?? []).filter((one) => one.id !== made.id), made]);
+        void client.invalidateQueries({ queryKey: queryKeys.forwards });
+        setFocusLink(true);
       })
       .catch((error: unknown) => {
         setFailure(error instanceof Error ? error.message : String(error));

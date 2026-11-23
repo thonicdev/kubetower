@@ -13,29 +13,41 @@ afterEach(() => {
 const TUNNEL_HUBBLE = { namespace: 'kube-system', service: 'hubble-ui', port: 80, portName: 'http' };
 const TUNNEL_WHISKER = { namespace: 'calico-system', service: 'whisker', port: 8081 };
 
+const FORWARD = { id: 'f1', cluster: 'kind', namespace: 'kube-system', pod: 'hubble-ui-0', service: 'hubble-ui', remotePort: 80, address: '127.0.0.1:41000', scheme: 'http' };
+
+/** The forwards the console holds, as `GET /api/forwards` answers them; a POST adds one. */
+let held: unknown[] = [];
+
 function stub(uis: FlowUIs | number, portForward = true): ReturnType<typeof vi.fn> {
+  held = [];
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url;
     const json = (status: number, body: unknown) =>
       Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }));
-    if (url === '/x/kind/netinspect/uis') return typeof uis === 'number' ? json(uis, { code: 'x', message: 'no' }) : json(200, uis);
+    if (/^\/x\/[a-z]+\/netinspect\/uis$/.test(url)) return typeof uis === 'number' ? json(uis, { code: 'x', message: 'no' }) : json(200, uis);
     if (url === '/api/capabilities') return json(200, { portForward });
     if (url === '/api/forwards' && init?.method === 'POST') {
-      return json(200, { id: 'f1', address: '127.0.0.1:41000', scheme: 'http' });
+      const body = JSON.parse(init.body as string) as { namespace: string; service: string; remotePort: number };
+      const made = { ...FORWARD, namespace: body.namespace, service: body.service, remotePort: body.remotePort };
+      held = [made];
+      return json(200, made);
     }
+    if (url === '/api/forwards') return json(200, held);
     return Promise.resolve(new Response(`no stub for ${url}`, { status: 599 }));
   });
   vi.stubGlobal('fetch', fetch);
   return fetch;
 }
 
-function mount(namespace = ''): void {
+function mount(namespace = '', cluster = 'kind'): (cluster: string) => void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const view = (c: string) => (
     <QueryClientProvider client={client}>
-      <FlowUIButtons cluster="kind" namespace={namespace} />
-    </QueryClientProvider>,
+      <FlowUIButtons cluster={c} namespace={namespace} />
+    </QueryClientProvider>
   );
+  const { rerender } = render(view(cluster));
+  return (c) => rerender(view(c));
 }
 
 describe('FlowUIButtons', () => {
@@ -83,7 +95,7 @@ describe('FlowUIButtons', () => {
     expect(link.getAttribute('rel')).toContain('noopener');
     expect(open).not.toHaveBeenCalled();
     expect(screen.queryByRole('alert')).toBeNull();
-    const post = fetch.mock.calls.find((c) => c[0] === '/api/forwards');
+    const post = fetch.mock.calls.find((c) => c[0] === '/api/forwards' && (c[1] as RequestInit | undefined)?.method === 'POST');
     expect(JSON.parse((post?.[1] as RequestInit).body as string)).toEqual({
       cluster: 'kind', namespace: 'kube-system', service: 'hubble-ui', remotePort: 80, portName: 'http',
     });
@@ -113,6 +125,40 @@ describe('FlowUIButtons', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('kube-system');
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByRole('button', { name: 'Hubble UI' })).toBeTruthy();
+  });
+
+  it('gives the focus to the link that replaces the button', async () => {
+    stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
+    mount('shop');
+    fireEvent.click(await screen.findByRole('button', { name: 'Hubble UI' }));
+    const link = await screen.findByRole('link', { name: /Hubble UI/ });
+    await waitFor(() => expect(document.activeElement).toBe(link));
+  });
+
+  it('links at once to a forward already open, and turns back into a button once the server closed it', async () => {
+    const fetch = stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
+    held = [FORWARD];
+    mount('shop');
+    const link = await screen.findByRole('link', { name: /Hubble UI/ });
+    expect(link.getAttribute('href')).toMatch(/:41000\/\?namespace=shop$/);
+    expect(fetch.mock.calls.some((c) => c[0] === '/api/forwards' && (c[1] as RequestInit | undefined)?.method === 'POST')).toBe(false);
+    // The pod behind the tunnel went away: the server no longer holds it.
+    held = [];
+    fireEvent.click(link);
+    expect(await screen.findByRole('button', { name: 'Hubble UI' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Hubble UI' }));
+    expect(await screen.findByRole('link', { name: /Hubble UI/ })).toBeTruthy();
+    expect(fetch.mock.calls.filter((c) => c[0] === '/api/forwards' && (c[1] as RequestInit | undefined)?.method === 'POST')).toHaveLength(1);
+  });
+
+  it("never links one cluster's button to another cluster's forward", async () => {
+    stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
+    held = [FORWARD];
+    const show = mount('shop');
+    expect(await screen.findByRole('link', { name: /Hubble UI/ })).toBeTruthy();
+    show('other');
+    expect(await screen.findByRole('button', { name: 'Hubble UI' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Hubble UI/ })).toBeNull();
   });
 
   it('has no tunnel button where the console cannot forward, unless an address is configured', async () => {
