@@ -1,8 +1,12 @@
 import { type ReactNode } from 'react';
-import { NavLink, Navigate, useParams, useSearchParams } from 'react-router';
+import { NavLink, Navigate, useLocation, useParams, useSearchParams } from 'react-router';
 
+import { Icon } from '../../components/Icon';
 import { focusRing } from '../../focus';
+import { KeyLayer } from '../../keyboard/layers';
+import { useKeyLayer } from '../../keyboard/useKeyLayer';
 import { useDeclarePageFacts } from '../../shell/pageFacts';
+import { useNoteSettingsScroll, useSettingsBack } from '../../shell/settingsOrigin';
 import { CLUSTER_PARAM, useExtraTab, useSettings, type ExtraTab as ExtraTabState } from './data';
 import { ExtraTab } from './ExtraTab';
 import { GeneralTab } from './GeneralTab';
@@ -36,6 +40,15 @@ import { InfosTab } from './InfosTab';
  * tab's job: General lays its sections out as cards in a grid
  * that adds a column as the screen widens, so a section is never wider than a
  * card, Extra draws its tiles the same way, and Infos is one small card.
+ *
+ * ## The way back
+ *
+ * Opened from a console page, Settings draws « ← Back » before its title,
+ * with the page's whole address in its tooltip. It returns to that page
+ * exactly - its address and its scroll - and Escape does the same where no
+ * dialog, menu or text field holds the key. The tabs replace the history entry
+ * and carry the origin along, so the browser's Back leaves Settings in one
+ * press. `../../shell/settingsOrigin.ts` holds the mechanism.
  *
  * **Anything unrecognized lands on General** rather than on an empty panel.
  * A stale bookmark is a stale
@@ -71,6 +84,20 @@ export function SettingsPage(): ReactNode {
   const extra = useExtraTab();
   const asked = useSearchParams()[0].get(CLUSTER_PARAM);
   const carried = asked === null ? '' : `?${CLUSTER_PARAM}=${encodeURIComponent(asked)}`;
+  // Where Settings was opened from, carried in the history entry's state, and
+  // forwarded by every move inside Settings.
+  const { state } = useLocation();
+  const way = useSettingsBack();
+  useNoteSettingsScroll(way?.origin);
+  useKeyLayer(
+    KeyLayer.Page,
+    (event) => {
+      if (event.key !== 'Escape' || way === undefined || editing(event.target)) return false;
+      way.back();
+      return true;
+    },
+    way !== undefined,
+  );
   // The tabs this console draws: Extra only where `useExtraTab` says so.
   const drawn = TABS.filter((one) => one.key !== 'extra' || extra.state === 'shown');
   // The tab title and the breadcrumb's last segment. A page that declares
@@ -84,11 +111,11 @@ export function SettingsPage(): ReactNode {
 
   // A stale bookmark or a hand-edited address. It lands on General rather than
   // on an empty panel or a 404; the page the user wanted is one of the tabs.
-  if (!isTab(tab)) return <Navigate to={`/settings/general${carried}`} replace />;
+  if (!isTab(tab)) return <Navigate to={`/settings/general${carried}`} state={state} replace />;
   // Extra where this console draws no Extra tab is a stale address like any
   // other. Not while that is still being read: a reload of the tab would
   // otherwise land on General before the answer came in.
-  if (tab === 'extra' && extra.state === 'none') return <Navigate to={`/settings/general${carried}`} replace />;
+  if (tab === 'extra' && extra.state === 'none') return <Navigate to={`/settings/general${carried}`} state={state} replace />;
 
   return (
     // The whole width: the menu column is gone on this route (`Menu.tsx`), and
@@ -96,7 +123,19 @@ export function SettingsPage(): ReactNode {
     // one form across it. Not centered - the page starts at the rail's edge like
     // every other.
     <div className="flex w-full min-w-0 flex-col gap-4 p-4">
-      <header className="flex flex-wrap items-baseline gap-2">
+      <header className="flex flex-wrap items-center gap-3">
+        {way === undefined ? null : (
+          <button
+            type="button"
+            onClick={way.back}
+            title={way.origin.path}
+            data-settings-back={way.origin.path}
+            className={`flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-panel-2 ${focusRing}`}
+          >
+            <Icon name="back" />
+            Back
+          </button>
+        )}
         <h1 className="text-xl font-medium">Settings</h1>
       </header>
 
@@ -105,6 +144,8 @@ export function SettingsPage(): ReactNode {
           <NavLink
             key={each.key}
             to={`/settings/${each.key}${carried}`}
+            state={state}
+            replace
             className={({ isActive }) =>
               `-mb-px border-b-2 px-3 py-1.5 text-xs ${focusRing} ${
                 isActive ? 'border-accent text-fg' : 'border-transparent text-muted hover:text-fg'
@@ -138,6 +179,17 @@ export function SettingsPage(): ReactNode {
       )}
     </div>
   );
+}
+
+/** Inputs that take no typing: Escape on one of them still goes back. */
+const PRESSED = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image']);
+
+/** A field being typed in keeps its own Escape. */
+function editing(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target.closest('textarea, select, [contenteditable="true"]') !== null) return true;
+  const input = target.closest('input');
+  return input !== null && !PRESSED.has(input.type);
 }
 
 function Tab({

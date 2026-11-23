@@ -10,6 +10,7 @@ import { focusRing } from '../focus';
 import { usePageFacts, type Crumb } from './pageFacts';
 import { RailArrange } from './RailArrange';
 import { SessionInline, useAccountMenu } from './SessionTile';
+import { useOpenSettings } from './settingsOrigin';
 import { useSharedCluster } from './sharedCluster';
 import { onlyCluster, stateDotClass, stateWord } from './clusterState';
 
@@ -101,6 +102,8 @@ export function Topbar(): ReactNode {
   const capabilities = useCapabilities();
   const facts = usePageFacts();
   const dock = useDockIfPresent();
+  const openSettings = useOpenSettings().onClick;
+  const settingsTo = cluster === undefined ? '/settings' : `/settings?cluster=${encodeURIComponent(cluster)}`;
 
   const known =
     clusters.data?.state === 'ok'
@@ -247,7 +250,8 @@ export function Topbar(): ReactNode {
         )}
         {accountMenu ? null : (
           <Link
-            to={cluster === undefined ? '/settings' : `/settings?cluster=${encodeURIComponent(cluster)}`}
+            to={settingsTo}
+            onClick={openSettings(settingsTo)}
             title="Settings"
             className={btnGhost}
           >
