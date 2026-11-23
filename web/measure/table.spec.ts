@@ -460,6 +460,8 @@ test('a table wider than its panel fades at the cut, and only while there is mor
   });
   expect(wide, 'the table held wider does not overflow its panel, so nothing here is tested').toBeGreaterThan(50);
 
+  // The fade is drawn a render after its ResizeObserver sees the wider table.
+  await expect(page.locator('[data-sideways="after"]'), 'no fade at the right of a table that goes on past it').toHaveCount(1);
   const start = await fades(page);
   expect(start.after, 'no fade at the right of a table that goes on past it').not.toBeNull();
   expect(
@@ -473,6 +475,7 @@ test('a table wider than its panel fades at the cut, and only while there is mor
     if (panel !== null) panel.scrollLeft = panel.scrollWidth;
   });
   await expect(page.locator('[data-sideways="after"]')).toHaveCount(0);
+  await expect(page.locator('[data-sideways="before"]'), 'no fade at the left once scrolled to the end').toHaveCount(1);
   const end = await fades(page);
   expect(end.before, 'no fade at the left once scrolled to the end').not.toBeNull();
   expect(end.held - end.left, 'no column is held at the left edge').toBeGreaterThan(50);
