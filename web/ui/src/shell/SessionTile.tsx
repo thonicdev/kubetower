@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router';
 
 import { ApiError, logout, useSession, useSignsBackIn } from '../api';
 import { leaveFor } from '../auth/leave';
@@ -9,6 +8,7 @@ import { Icon } from '../components/Icon';
 import { OverflowMenu, OverflowMenuItem } from '../components/OverflowMenu';
 import { useNow } from '../components/useNow';
 import { focusRing } from '../focus';
+import { useOpenSettings } from './settingsOrigin';
 
 /**
  * Who is signed in, how long is left, and the way out.
@@ -160,7 +160,7 @@ function useSessionControl() {
 export function SessionInline(): ReactNode {
   const { data, endsAt, soon, now, signOut } = useSessionControl();
   const offered = useSignsBackIn();
-  const navigate = useNavigate();
+  const openSettings = useOpenSettings().open;
   const warning =
     soon && endsAt !== undefined ? (
       <span role="status" className="shrink-0 text-warn">
@@ -197,7 +197,7 @@ export function SessionInline(): ReactNode {
           </>
         }
       >
-        <OverflowMenuItem label="Settings" icon="settings" onSelect={() => void navigate('/settings')} />
+        <OverflowMenuItem label="Settings" icon="settings" onSelect={() => openSettings('/settings')} />
         <OverflowMenuItem
           label="Log out"
           icon="logout"
