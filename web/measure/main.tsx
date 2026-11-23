@@ -35,6 +35,7 @@ import { security } from '../app/extras/security';
 import { redis } from '../app/extras/redis';
 
 import { ACTIVITY_EXTRA, activityAnswers, activityPath } from './events.fixture';
+import { UPDATE_STEPS, updateSettings } from './update.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
 import { EXTRA_CLUSTER, EXTRA_SCENES, ExtraProblem, type ExtraAnswer } from './extras.fixture';
 import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
@@ -1290,6 +1291,18 @@ const CONSOLES: Readonly<
         items: SETTINGS_EXTRA_ITEMS.map((item, index) => ({ ...item, enabled: index % 2 === 0 ? !item.enabled : item.enabled })),
       },
     },
+  },
+  // A newer release and the desktop's installer at each step (#48): Settings ›
+  // Infos with its banner, and the overview with the badge on Settings.
+  ...Object.fromEntries(
+    Object.entries(UPDATE_STEPS).map(([phase, install]) => [
+      `console-update-${phase}`,
+      { at: '/settings/infos', answers: { ...OVERVIEW_ANSWERS, ...updateSettings(install) } },
+    ]),
+  ),
+  'console-update-badge': {
+    at: `/c/${OVERVIEW_CLUSTER}`,
+    answers: { ...OVERVIEW_ANSWERS, ...updateSettings(UPDATE_STEPS.idle as never) },
   },
   'overview-unmeasured': { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_UNMEASURED_ANSWERS },
   // A Prometheus with no usable cAdvisor series and an empty leaderboard, as

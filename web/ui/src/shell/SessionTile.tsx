@@ -5,7 +5,8 @@ import { ApiError, logout, useSession, useSignsBackIn } from '../api';
 import { leaveFor } from '../auth/leave';
 import { SERVER_SIGN_IN_PATH } from '../auth/next';
 import { Icon } from '../components/Icon';
-import { OverflowMenu, OverflowMenuItem } from '../components/OverflowMenu';
+import { CountBadge, OverflowMenu, OverflowMenuItem } from '../components/OverflowMenu';
+import { useUpdateBadge } from '../pages/settings/UpdateControl';
 import { useNow } from '../components/useNow';
 import { focusRing } from '../focus';
 import { useOpenSettings } from './settingsOrigin';
@@ -161,6 +162,7 @@ export function SessionInline(): ReactNode {
   const { data, endsAt, soon, now, signOut } = useSessionControl();
   const offered = useSignsBackIn();
   const openSettings = useOpenSettings().open;
+  const badge = useUpdateBadge();
   const warning =
     soon && endsAt !== undefined ? (
       <span role="status" className="shrink-0 text-warn">
@@ -190,6 +192,7 @@ export function SessionInline(): ReactNode {
         face={
           <>
             <Icon name="account" />
+            {badge.shown ? <CountBadge title={badge.title}>1</CountBadge> : null}
             <span className="max-w-40 truncate">{name}</span>
             {/* Pointing down: there is more under the name. `Menu.tsx`'s
                 chevron, turned rather than a second shape. */}
@@ -197,7 +200,12 @@ export function SessionInline(): ReactNode {
           </>
         }
       >
-        <OverflowMenuItem label="Settings" icon="settings" onSelect={() => openSettings('/settings')} />
+        <OverflowMenuItem
+          label="Settings"
+          icon="settings"
+          {...(badge.shown ? { badge: '1', title: badge.title } : {})}
+          onSelect={() => openSettings('/settings')}
+        />
         <OverflowMenuItem
           label="Log out"
           icon="logout"
