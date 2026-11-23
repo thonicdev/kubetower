@@ -976,9 +976,8 @@ describe('in a cluster, Extra lists every extra with a button, as the server say
     expect(reason?.textContent).toBe(notInValues);
     expect(bravo?.getAttribute('aria-describedby')).toBe(reason?.id);
     // No `use`: the button is not offered, and the reason says why.
-    // (The tile's name is still a button: it opens the preview, which offers
-    // no button either.)
-    expect(tile('charlie')?.querySelector('[role="switch"], button:not([data-tile-open]):not([data-extra-edit])')).toBeNull();
+    // (Edit and About are still drawn: About offers no switch either.)
+    expect(tile('charlie')?.querySelector('[role="switch"], button:not([data-extra-about]):not([data-extra-edit])')).toBeNull();
     expect(tile('charlie')?.querySelector('[data-extra-reason="use"]')?.textContent).toBe(noUse);
     // Nothing says "per cluster", and no tile carries a hover.
     expect(page().querySelector('[data-extras]')?.textContent).not.toMatch(/per cluster/i);
@@ -1062,9 +1061,9 @@ describe('in a cluster, Extra lists every extra with a button, as the server say
     const switches = [...(tab?.querySelectorAll<HTMLButtonElement>('[role="switch"]') ?? [])];
     expect(switches.length).toBe(2);
     expect(switches.every((one) => one.disabled)).toBe(true);
-    // (Bar each tile's name, which opens its preview and writes nothing.)
+    // (Bar each card's Edit and About, which write nothing by themselves.)
     expect(
-      tab?.querySelectorAll('button:not([disabled]):not([data-tile-open]):not([data-extra-edit]), input:not([disabled]), select, textarea').length,
+      tab?.querySelectorAll('button:not([disabled]):not([data-extra-about]):not([data-extra-edit]), input:not([disabled]), select, textarea').length,
     ).toBe(0);
     expect(tab?.querySelectorAll('[data-extra-reason="unregistered"]').length).toBe(2);
     expect(tile('alfa')?.textContent).toContain(replicas);
@@ -1251,7 +1250,7 @@ describe('on the desktop, Extra has a tile per extension with a switch and its s
     expect(tile('bravo').querySelector('[data-extra-reason="pinned"]')?.textContent).toContain('KT_EXTRAS');
     expect(alfa.querySelector('[data-extra-pinned]')).toBeNull();
     // The cluster the tiles are about: written, and chosen by the rail's icons.
-    expect(page().querySelector('[data-extras-cluster="prod"]')?.tagName).toBe('P');
+    expect(page().querySelector('[data-extras-cluster="prod"]')?.textContent).toBe('prod');
     expect(page().querySelector('select')).toBeNull();
   });
 
@@ -1420,8 +1419,8 @@ describe('on the desktop, Extra has a tile per extension with a switch and its s
     });
     const tab = page().querySelector('[data-extras]');
     expect(tab?.querySelectorAll('[role="switch"]').length).toBe(2);
-    // Bar each tile's name, which opens its preview and writes nothing.
-    expect(tab?.querySelectorAll('input:not([disabled]), button:not([disabled]):not([data-tile-open]):not([data-extra-edit])').length).toBe(0);
+    // Bar each card's Edit and About, which write nothing by themselves.
+    expect(tab?.querySelectorAll('input:not([disabled]), button:not([disabled]):not([data-extra-about]):not([data-extra-edit])').length).toBe(0);
   });
 });
 
@@ -1669,7 +1668,7 @@ describe('an open Infos page follows the scheduled check', () => {
   });
 });
 
-describe("Extra: a tile opens the extra's preview, and the window turns it on or off", () => {
+describe("Extra: a card opens the extra's About window, which only informs", () => {
   const capabilities: StubRoutes = {
     '/api/capabilities': {
       body: {
@@ -1723,6 +1722,7 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
   const shipped: Extension[] = [
     {
       key: 'alfa',
+      icon: 'sliders',
       nav: { label: 'Alfa Center', path: 'x/alfa' },
       routes: [{ path: 'x/alfa', element: null }],
       about: {
@@ -1787,14 +1787,16 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
     return [...dialog().querySelectorAll<HTMLButtonElement>('button')].find((one) => one.textContent === name);
   }
   async function open(key: string): Promise<void> {
-    await edit(key);
-    fireEvent.click(modal().querySelector('[data-extra-about]') as Element);
+    await waitFor(() => {
+      expect(page().querySelector(`[data-extra="${key}"] [data-extra-about]`)).not.toBeNull();
+    });
+    fireEvent.click(tile(key).querySelector('[data-extra-about]') as Element);
     await waitFor(() => {
       expect(document.querySelector(`[role="dialog"] [data-extra-preview="${key}"]`)).not.toBeNull();
     });
   }
 
-  it('opens from the tile with the name, what it does, reads, needs and a picture of it', async () => {
+  it('opens from the card with the name, what it does, reads, needs and a picture of it', async () => {
     console();
     mountApp('/settings/extra', shipped);
     await open('alfa');
@@ -1802,7 +1804,8 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
     const window = dialog();
     expect(window.querySelector('h2')?.textContent).toBe('Alfa Center');
     expect(window.getAttribute('aria-labelledby')).toBe(window.querySelector('h2')?.id);
-    expect(window.querySelector('[data-extra-preview-icon] svg')).not.toBeNull();
+    expect(window.querySelector('[data-extra-preview-icon] svg use')?.getAttribute('href')).toBe('#i-sliders');
+    expect(window.querySelector('[data-extra-preview-state]')?.textContent).toBe('Off');
     expect(window.querySelector('[data-extra-preview-description]')?.textContent).toBe(
       'Alfa reads the alfas and says which are late.',
     );
@@ -1819,8 +1822,7 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
     expect(more).toHaveLength(1);
     expect(more[0]?.querySelector('img')?.getAttribute('alt')).toBe('The Alfa tab on an alfa.');
     expect(more[0]?.querySelector('figcaption')?.textContent).toBe('The Alfa tab on an alfa.');
-    expect(button('Turn on')?.disabled).toBe(false);
-    // The settings window's About button is what opened it, and that window is gone.
+    // Opened straight from the card: no settings window behind it.
     expect(document.querySelector('[data-extra-modal]')).toBeNull();
   });
 
@@ -1832,221 +1834,52 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
     expect(dialog().querySelector('[data-extra-preview-facts="requires"]')?.textContent).toContain(
       'Nothing beyond the cluster itself.',
     );
+    // An extra that names no glyph draws the generic one.
+    expect(dialog().querySelector('[data-extra-preview-icon] svg use')?.getAttribute('href')).toBe('#i-extra');
   });
 
-  it('closes with its close button', async () => {
+  it('has Close as its only button, and nothing in it switches the extra', async () => {
+    const { sent } = console();
+    mountApp('/settings/extra', shipped);
+    for (const key of ['alfa', 'delta', 'bravo', 'charlie']) {
+      await open(key);
+      const buttons = [...dialog().querySelectorAll('button')].map((one) => one.textContent);
+      expect(buttons).toEqual(['Close']);
+      expect(dialog().querySelector('[role="switch"], input, select')).toBeNull();
+      fireEvent.click(button('Close') as Element);
+      await waitFor(() => {
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+      });
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it('closes on Escape', async () => {
     console();
     mountApp('/settings/extra', shipped);
     await open('delta');
-    fireEvent.click(button('Close') ?? dialog().querySelector('[aria-label="Close"]') as Element);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     await waitFor(() => {
       expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
   });
 
-  /** The live region above the tiles, where a window's switch says what it did. */
-  function said(): string {
-    return page().querySelector('[role="status"][data-extras-said]')?.textContent ?? '';
-  }
-
-  it('turns an extra with no settings on at once, closes the window and says so, the tile already on', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('delta');
-    // There before anything is said, so the sentence is read out when it comes.
-    expect(page().querySelector('[role="status"][data-extras-said]')).not.toBeNull();
-    expect(said()).toBe('');
-
-    // Hold the write in flight until the button has been seen disabled.
-    const answering = globalThis.fetch;
-    let release = (): void => undefined;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      if ((init?.method ?? 'GET') === 'PUT') await held;
-      return answering(input, init);
-    });
-
-    const turn = button('Turn on') as HTMLButtonElement;
-    fireEvent.click(turn);
-    // In flight: the window stays, and its button cannot be pressed again.
-    await waitFor(() => {
-      expect(turn.disabled).toBe(true);
-    });
-    fireEvent.click(turn);
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    release();
-    await waitFor(() => {
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-    });
-    expect(sent).toEqual([{ path: '/api/c/prod/extensions/delta', body: { enabled: true } }]);
-    // Closed only once the listing was read again: the tile draws it on.
-    expect(tile('delta').getAttribute('data-on')).toBe('true');
-    expect(said()).toBe('Delta Center is now on for cluster prod.');
-  });
-
-  it('turns an extra off from its window the same way, and opening a window clears what was said', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('delta');
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(said()).toBe('Delta Center is now on for cluster prod.');
-    });
-
-    await open('delta');
-    expect(said()).toBe('');
-    fireEvent.click(button('Turn off') as Element);
-    await waitFor(() => {
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-    });
-    expect(sent).toEqual([
-      { path: '/api/c/prod/extensions/delta', body: { enabled: true } },
-      { path: '/api/c/prod/extensions/delta', body: { enabled: false } },
-    ]);
-    expect(tile('delta').getAttribute('data-on')).toBe('false');
-    expect(said()).toBe('Delta Center is now off for cluster prod.');
-  });
-
-  it('draws the button disabled with the reason where the row is locked for another reason than use', async () => {
+  it('follows the switch pressed on the card', async () => {
     console();
     mountApp('/settings/extra', shipped);
-    await open('bravo');
-    const turn = button('Turn on');
-    expect(turn?.disabled).toBe(true);
-    const reason = dialog().querySelector('[data-extra-reason="values"]');
-    expect(reason?.textContent).toBe(notInValues);
-    expect(turn?.getAttribute('aria-describedby')).toBe(reason?.id);
-  });
-
-  it('offers no button to someone without use, and says why', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('charlie');
-    expect(button('Turn on')).toBeUndefined();
-    expect(button('Turn off')).toBeUndefined();
-    expect(dialog().querySelector('[data-extra-reason="use"]')?.textContent).toBe(noUse);
-    expect(sent).toEqual([]);
-  });
-
-  it("keeps the window open with the server's sentence when the write fails", async () => {
-    console(['/api/c/prod/extensions/delta']);
-    mountApp('/settings/extra', shipped);
+    await waitFor(() => {
+      expect(page().querySelector('[data-extra="delta"] [role="switch"]')).not.toBeNull();
+    });
+    fireEvent.click(tile('delta').querySelector('[role="switch"]') as Element);
+    await waitFor(() => {
+      expect(tile('delta').getAttribute('data-on')).toBe('true');
+    });
     await open('delta');
-
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('not today');
-    });
-    expect(dialog().querySelector('[data-extra-preview="delta"]')?.getAttribute('data-on')).toBe('false');
-    expect(button('Turn on')?.disabled).toBe(false);
-    expect(tile('delta').getAttribute('data-on')).toBe('false');
-    expect(said()).toBe('');
+    expect(dialog().querySelector('[data-extra-preview="delta"]')?.getAttribute('data-on')).toBe('true');
+    expect(dialog().querySelector('[data-extra-preview-state]')?.textContent).toBe('On');
   });
 
-  it('moves to a settings step on an extra that has settings, and writes nothing yet', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('alfa');
-
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(dialog().querySelector('[data-extra-preview-settings]')).not.toBeNull();
-    });
-    expect(sent).toEqual([]);
-    const box = dialog().querySelector<HTMLInputElement>('[data-extra-setting="list-column"] input');
-    expect(box?.checked).toBe(true);
-    // Pinned by the deployment: its value, the badge, and nothing to press.
-    const pinned = dialog().querySelector('[data-extra-setting="fixed"]');
-    expect(pinned?.querySelector('input, button')).toBeNull();
-    expect(pinned?.textContent).toContain('pinned');
-    expect(pinned?.textContent).toContain('On');
-    expect(button('Save')).toBeDefined();
-    expect(button('Turn on')).toBeUndefined();
-  });
-
-  it('saves the settings changed, then turns the extra on, in that order, and reads the listing again', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('alfa');
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(dialog().querySelector('[data-extra-setting="list-column"] input')).not.toBeNull();
-    });
-
-    fireEvent.click(dialog().querySelector('[data-extra-setting="list-column"] input') as Element);
-    fireEvent.click(button('Save') as Element);
-
-    await waitFor(() => {
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-    });
-    expect(sent).toEqual([
-      { path: '/api/c/prod/extensions/alfa/settings/list-column', body: { value: false } },
-      { path: '/api/c/prod/extensions/alfa', body: { enabled: true } },
-    ]);
-    // Closed, said, and the tile draws what the console kept.
-    expect(said()).toBe('Alfa Center is now on for cluster prod.');
-    expect(tile('alfa').getAttribute('data-on')).toBe('true');
-    await edit('alfa');
-    expect(modal().querySelector<HTMLInputElement>('[data-extra-setting="list-column"] input')?.checked).toBe(false);
-  });
-
-  it('writes only the enable when no setting was changed', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('alfa');
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(button('Save')).toBeDefined();
-    });
-    fireEvent.click(button('Save') as Element);
-    await waitFor(() => {
-      expect(document.querySelector('[role="dialog"]')).toBeNull();
-    });
-    expect(tile('alfa').getAttribute('data-on')).toBe('true');
-    expect(sent).toEqual([{ path: '/api/c/prod/extensions/alfa', body: { enabled: true } }]);
-  });
-
-  it('writes nothing on Cancel, and the extra stays off', async () => {
-    const { sent } = console();
-    mountApp('/settings/extra', shipped);
-    await open('alfa');
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(dialog().querySelector('[data-extra-setting="list-column"] input')).not.toBeNull();
-    });
-    fireEvent.click(dialog().querySelector('[data-extra-setting="list-column"] input') as Element);
-
-    fireEvent.click(button('Cancel') as Element);
-
-    expect(dialog().querySelector('[data-extra-preview-settings]')).toBeNull();
-    expect(button('Turn on')).toBeDefined();
-    expect(sent).toEqual([]);
-    expect(tile('alfa').getAttribute('data-on')).toBe('false');
-  });
-
-  it('stops at a setting that fails, says why, and stays on the settings step without turning it on', async () => {
-    const { sent } = console(['/api/c/prod/extensions/alfa/settings/list-column']);
-    mountApp('/settings/extra', shipped);
-    await open('alfa');
-    fireEvent.click(button('Turn on') as Element);
-    await waitFor(() => {
-      expect(dialog().querySelector('[data-extra-setting="list-column"] input')).not.toBeNull();
-    });
-    fireEvent.click(dialog().querySelector('[data-extra-setting="list-column"] input') as Element);
-    fireEvent.click(button('Save') as Element);
-
-    await waitFor(() => {
-      expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('not today');
-    });
-    expect(sent).toEqual([{ path: '/api/c/prod/extensions/alfa/settings/list-column', body: { value: false } }]);
-    expect(dialog().querySelector('[data-extra-preview-settings]')).not.toBeNull();
-    expect(dialog().querySelector('[data-extra-preview="alfa"]')?.getAttribute('data-on')).toBe('false');
-    expect(said()).toBe('');
-  });
-
-  it("leaves the tile's own switch working without opening the window", async () => {
+  it("leaves the card's own switch working without opening a window", async () => {
     const { sent } = console();
     mountApp('/settings/extra', shipped);
     await waitFor(() => {
@@ -2058,6 +1891,24 @@ describe("Extra: a tile opens the extra's preview, and the window turns it on or
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(sent).toEqual([{ path: '/api/c/prod/extensions/delta', body: { enabled: true } }]);
+  });
+
+  it('draws Edit and About side by side on every card', async () => {
+    console();
+    mountApp('/settings/extra', shipped);
+    await waitFor(() => {
+      expect(page().querySelector('[data-extra="alfa"]')).not.toBeNull();
+    });
+    for (const key of ['alfa', 'bravo', 'charlie', 'delta']) {
+      const edit = tile(key).querySelector('[data-extra-edit]');
+      const about = tile(key).querySelector('[data-extra-about]');
+      expect(edit?.textContent).toBe('Edit');
+      expect(about?.textContent).toBe('About');
+      expect(edit?.parentElement).toBe(about?.parentElement);
+    }
+    // The card draws its extra's own glyph.
+    expect(tile('alfa').querySelector('[data-extra-icon]')?.getAttribute('data-extra-icon')).toBe('sliders');
+    expect(tile('delta').querySelector('[data-extra-icon]')?.getAttribute('data-extra-icon')).toBe('extra');
   });
 
   it("says what the server's row says where the build carries no words for the extra", async () => {
