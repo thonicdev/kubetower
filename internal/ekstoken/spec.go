@@ -178,7 +178,13 @@ func readArgs(raw []string) (awsArgs, bool) {
 		}
 		name, value, inline := strings.Cut(arg, "=")
 		full, takesValue, ok := resolveOption(name)
-		if !ok {
+		if !ok || full == "--help" || full == "--version" {
+			// --help and --version print and exit: no token comes back.
+			return awsArgs{}, false
+		}
+		if _, own := getTokenOptions[full]; own && len(out.positionals) < 2 {
+			// The command's options are parsed after the command is known: before
+			// `eks get-token`, the CLI refuses them.
 			return awsArgs{}, false
 		}
 		switch {

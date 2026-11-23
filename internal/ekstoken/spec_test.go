@@ -285,6 +285,9 @@ func TestAnArgumentTheCLIWouldNotReadIsLeftToIt(t *testing.T) {
 		{"a value to a flag", []string{"--debug=yes", "--region", "eu-west-3", "eks", "get-token", "--cluster-name", "example-eks"}},
 		{"a cluster on Outposts, named by its id", []string{"--region", "eu-west-3", "eks", "get-token", "--cluster-name", "example-eks", "--cluster-id", "0123"}},
 		{"a third positional", []string{"--region", "eu-west-3", "eks", "get-token", "extra", "--cluster-name", "example-eks"}},
+		{"a command option before the command", []string{"--region", "eu-west-3", "--cluster-name", "example-eks", "eks", "get-token"}},
+		{"--version, which prints and exits", []string{"--region", "eu-west-3", "eks", "get-token", "--cluster-name", "example-eks", "--version"}},
+		{"--help, which prints and exits", []string{"--region", "eu-west-3", "eks", "get-token", "--cluster-name", "example-eks", "--help"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if spec, ok := Parse(awsExec(tc.args, "")); ok {
