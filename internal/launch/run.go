@@ -71,6 +71,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/statefile"
 	"github.com/thonicdev/kubetower/internal/terminal"
 	"github.com/thonicdev/kubetower/internal/update"
+	"github.com/thonicdev/kubetower/internal/updater"
 	"github.com/thonicdev/kubetower/internal/web"
 	"github.com/thonicdev/kubetower/safego"
 )
@@ -652,16 +653,19 @@ type profile struct {
 	stateWrittenBy string
 	stateIsNewer   bool
 	updates        *update.Checker
-	kubeconfig     cluster.Kubeconfig
-	kubefiles      cluster.KubeconfigSurvey
-	clusters       *cluster.Manager
-	gate           *access.Gate
-	readOnly       *cluster.ReadOnly
-	measure        *metrics.Metrics
-	bars           *hotbars.Store
-	cols           *columns.Store
-	plates         *nameplates.Store
-	xtra           *extras.Store
+	// installer downloads and installs an update (#47): the desktop only, nil
+	// in a cluster and in a container, which are upgraded by their image tag.
+	installer  *updater.Updater
+	kubeconfig cluster.Kubeconfig
+	kubefiles  cluster.KubeconfigSurvey
+	clusters   *cluster.Manager
+	gate       *access.Gate
+	readOnly   *cluster.ReadOnly
+	measure    *metrics.Metrics
+	bars       *hotbars.Store
+	cols       *columns.Store
+	plates     *nameplates.Store
+	xtra       *extras.Store
 	// kinds is each person's choices about the kinds column, nil where they
 	// would not last. See openKindPrefs.
 	kinds    *kindprefs.Store
@@ -724,6 +728,19 @@ func openProfile(inCluster bool) (*profile, error) {
 		Dir:         statefile.Dir(),
 		Logf:        logf,
 	})
+	// The two clicks after "a newer release exists": on the desktop only, for
+	// the installation this binary was started from (internal/updater).
+	var installer *updater.Updater
+	if !inCluster && !cluster.InContainer() {
+		installer = updater.New(updater.Options{
+			Version:      version,
+			GOOS:         runtime.GOOS,
+			GOARCH:       runtime.GOARCH,
+			Installation: updater.DetectRunning(),
+			Dir:          statefile.Dir(),
+			Logf:         logf,
+		})
+	}
 
 	// **Where the clusters come from is the profile's first decision.** The
 	// desktop reads the operator's kubeconfig, a list of files; the server
@@ -812,7 +829,7 @@ func openProfile(inCluster bool) (*profile, error) {
 	kinds := openKindPrefs(inCluster, replicas.Several, statePersistent)
 
 	return &profile{
-		stateWrittenBy: stateWrittenBy, stateIsNewer: stateIsNewer, updates: updates,
+		stateWrittenBy: stateWrittenBy, stateIsNewer: stateIsNewer, updates: updates, installer: installer,
 		kubeconfig: kubeconfig, kubefiles: kubefiles, clusters: clusters,
 		gate: gate, readOnly: readOnly, measure: measure,
 		bars: bars, cols: cols, plates: plates, xtra: xtra, kinds: kinds, replicas: replicas,
@@ -1206,6 +1223,9 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 			CheckUpdates: func(ctx context.Context) web.UpdateReport {
 				return webUpdateReport(updates.CheckNow(ctx), updates.Checking())
 			},
+			// Download, then Restart to update (#47), and what the restart ends.
+			Installer: setupInstaller(p.installer),
+			OpenWork:  openWorkOf(w),
 			// The kubeconfig files, in precedence order, as they were read at
 			// **startup** and not as they are now.
 			//
@@ -2575,4 +2595,28 @@ func webUpdateReport(report update.Report, checking bool) web.UpdateReport {
 		Note:       report.Note,
 		Checking:   checking,
 	}
+}
+
+// setupInstaller is SetupInfo.Installer: nil, as an interface, where nothing
+// installs, so internal/web registers no route over a nil updater.
+func setupInstaller(u *updater.Updater) web.UpdateInstaller {
+	if u == nil {
+		return nil
+	}
+	return u
+}
+
+// openWorkOf counts what a restart ends, from the same sources as the macOS
+// window's quit question (nativewindowfacts.go): every terminal session and
+// every port-forward.
+func openWorkOf(w *workers) func() (int, int) {
+	var terminals func() int
+	if w != nil && w.shells != nil {
+		terminals = w.shells.Open
+	}
+	var forwards func() int
+	if w != nil {
+		forwards = w.countForwards
+	}
+	return func() (int, int) { return countOf(terminals), countOf(forwards) }
 }

@@ -64,6 +64,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) {
 		Clusters:       apiClusters{s},
 		Settings:       apiSettings{s},
 		Updates:        s.updateCheck(),
+		Installer:      s.updateInstaller(),
 		Prefs:          apiPrefs{s},
 		KindPrefs:      apiKindPrefs{s},
 		Reads:          apiReads{s},
@@ -1131,6 +1132,47 @@ func (s *Server) updateCheck() api.UpdateCheck {
 		return nil
 	}
 	return apiUpdates{s}
+}
+
+// apiInstaller is the desktop's download and install, over SetupInfo.Installer.
+type apiInstaller struct{ s *Server }
+
+func (i apiInstaller) UpdateInstall() api.UpdateInstall {
+	return updateInstallOf(i.s, i.s.setup.Installer.Status())
+}
+
+func (i apiInstaller) SetInstallUpdates(on bool) (api.UpdateInstall, error) {
+	status, err := i.s.setup.Installer.SetEnabled(on)
+	out := updateInstallOf(i.s, status)
+	if err != nil {
+		return out, fmt.Errorf("%w: %s", api.ErrNotSaved, firstLine(err.Error()))
+	}
+	return out, nil
+}
+
+func (i apiInstaller) DownloadUpdate() (api.UpdateInstall, error) {
+	status, err := i.s.setup.Installer.Download()
+	if err != nil {
+		return api.UpdateInstall{}, fmt.Errorf("%w: %s", api.ErrConflict, firstLine(err.Error()))
+	}
+	return updateInstallOf(i.s, status), nil
+}
+
+func (i apiInstaller) InstallUpdate(ctx context.Context) (api.UpdateInstall, error) {
+	status, err := i.s.setup.Installer.Install(ctx)
+	if err != nil {
+		return api.UpdateInstall{}, fmt.Errorf("%w: %s", api.ErrConflict, firstLine(err.Error()))
+	}
+	return updateInstallOf(i.s, status), nil
+}
+
+// updateInstaller is api.Deps.Installer: nil, as an interface, where nothing
+// installs, so the routes are not registered.
+func (s *Server) updateInstaller() api.UpdateInstaller {
+	if s.setup.Installer == nil {
+		return nil
+	}
+	return apiInstaller{s}
 }
 
 // Settings answers with what this console actually holds.

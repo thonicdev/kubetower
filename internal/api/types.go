@@ -584,8 +584,7 @@ type SettingsUpdate struct {
 	State string `json:"state"`
 	// Latest is the release GitHub named, without the git tag's leading `v`.
 	Latest string `json:"latest,omitempty"`
-	// ReleaseURL is that release's own page. The console offers and does not
-	// update, so this link is the whole of the offer.
+	// ReleaseURL is that release's own page.
 	ReleaseURL string `json:"releaseUrl,omitempty"`
 	// CheckedAt is when the request was made, and absent when none was — so a
 	// page knows not to date an answer nothing asked for.
@@ -597,6 +596,40 @@ type SettingsUpdate struct {
 	// startup, on the schedule, or after Check now. The
 	// other members are the previous answer until it lands.
 	Checking bool `json:"checking"`
+	// Install is the desktop's downloader and installer (#47). Absent where
+	// nothing installs: the server profile, a container, a test build.
+	Install *UpdateInstall `json:"install,omitempty"`
+}
+
+// UpdateInstall is where an update download and install stands, and what the
+// restart would end. internal/updater.Status, with the open work counted.
+type UpdateInstall struct {
+	// Phase is `idle`, `downloading`, `verifying`, `ready`, `installing` or `failed`.
+	Phase string `json:"phase"`
+	// Enabled is the "Install updates" setting.
+	Enabled bool `json:"enabled"`
+	// Supported says this installation can be updated from the console.
+	Supported bool `json:"supported"`
+	// Installation is how it was installed (`linux-appimage`, `windows-setup`…).
+	Installation string `json:"installation"`
+	Version      string `json:"version,omitempty"`
+	Asset        string `json:"asset,omitempty"`
+	Done         int64  `json:"done,omitempty"`
+	Total        int64  `json:"total,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	// Ends is what the restart closes for good.
+	Ends UpdateEnds `json:"ends"`
+}
+
+// UpdateEnds counts the terminals and port-forwards a restart ends.
+type UpdateEnds struct {
+	Terminals int `json:"terminals"`
+	Forwards  int `json:"forwards"`
+}
+
+// UpdateInstallWrite is the "Install updates" setting's write.
+type UpdateInstallWrite struct {
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // RetentionChoice is one entry of the retention list.

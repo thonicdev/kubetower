@@ -1059,6 +1059,95 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Refused' }
 
+  /api/settings/update:
+    get:
+      operationId: getUpdateInstall
+      tags: [session]
+      summary: Where the desktop's update download and install stands.
+      description: >-
+        Read while a download runs, for its progress. **Desktop only**: not
+        registered under the server profile, in a container, or where nothing
+        installs, so the address answers the contract's 404 and the page draws
+        no control.
+      responses:
+        '200':
+          description: The update's state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateInstall' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    put:
+      operationId: setUpdateInstall
+      tags: [session]
+      summary: Turn "Install updates" on or off.
+      description: >-
+        Off, the check and its line in Settings › Infos stay, and nothing is
+        downloaded or installed. Kept in the state directory. A write that took
+        effect and could not be saved answers `not_saved`.
+      parameters:
+        - $ref: '#/components/parameters/RequestMarker'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInstallWrite' }
+      responses:
+        '200':
+          description: The update's state with the setting applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateInstall' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Refused' }
+
+  /api/settings/update/download:
+    post:
+      operationId: downloadUpdate
+      tags: [session]
+      summary: The first click - download and verify the newer release.
+      description: |
+        Starts fetching the latest release's asset for this installation and
+        answers at once; `GET /api/settings/update` follows it. **Nothing is
+        kept that the release's signed `checksums.txt` does not vouch for**: the
+        Ed25519 signature is checked first, then the asset's sha256, and a file
+        failing either is deleted. Never a downgrade, never a development
+        build. Refused (409) when "Install updates" is off, when this
+        installation cannot be updated, or while a download or install runs.
+      parameters:
+        - $ref: '#/components/parameters/RequestMarker'
+      responses:
+        '200':
+          description: The download has started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateInstall' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Refused' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/settings/update/install:
+    post:
+      operationId: installUpdate
+      tags: [session]
+      summary: The second click - install the verified download and restart.
+      description: |
+        Checks the downloaded file's hash and the version again, then hands it to
+        this platform's installer, which replaces KubeTower and restarts it: the
+        terminals and port-forwards counted in `ends` close. Refused (409)
+        before a verified download, or when "Install updates" is off.
+      parameters:
+        - $ref: '#/components/parameters/RequestMarker'
+      responses:
+        '200':
+          description: The install has started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateInstall' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Refused' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /api/health:
     get:
       operationId: getHealth
@@ -2858,6 +2947,16 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
+    Conflict:
+      description: >-
+        The request cannot be taken in the state things are in now, and the
+        detail says which: for an update, "Install updates" is off, this
+        installation cannot be updated, one is already running, or nothing is
+        verified yet. Code `conflict`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
     PlanStale:
       description: >-
         The plan no longer describes what would happen: the token expired, the object
@@ -4195,9 +4294,9 @@ components:
     SettingsUpdate:
       type: object
       description: |
-        Whether a newer release exists. **The console offers; it does not
-        update** - there is no downloader behind this, and `releaseUrl` is
-        where the operator goes.
+        Whether a newer release exists. The check itself only offers:
+        `releaseUrl` is where the operator can go. On the desktop, `install`
+        carries the two clicks that download, verify and install it (#47).
 
         Present and on the `off` or `notApplicable` arm when the check did
         not run, which is a different thing from not having been told.
@@ -4230,7 +4329,7 @@ components:
             Present on `current` and `newer`.
         releaseUrl:
           type: string
-          description: That release's own page - the offer, and the whole of it.
+          description: That release's own page.
         checkedAt:
           type: string
           format: date-time
@@ -4251,7 +4350,63 @@ components:
             that re-checks a console left open, or after **Check now**. The page
             draws it as a running check; the other members are the previous answer
             until it lands.
-
+        install: { $ref: '#/components/schemas/UpdateInstall' }
+    UpdateInstall:
+      type: object
+      description: |
+        Where the desktop's update download and install stands (#47), and what
+        a restart would end. Present in `info.update.install` only where this
+        console can install; absent on the server profile and in a container.
+      required: [phase, enabled, supported, installation, ends]
+      properties:
+        phase:
+          type: string
+          enum: [idle, downloading, verifying, ready, installing, failed]
+        enabled:
+          type: boolean
+          description: The "Install updates" setting.
+        supported:
+          type: boolean
+          description: >-
+            This installation has an asset in a release and an installer in this
+            build. False draws no Download.
+        installation:
+          type: string
+          description: >-
+            How this KubeTower was installed: `windows-setup`, `windows-zip`,
+            `macos-app`, `macos-tar`, `linux-appimage`, `linux-deb`,
+            `linux-rpm`, `linux-tar`, or empty when unknown.
+        version:
+          type: string
+          description: The release being downloaded or ready.
+        asset:
+          type: string
+          description: The release asset's file name.
+        done:
+          type: integer
+          format: int64
+          description: Bytes received, while downloading.
+        total:
+          type: integer
+          format: int64
+          description: The asset's size, as the release declares it.
+        reason:
+          type: string
+          description: The one line of a failure.
+        ends:
+          type: object
+          description: What the restart closes for good.
+          required: [terminals, forwards]
+          properties:
+            terminals: { type: integer }
+            forwards: { type: integer }
+    UpdateInstallWrite:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: The "Install updates" setting.
     SettingsWrite:
       type: object
       description: |

@@ -282,6 +282,12 @@ func (fakeSettings) Settings() Settings {
 				ReleaseURL: "https://github.com/thonicdev/kubetower/releases/tag/v0.8.0",
 				CheckedAt:  &checked,
 				Note:       "KubeTower 0.8.0 has been released. This build is 0.7.2.",
+				// Mid-download, so every member of the installer is measured.
+				Install: &UpdateInstall{
+					Phase: "downloading", Enabled: true, Supported: true, Installation: "linux-appimage",
+					Version: "0.8.0", Asset: "kubetower-0.8.0-x86_64.AppImage", Done: 400, Total: 1000,
+					Reason: "", Ends: UpdateEnds{Terminals: 2, Forwards: 1},
+				},
 			},
 		},
 	}
@@ -1457,4 +1463,29 @@ func (fakePrereqs) InstallPrereq(_ context.Context, _, _, namespace string) (Act
 		Results: []ActResult{{Target: PlanTarget{Kind: "applications.argoproj.io", Namespace: namespace,
 			Name: "trivy-operator"}, OK: true, Message: "created"}},
 		Next: []Ref{{Text: "trivy-operator", Href: "/c/prod/applications.argoproj.io/argocd/trivy-operator"}}}, nil
+}
+
+// fakeInstaller is the desktop's updater, idle and ready to download.
+type fakeInstaller struct{}
+
+func (fakeInstaller) UpdateInstall() UpdateInstall {
+	return UpdateInstall{Phase: "idle", Enabled: true, Supported: true, Installation: "linux-appimage"}
+}
+
+func (f fakeInstaller) SetInstallUpdates(on bool) (UpdateInstall, error) {
+	out := f.UpdateInstall()
+	out.Enabled = on
+	return out, nil
+}
+
+func (f fakeInstaller) DownloadUpdate() (UpdateInstall, error) {
+	out := f.UpdateInstall()
+	out.Phase, out.Version, out.Asset, out.Total = "downloading", "0.1.3", "kubetower-0.1.3-x86_64.AppImage", 1000
+	return out, nil
+}
+
+func (f fakeInstaller) InstallUpdate(context.Context) (UpdateInstall, error) {
+	out := f.UpdateInstall()
+	out.Phase = "installing"
+	return out, nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/api"
 	"github.com/thonicdev/kubetower/internal/archive"
 	"github.com/thonicdev/kubetower/internal/nodeshell"
+	"github.com/thonicdev/kubetower/internal/updater"
 )
 
 // settingsOf is the whole payload.
@@ -158,6 +159,10 @@ func settingsInfoOf(s *Server) api.SettingsInfo {
 	// captured at startup would stay the pre-check answer. Nil when nothing checks.
 	if s.setup.Updates != nil {
 		info.Update = settingsUpdate(s.setup.Updates())
+		if s.setup.Installer != nil {
+			install := updateInstallOf(s, s.setup.Installer.Status())
+			info.Update.Install = &install
+		}
 	}
 
 	// Every file in precedence order ("first file wins"), the missing ones included,
@@ -240,6 +245,25 @@ func settingsUpdate(report UpdateReport) *api.SettingsUpdate {
 	if !report.CheckedAt.IsZero() {
 		at := report.CheckedAt
 		out.CheckedAt = &at
+	}
+	return out
+}
+
+// updateInstallOf is the updater's status with what a restart would end.
+func updateInstallOf(s *Server, status updater.Status) api.UpdateInstall {
+	out := api.UpdateInstall{
+		Phase:        string(status.Phase),
+		Enabled:      status.Enabled,
+		Supported:    status.Supported,
+		Installation: string(status.Installation),
+		Version:      status.Version,
+		Asset:        status.Asset,
+		Done:         status.Done,
+		Total:        status.Total,
+		Reason:       status.Reason,
+	}
+	if s.setup.OpenWork != nil {
+		out.Ends.Terminals, out.Ends.Forwards = s.setup.OpenWork()
 	}
 	return out
 }
