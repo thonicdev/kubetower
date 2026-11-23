@@ -371,7 +371,9 @@ describe('on a cluster of 5 000 pods and 1 000 policies', () => {
     await waitFor(() => expect(document.querySelector('[data-matrix]')).not.toBeNull());
     await waitFor(() => expect(document.querySelectorAll('[data-pod]').length).toBeGreaterThan(0));
     expect(document.querySelectorAll('[data-pod]').length).toBeLessThanOrEqual(300);
-    expect(document.querySelectorAll('[data-cell]')).toHaveLength(40 * 40);
+    // The 24 busiest namespaces and one "others" holding the 16 left.
+    expect(document.querySelectorAll('[data-cell]')).toHaveLength(25 * 25);
+    expect(document.querySelector('[data-matrix-count]')?.textContent).toBe('24 / 40');
 
     const tab = document.querySelector('[data-list-tab="policies"]');
     if (tab === null) throw new Error('no Policies tab');
