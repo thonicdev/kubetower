@@ -1,4 +1,5 @@
-import type { KeyboardEvent, ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { btnSecondary } from '@kubetower/ui';
 
 import { portsLabel, type Arrow, type Side } from './flows';
 import { shortLabel } from './text';
@@ -19,12 +20,16 @@ export interface Lit {
   sticky: string | null;
 }
 
-const W = 640;
-const H = 180;
-/** What the graph's side margin holds at 10px: a longer label is cut. */
-const GRAPH_CHARS = 30;
-const EDGE = 192;
+/** The small graph of the tab and the enlarged one of the dialog: its width,
+ *  the room each side keeps for its labels, what a label holds at 10px before
+ *  it is cut, and the least height. */
+const SIZES = {
+  small: { W: 640, EDGE: 192, CHARS: 30, H: 180, ROW: 0 },
+  large: { W: 900, EDGE: 320, CHARS: 54, H: 220, ROW: 30 },
+} as const;
 const OPEN_KEY = 'open';
+/** The narrowest the enlarged graph is drawn: below it the dialog scrolls the graph's frame, never the page. */
+const MIN_W = 320;
 
 /**
  * The pod in the middle, what may reach it on the left, what it may reach on
@@ -40,13 +45,42 @@ export function PodGraph({
   lit,
   onHover,
   onPick,
+  large = false,
+  onEnlarge,
 }: {
   ingress: GraphSide;
   egress: GraphSide;
   lit: Record<Side, Lit>;
   onHover: (side: Side, key: string | null) => void;
   onPick: (side: Side, key: string) => void;
+  /** The dialog's graph: wider, taller with more arrows, labels whole. */
+  large?: boolean;
+  /** Pressing the graph anywhere but on an arrow opens it enlarged. */
+  onEnlarge?: () => void;
 }): ReactNode {
+  const size = large ? SIZES.large : SIZES.small;
+  // The enlarged graph is drawn at the width it is given, one unit a pixel up
+  // to its own width, so its text stays at its size in a narrow window
+  // instead of shrinking with the drawing; the label room follows.
+  const [room, setRoom] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!large || el === null || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(([entry]) => {
+      if (entry !== undefined) setRoom(entry.contentRect.width);
+    });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [large]);
+  const W = large && room !== null && room > 0 ? Math.round(Math.min(size.W, Math.max(MIN_W, room))) : size.W;
+  const EDGE = Math.round((size.EDGE * W) / size.W);
+  const most = Math.max(ingress.arrows.length, egress.arrows.length, 1);
+  const H = Math.max(size.H, 44 + most * size.ROW);
+  // About 6px a character at 10px, less the gap to the arrow.
+  const GRAPH_CHARS = Math.max(10, Math.min(size.CHARS, Math.floor((EDGE - 14) / 6)));
+  /** A narrow enlarged graph: arrows too short to carry their ports. */
+  const tight = large && W < 600;
   const cx = W / 2;
   const cy = H / 2;
   const y = (i: number, n: number) => (n <= 1 ? cy : 22 + (i * (H - 44)) / (n - 1));
@@ -108,13 +142,21 @@ export function PodGraph({
           onMouseLeave={interactive ? () => onHover(side, null) : undefined}
           onFocus={interactive ? () => onHover(side, a.key) : undefined}
           onBlur={interactive ? () => onHover(side, null) : undefined}
-          onClick={interactive ? () => onPick(side, a.key) : undefined}
+          onClick={
+            interactive
+              ? (e) => {
+                  e.stopPropagation();
+                  onPick(side, a.key);
+                }
+              : undefined
+          }
           onKeyDown={interactive ? keys : undefined}
         >
           <title>{tip}</title>
           <path d={`M ${String(x1)} ${String(y1)} L ${String(x2)} ${String(y2)}`} stroke="transparent" strokeWidth={16} fill="none" />
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--color-accent)" strokeWidth={on ? 2.5 : 1.5} strokeDasharray={open ? '2 3' : '6 4'} markerEnd="url(#netinspect-pod-arrow)" />
-          {ports === '' ? null : (
+          {/* An arrow too short to carry its ports beside the names keeps them in its tooltip and its rows. */}
+          {ports === '' || tight ? null : (
             <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize="9" fill="var(--color-fg)" stroke="var(--color-panel)" strokeWidth={3} paintOrder="stroke" data-arrow-ports="">
               {ports}
             </text>
@@ -131,8 +173,16 @@ export function PodGraph({
       );
     });
   };
-  return (
-    <svg viewBox={`0 0 ${String(W)} ${String(H)}`} role="group" aria-label="Whom the rules let this pod talk to" className="w-full max-w-2xl rounded-lg border border-line bg-panel" data-mini-graph="">
+  const svg = (
+    <svg
+      viewBox={`0 0 ${String(W)} ${String(H)}`}
+      role="group"
+      aria-label="Whom the rules let this pod talk to"
+      className={`w-full rounded-lg border border-line bg-panel ${large ? '' : 'max-w-2xl'} ${onEnlarge === undefined ? '' : 'cursor-zoom-in'}`}
+      data-mini-graph={large ? undefined : ''}
+      data-large-graph={large ? '' : undefined}
+      onClick={onEnlarge}
+    >
       <defs>
         <marker id="netinspect-pod-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent)" />
@@ -165,5 +215,28 @@ export function PodGraph({
         EGRESS
       </text>
     </svg>
+  );
+  if (large) {
+    return (
+      <div ref={box} className="w-full min-w-0" data-large-graph-box="">
+        {svg}
+      </div>
+    );
+  }
+  if (onEnlarge === undefined) return svg;
+  return (
+    <div className="relative w-full max-w-2xl">
+      {svg}
+      <button
+        type="button"
+        data-enlarge=""
+        aria-label="Enlarge"
+        title="Enlarge"
+        onClick={onEnlarge}
+        className={`${btnSecondary} absolute right-1.5 bottom-1.5 bg-panel-2`}
+      >
+        <span aria-hidden="true">⤢</span>
+      </button>
+    </div>
   );
 }

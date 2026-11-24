@@ -45,9 +45,12 @@ import (
 //
 // **One read.** `start_time_gte` is relative (-300: the last five minutes),
 // `aggregation_interval` is the whole window so that a flow is one record, and
-// `page_size` is flowCap. Goldmane's `Filter` cannot say "source or
-// destination in these namespaces" (its fields are ANDed), so the person's
-// filter is applied here to what comes back, as for Hubble past whitelistCap.
+// `page_size` is flowCap. Goldmane's per-field filters are ANDed, so the
+// person's filter is applied here to what comes back, as for Hubble past
+// whitelistCap. One namespace's read also asks for that namespace at either
+// end (`Filter.endpoints`, `either`), so the cap is not spent on the rest of
+// the cluster; a Goldmane too old to know that field ignores it, and the
+// filter here still holds.
 const (
 	goldmaneNamespace    = "calico-system"
 	goldmaneService      = "goldmane"
@@ -147,8 +150,10 @@ func prepareGoldmane(r *http.Request, h extension.Host, cluster string, _ map[st
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, ServerName: goldmaneServerName,
 		Certificates: []tls.Certificate{pair}, NextProtos: []string{"h2"}}
+	window, _ := windowOf(r)
+	ns := r.URL.Query().Get("ns")
 	return func(ctx context.Context, addr string) ([]flow, bool, error) {
-		return listGoldmane(ctx, addr, cfg, flowCap, flowWindow)
+		return listGoldmane(ctx, addr, cfg, flowCap, window, ns)
 	}, "", ""
 }
 
@@ -188,7 +193,7 @@ func isTLSFailure(err error) bool {
 // listGoldmane calls goldmane.Flows/List on addr through the tunnel, in TLS
 // with the client certificate in cfg, and reads at most limit flows from the
 // last window. truncated says Goldmane holds more than were read.
-func listGoldmane(ctx context.Context, addr string, cfg *tls.Config, limit int, window time.Duration) ([]flow, bool, error) {
+func listGoldmane(ctx context.Context, addr string, cfg *tls.Config, limit int, window time.Duration, namespace string) ([]flow, bool, error) {
 	var seen readFailure
 	transport := &http2.Transport{
 		DialTLSContext: func(ctx context.Context, network, address string, _ *tls.Config) (net.Conn, error) {
@@ -208,7 +213,7 @@ func listGoldmane(ctx context.Context, addr string, cfg *tls.Config, limit int, 
 	defer transport.CloseIdleConnections()
 	var out []flow
 	var total int64
-	_, err := grpcStream(ctx, transport, "https://"+addr+"/goldmane.Flows/List", listRequest(limit, window), maxGoldmaneMessage,
+	_, err := grpcStream(ctx, transport, "https://"+addr+"/goldmane.Flows/List", listRequest(limit, window, namespace), maxGoldmaneMessage,
 		func(msg []byte) bool {
 			var t int64
 			out, t = decodeList(msg, out, limit)
@@ -288,13 +293,28 @@ func (c *watchedConn) Read(b []byte) (int, error) {
 // listRequest is a FlowListRequest: start_time_gte (1), a negative number of
 // seconds before now; page_size (4); aggregation_interval (7), the window, so
 // that a flow is one record.
-func listRequest(limit int, window time.Duration) []byte {
+func listRequest(limit int, window time.Duration, namespace string) []byte {
 	secs := int64(window / time.Second)
 	var b []byte
 	b = protowire.AppendTag(b, 1, protowire.VarintType)
 	b = protowire.AppendVarint(b, uint64(-secs))
 	b = protowire.AppendTag(b, 4, protowire.VarintType)
 	b = protowire.AppendVarint(b, uint64(limit))
+	if namespace != "" {
+		// filter (6) { endpoints (11) { either (3) { namespace (1) { value (1) } } } }:
+		// the namespace at either end, matched exactly.
+		var match, end, endpoints, filter []byte
+		match = protowire.AppendTag(match, 1, protowire.BytesType)
+		match = protowire.AppendString(match, namespace)
+		end = protowire.AppendTag(end, 1, protowire.BytesType)
+		end = protowire.AppendBytes(end, match)
+		endpoints = protowire.AppendTag(endpoints, 3, protowire.BytesType)
+		endpoints = protowire.AppendBytes(endpoints, end)
+		filter = protowire.AppendTag(filter, 11, protowire.BytesType)
+		filter = protowire.AppendBytes(filter, endpoints)
+		b = protowire.AppendTag(b, 6, protowire.BytesType)
+		b = protowire.AppendBytes(b, filter)
+	}
 	b = protowire.AppendTag(b, 7, protowire.VarintType)
 	b = protowire.AppendVarint(b, uint64(secs))
 	return b
