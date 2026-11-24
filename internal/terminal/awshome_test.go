@@ -406,23 +406,83 @@ func TestTheSessionAWSHomeSeesASessionCreatedAfterItOpened(t *testing.T) {
 	}
 }
 
-// A session whose plugins are not the AWS CLI creates nothing in the
-// operator's home.
-func TestTheSessionAWSHomeCreatesNoSSOCacheForAnotherPlugin(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
+// pluginConfig is a context authenticated by a plugin other than the AWS CLI.
+func pluginConfig(command string, args ...string) *clientcmdapi.Config {
 	cfg := eksConfig()
 	for _, user := range cfg.AuthInfos {
-		user.Exec.Command = "gke-gcloud-auth-plugin"
-		user.Exec.Args = nil
+		user.Exec.Command = command
+		user.Exec.Args = args
+		user.Exec.Env = []clientcmdapi.ExecEnvVar{{Name: "AAD_LOGIN_METHOD", Value: "azurecli"}}
 	}
-	if _, err := newSessionAWSHome(t.TempDir()).separate(cfg); err != nil {
-		t.Fatalf("separating: %v", err)
+	return cfg
+}
+
+// A plugin that is not the AWS CLI keeps the process's HOME, where its own
+// state is (`~/.config/gcloud`, `~/.kube/cache/kubelogin`): nothing is written
+// into its exec block, no session home is made and nothing is created in the
+// operator's home.
+func TestTheSessionAWSHomeLeavesAnotherPluginAlone(t *testing.T) {
+	for _, cfg := range []*clientcmdapi.Config{
+		pluginConfig("gke-gcloud-auth-plugin"),
+		pluginConfig("/usr/local/bin/kubelogin", "get-token", "--login", "azurecli"),
+	} {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		workdir := t.TempDir()
+
+		command := cfg.AuthInfos["eks"].Exec.Command
+		changed, err := newSessionAWSHome(workdir).separate(cfg)
+		if err != nil || changed {
+			t.Fatalf("%s: changed=%v err=%v", command, changed, err)
+		}
+		for _, name := range []string{"HOME", "USERPROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"} {
+			if v, set := execEnvOf(t, cfg, name); set {
+				t.Errorf("%s: %s = %q in the exec block", command, name, v)
+			}
+		}
+		if v, _ := execEnvOf(t, cfg, "AAD_LOGIN_METHOD"); v != "azurecli" {
+			t.Errorf("%s: the exec block lost its own environment", command)
+		}
+		if _, err := os.Stat(filepath.Join(workdir, sessionAWSHomeDir)); err == nil {
+			t.Errorf("%s: a session home was made", command)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".aws")); err == nil {
+			t.Errorf("%s: ~/.aws was created", command)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(home, ".aws")); err == nil {
-		t.Error("~/.aws was created for a plugin that is not the AWS CLI")
+}
+
+// One session kubeconfig holding an EKS context and a GKE one: only the AWS
+// CLI's exec block gets the session's home.
+func TestTheSessionAWSHomeIsGivenOnlyToTheAWSCLI(t *testing.T) {
+	requireSymlinks(t)
+	fakeOperatorHome(t)
+	workdir := t.TempDir()
+
+	cfg := eksConfig()
+	gke := pluginConfig("gke-gcloud-auth-plugin")
+	cfg.AuthInfos["gke"] = gke.AuthInfos["eks"]
+	cfg.Clusters["gke"] = &clientcmdapi.Cluster{Server: "https://gke.example:443"}
+	cfg.Contexts["gke"] = &clientcmdapi.Context{Cluster: "gke", AuthInfo: "gke"}
+
+	if changed, err := newSessionAWSHome(workdir).separate(cfg); err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	want := filepath.Join(workdir, sessionAWSHomeDir)
+	for _, v := range cfg.AuthInfos["eks"].Exec.Env {
+		if v.Name == "HOME" && v.Value != want {
+			t.Errorf("the EKS exec block's HOME is %q, want %q", v.Value, want)
+		}
+	}
+	if countExecEnv(&clientcmdapi.Config{AuthInfos: map[string]*clientcmdapi.AuthInfo{"eks": cfg.AuthInfos["eks"]}}, "HOME") != 1 {
+		t.Error("the EKS exec block has no HOME of its own")
+	}
+	for _, v := range cfg.AuthInfos["gke"].Exec.Env {
+		switch v.Name {
+		case "HOME", "USERPROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE":
+			t.Errorf("the GKE exec block was given %s = %q", v.Name, v.Value)
+		}
 	}
 }
 
