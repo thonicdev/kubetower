@@ -100,7 +100,7 @@ func defaultAWSHome() awsHome {
 
 	// SSODir is set whether or not it exists yet: a machine that has never run
 	// `aws sso login` has none at start, and the first login creates it later.
-	// separate() makes it for an `aws` plugin, so that login is seen through the
+	// separate() makes it, so that login is seen through the
 	// link instead of being missed until a restart.
 	h := awsHome{Base: filepath.Join(os.TempDir(), awsHomeDirName), SSODir: filepath.Join(aws, "sso")}
 	if info, err := os.Stat(h.SSODir); err == nil && info.IsDir() {
@@ -130,8 +130,14 @@ func defaultAWSHome() awsHome {
 //
 // A context with no exec block has no cache to corrupt and is untouched. An
 // exec block that sets HOME itself is untouched too: the operator meant it.
+// So is a plugin other than the AWS CLI (`gke-gcloud-auth-plugin`,
+// `kubelogin`): it reads its own state from HOME (`~/.config/gcloud`,
+// `~/.kube/cache/kubelogin`) and keeps the process's, as kubectl gives it.
 func (h awsHome) separate(cfg *rest.Config, context string) (string, bool, error) {
 	if cfg == nil || cfg.ExecProvider == nil || h.Base == "" {
+		return "", false, nil
+	}
+	if !ekstoken.UsesAWSCLI(cfg.ExecProvider) {
 		return "", false, nil
 	}
 	if hasEnv(cfg.ExecProvider.Env, "HOME") {
@@ -152,7 +158,7 @@ func (h awsHome) separate(cfg *rest.Config, context string) (string, bool, error
 	if h.SSODir != "" {
 		// Before the environment is written: without the SSO cache the redirect
 		// must not happen.
-		if err := linkSSO(h.SSODir, filepath.Join(dir, ".aws", "sso"), ekstoken.UsesAWSCLI(cfg.ExecProvider)); err != nil {
+		if err := linkSSO(h.SSODir, filepath.Join(dir, ".aws", "sso")); err != nil {
 			// Remove the unused directory: nothing prunes this temporary tree.
 			_ = os.RemoveAll(dir)
 			return "", false, fmt.Errorf("sharing the SSO token cache into the AWS home for %q: %w", context, err)
@@ -199,20 +205,15 @@ func addEnv(env []clientcmdapi.ExecEnvVar, name, value string) []clientcmdapi.Ex
 
 // linkSSO links the operator's SSO token cache into a private home.
 //
-// When it does not exist yet and the plugin is the AWS CLI, it is created, 0700
-// as the CLI makes it: the first `aws sso login` then lands where the link
-// points. When it cannot be linked after being created here (a Windows host
-// without the symlink privilege), it is taken back out and the home goes
-// without the link, which is what such a host had before; the same failure on
-// a directory that was already there is an error, and nothing is redirected.
-// Any other plugin gets the link only to a directory that exists, and nothing
-// is created for it.
-func linkSSO(ssoDir, link string, aws bool) error {
+// When it does not exist yet, it is created, 0700 as the CLI makes it: the
+// first `aws sso login` then lands where the link points. When it cannot be
+// linked after being created here (a Windows host without the symlink
+// privilege), it is taken back out and the home goes without the link, which
+// is what such a host had before; the same failure on a directory that was
+// already there is an error, and nothing is redirected.
+func linkSSO(ssoDir, link string) error {
 	if isDir(ssoDir) {
 		return shareDirectory(ssoDir, link)
-	}
-	if !aws {
-		return nil
 	}
 	parent := filepath.Dir(ssoDir)
 	hadParent := isDir(parent)

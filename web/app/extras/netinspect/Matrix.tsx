@@ -1,7 +1,13 @@
-import type { ReactNode } from 'react';
-import { focusRing } from '@kubetower/ui';
+import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { btnToggle, focusRing } from '@kubetower/ui';
 
 import type { FlowEdge, Graph, GraphNode } from './data';
+import { fold, ORDERS, TOPS, type CellData, type FoldAsk, type Order } from './fold';
+
+/** What the matrix's own controls write to the address, `''` deleting a key. */
+export type MatrixGo = (next: Record<string, string>) => void;
+
+const ORDER_WORD: Record<Order, string> = { traffic: 'Traffic', rules: 'Rules', name: 'Name' };
 
 /**
  * Every namespace against every namespace, in place of the cluster's graph:
@@ -10,118 +16,180 @@ import type { FlowEdge, Graph, GraphNode } from './data';
  * and nothing lets the source in - and what Hubble saw. A row or column
  * heading opens that namespace.
  *
- * Built from the overview's graph (the rules, already bounded at 40 nodes
- * with the rest folded) and the flows' edges: no read of its own.
+ * Only the busiest `top` are drawn, or the ones Find names; the rest are one
+ * "others" row and column (`fold.ts`). Hovering a cell lights its row's and
+ * its column's headings.
+ *
+ * Built from the overview's graph and the flows' edges: no read of its own.
  */
 export function Matrix({
   graph,
   flows,
   showRules,
   showFlows,
+  ask,
+  onAsk,
   onNamespace,
 }: {
   graph: Graph;
   flows: readonly FlowEdge[];
   showRules: boolean;
   showFlows: boolean;
+  ask: FoldAsk;
+  onAsk: MatrixGo;
   onNamespace: (namespace: string) => void;
 }): ReactNode {
-  const nodes = [...graph.nodes.filter((n) => n.kind !== 'workload'), ...(showFlows ? flowOnly(graph, flows) : [])];
-  const cells = cellsOf(nodes, graph, flows);
+  // Folded once per answer and ask, not on every hover.
+  const { find, top, order, active } = ask;
+  const { nodes, cells, shown, total, folded, foldedEnds, truncated } = useMemo(
+    () => fold(graph, flows, showFlows, { find, top, order, active }),
+    [graph, flows, showFlows, find, top, order, active],
+  );
+  const [cross, setCross] = useState<{ from: string; to: string } | null>(null);
+  const onOver = (event: MouseEvent<HTMLTableSectionElement>) => {
+    const key = (event.target as HTMLElement).closest('td')?.getAttribute('data-cell') ?? null;
+    if (key === null) return setCross(null);
+    const [from = '', to = ''] = key.split('>');
+    if (cross?.from !== from || cross.to !== to) setCross({ from, to });
+  };
+  // "others" draws the next size up, as far as the largest.
+  const bigger = TOPS.find((t) => t > ask.top);
+  const showMore = bigger === undefined ? undefined : () => onAsk({ top: String(bigger) });
+  // Nothing to fold on a small cluster: no controls, unless an address set one.
+  const tools = total > (TOPS[0] ?? 0) || ask.find !== '' || ask.active;
   return (
     <div className="flex flex-col gap-2" data-matrix="">
-      <div className="overflow-auto rounded-lg border border-line bg-panel p-2">
-        <table className="border-separate border-spacing-0.5 text-2xs">
-          <thead>
-            <tr>
-              <th className="sticky left-0 bg-panel px-1 text-right font-normal text-muted">from ╲ to</th>
-              {nodes.map((n) => (
-                <th key={n.id} scope="col" className="h-28 w-6 align-bottom font-normal">
-                  <Heading node={n} onNamespace={onNamespace} vertical />
-                </th>
+      {tools ? (
+        <div className="flex flex-wrap items-center gap-2" data-matrix-tools="">
+          <input
+            type="search"
+            name="mq"
+            value={ask.find}
+            placeholder="Find"
+            aria-label="Find a namespace"
+            onChange={(e) => onAsk({ mq: e.target.value })}
+            className={`h-6 w-48 rounded-md border border-line bg-panel-2 px-2 text-xs text-fg placeholder:text-muted ${focusRing}`}
+          />
+          <div role="group" aria-label="Namespaces drawn" className="flex gap-1">
+            {TOPS.map((top) => (
+              <button key={top} type="button" data-top={top} aria-pressed={ask.top === top} onClick={() => onAsk({ top: String(top) })} className={`${btnToggle(ask.top === top)} tabular-nums`}>
+                {top}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <span>Order</span>
+            <select
+              data-matrix-order=""
+              value={ask.order}
+              onChange={(event) => onAsk({ sort: event.target.value })}
+              className={`h-6 rounded-md border border-line bg-panel-2 px-1.5 text-xs text-fg ${focusRing}`}
+            >
+              {ORDERS.map((o) => (
+                <option key={o} value={o}>
+                  {ORDER_WORD[o]}
+                </option>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {nodes.map((from) => (
-              <tr key={from.id}>
-                <th scope="row" className="sticky left-0 bg-panel px-1 text-right font-normal whitespace-nowrap">
-                  <Heading node={from} onNamespace={onNamespace} />
-                </th>
-                {nodes.map((to) => (
-                  <Cell key={to.id} from={from} to={to} cell={cells.get(`${from.id}>${to.id}`)} showRules={showRules} showFlows={showFlows} />
+            </select>
+          </label>
+          <button
+            type="button"
+            data-matrix-active=""
+            aria-pressed={ask.active}
+            title="Only namespaces a rule or a flow names"
+            onClick={() => onAsk({ active: ask.active ? '' : '1' })}
+            className={btnToggle(ask.active)}
+          >
+            Active
+          </button>
+          <span data-matrix-count="" className="rounded-sm border border-line px-1.5 py-0.5 text-2xs text-muted tabular-nums" title={`${String(shown)} namespaces drawn of ${String(total)}${folded > 0 ? `, ${String(folded)} in others` : ''}${foldedEnds > 0 ? `, ${String(foldedEnds)} other ends in others` : ''}`}>
+            {shown} / {total}
+          </span>
+          {truncated ? (
+            <span data-matrix-cut="" className="rounded-sm border border-warn/50 px-1.5 py-0.5 text-2xs text-warn" title="Too many rules to send them all: a cell with no rule is unknown, not refused">
+              rules cut
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {shown === 0 ? (
+        <p data-matrix-none="" className="rounded-lg border border-line bg-panel p-3 text-sm text-muted">
+          No namespace matches
+        </p>
+      ) : (
+        <div className="overflow-auto rounded-lg border border-line bg-panel p-2">
+          <table className="border-separate border-spacing-0.5 text-2xs">
+            <thead>
+              <tr>
+                <th className="sticky top-0 left-0 z-20 bg-panel px-1 text-right font-normal text-muted">from ╲ to</th>
+                {nodes.map((n) => (
+                  <th key={n.id} scope="col" data-col={n.id} data-lit={cross?.to === n.id ? '' : undefined} className={`sticky top-0 z-10 h-28 w-6 rounded-sm bg-panel align-bottom font-normal ${cross?.to === n.id ? 'bg-panel-2' : ''}`}>
+                    <Heading node={n} onNamespace={onNamespace} onOthers={showMore} vertical lit={cross?.to === n.id} />
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <Legend />
+            </thead>
+            <tbody onMouseOver={onOver} onMouseLeave={() => setCross(null)}>
+              {nodes.map((from) => (
+                <tr key={from.id}>
+                  <th scope="row" data-row={from.id} data-lit={cross?.from === from.id ? '' : undefined} className={`sticky left-0 z-10 rounded-sm px-1 text-right font-normal whitespace-nowrap ${cross?.from === from.id ? 'bg-panel-2' : 'bg-panel'}`}>
+                    <Heading node={from} onNamespace={onNamespace} onOthers={showMore} lit={cross?.from === from.id} />
+                  </th>
+                  {nodes.map((to) => (
+                    <Cell key={to.id} from={from} to={to} cell={cells.get(`${from.id}>${to.id}`)} showRules={showRules} showFlows={showFlows} cut={truncated} />
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} />
     </div>
   );
 }
 
-/** What Hubble saw at an end no rule names (`entity:world`): a row and a
- *  column of its own, at most ten. */
-function flowOnly(graph: Graph, flows: readonly FlowEdge[]): GraphNode[] {
-  const known = new Set(graph.nodes.map((n) => n.id));
-  const extra = new Map<string, GraphNode>();
-  for (const e of flows) {
-    for (const id of [e.from, e.to]) {
-      if (known.has(id) || extra.has(id) || extra.size >= 10 || id.startsWith('wl:')) continue;
-      extra.set(id, { id, label: id.replace(/^[a-z]+:/, ''), kind: 'entity', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 });
-    }
-  }
-  return [...extra.values()];
-}
+type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
 
-interface CellData {
-  allow: string[];
-  deny: string[];
-  unevaluated: string[];
-  forwarded: number;
-  dropped: number;
-}
+/** Every pod of a namespace, or of every namespace "others" holds, is
+ *  isolated that way: nothing passes unless a rule of its own lets it. An
+ *  "others" holding an end (a CIDR, world) is never isolated: an end never
+ *  refuses. */
+const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && (n.ends ?? 0) === 0);
+const isolatedIn = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedIn >= n.pods;
+const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut >= n.pods;
 
-/** The rules and the flows of every pair, keyed `from>to` on the graph's ids. */
-function cellsOf(nodes: readonly GraphNode[], graph: Graph, flows: readonly FlowEdge[]): Map<string, CellData> {
-  const out = new Map<string, CellData>();
-  const at = (key: string) => {
-    let c = out.get(key);
-    if (c === undefined) {
-      c = { allow: [], deny: [], unevaluated: [], forwarded: 0, dropped: 0 };
-      out.set(key, c);
-    }
-    return c;
-  };
-  for (const e of graph.edges) {
-    const c = at(`${e.from}>${e.to}`);
-    const what = `${e.ports.join(', ')} · ${e.policies.join(', ')}`;
-    if (e.kind === 'deny') c.deny.push(what);
-    else if (e.kind === 'allow') c.allow.push(what);
-    else c.unevaluated.push(what);
-  }
-  const known = new Set(nodes.map((n) => n.id));
-  for (const e of flows) {
-    if (!known.has(e.from) || !known.has(e.to)) continue;
-    const c = at(`${e.from}>${e.to}`);
-    c.forwarded += e.forwarded;
-    c.dropped += e.dropped;
-  }
-  return out;
-}
-
-type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'open' | 'inside';
-
-/** What the rules say of one pair. A namespace to itself is allowed when a
- *  rule speaks between its own pods (`internal`). */
-function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined): State {
+/**
+ * What the rules say of one pair. A flow passes only if **each** isolated
+ * side lets it: the source's egress rules and the destination's ingress
+ * rules are two halves, and an allow on one never answers for the other. A
+ * deny anywhere wins. A namespace to itself is allowed when a rule speaks
+ * between its own pods (`internal`). On a cut answer nothing but a deny is
+ * concluded: a rule left out could deny or allow any pair.
+ *
+ * "others" stands for several namespaces, and a rule on the cell may be any
+ * one member's. So a cell touching it is refused only when every member
+ * refuses (all isolated on that side, and no rule of that side on the
+ * cell), and never allowed: what one member allows, another may refuse.
+ */
+function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   if (cell !== undefined && cell.deny.length > 0) return 'denied';
-  if (cell !== undefined && cell.allow.length > 0) return 'allowed';
+  if (cut) return 'unknown';
+  const mixed = from.kind === 'others' || to.kind === 'others';
+  // Rules between two folded namespaces are not sent at all (the server
+  // drops a merged edge from "others" to itself): nothing to conclude.
+  if (from.kind === 'others' && to.kind === 'others') return 'folded';
+  if (!mixed && from.id === to.id && to.internal > 0) return 'inside';
+  const inOK = !isolatedIn(to) || cell?.allowIn === true;
+  const outOK = !isolatedOut(from) || cell?.allowOut === true;
+  if (inOK && outOK) {
+    if (mixed) return 'folded';
+    if (cell !== undefined && cell.allow.length > 0) return 'allowed';
+    if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
+    return 'open';
+  }
   if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
-  if (from.id === to.id && to.internal > 0) return 'inside';
-  if (to.kind === 'namespace' && to.pods > 0 && to.isolatedIn >= to.pods) return 'refused';
-  return 'open';
+  return inOK ? 'refusedOut' : 'refused';
 }
 
 const LOOK: Record<State, string> = {
@@ -130,7 +198,10 @@ const LOOK: Record<State, string> = {
   denied: 'bg-bad/60',
   unevaluated: 'border border-dotted border-muted',
   refused: 'bg-panel-2 text-muted',
+  refusedOut: 'bg-panel-2 text-muted',
   open: 'border border-line',
+  folded: 'border border-dashed border-line',
+  unknown: 'border border-dotted border-warn/60',
 };
 
 const WORD: Record<State, string> = {
@@ -139,29 +210,45 @@ const WORD: Record<State, string> = {
   denied: 'denied by a rule',
   unevaluated: 'a rule not evaluated here (FQDN, Service, layer 7)',
   refused: 'refused: the destination is isolated and no rule lets this in',
+  refusedOut: 'refused: the source is isolated and no rule lets this out',
   open: 'open: no policy isolates the destination',
+  folded: 'folded: the namespaces in others may answer differently',
+  unknown: 'unknown: the rules were cut',
 };
 
-function Cell({
+/** At most this many rule lines in a cell's tooltip; an "others" cell can sum hundreds. */
+const TIP_LINES = 8;
+
+function lines(prefix: string, items: readonly string[] | undefined): string[] {
+  if (items === undefined) return [];
+  const out = items.slice(0, TIP_LINES).map((x) => `${prefix} ${x}`);
+  if (items.length > TIP_LINES) out.push(`${prefix} +${String(items.length - TIP_LINES)}`);
+  return out;
+}
+
+/** Memoized: a hover redraws the headings, never the cells. */
+const Cell = memo(function Cell({
   from,
   to,
   cell,
   showRules,
   showFlows,
+  cut,
 }: {
   from: GraphNode;
   to: GraphNode;
   cell: CellData | undefined;
   showRules: boolean;
   showFlows: boolean;
+  cut: boolean;
 }): ReactNode {
-  const state = stateOf(from, to, cell);
+  const state = stateOf(from, to, cell, cut);
   const seen = showFlows && cell !== undefined && cell.forwarded + cell.dropped > 0;
   const title = [
     `${from.label} → ${to.label}: ${WORD[state]}`,
-    ...(cell?.allow.map((a) => `allow ${a}`) ?? []),
-    ...(cell?.deny.map((d) => `deny ${d}`) ?? []),
-    ...(cell?.unevaluated.map((u) => `not evaluated ${u}`) ?? []),
+    ...lines('allow', cell?.allow),
+    ...lines('deny', cell?.deny),
+    ...lines('not evaluated', cell?.unevaluated),
     ...(seen ? [`seen ${String(cell.forwarded)} forwarded, ${String(cell.dropped)} dropped`] : []),
   ].join('\n');
   return (
@@ -172,37 +259,64 @@ function Cell({
       title={title}
       className={`relative size-6 rounded-sm text-center align-middle ${showRules ? LOOK[state] : 'border border-line'}`}
     >
-      {showRules && state === 'refused' ? <span aria-hidden="true">×</span> : null}
+      {showRules && (state === 'refused' || state === 'refusedOut') ? <span aria-hidden="true">×</span> : null}
       {seen ? (
         <span aria-hidden="true" className={`absolute right-0.5 bottom-0.5 size-1.5 rounded-full ${cell.dropped > 0 ? 'bg-bad' : 'bg-ok'}`} />
       ) : null}
     </td>
   );
-}
+});
 
-function Heading({ node, onNamespace, vertical = false }: { node: GraphNode; onNamespace: (namespace: string) => void; vertical?: boolean }): ReactNode {
+function Heading({
+  node,
+  onNamespace,
+  onOthers,
+  vertical = false,
+  lit = false,
+}: {
+  node: GraphNode;
+  onNamespace: (namespace: string) => void;
+  /** Absent at the largest size: "others" is then a plain heading. */
+  onOthers: (() => void) | undefined;
+  vertical?: boolean;
+  lit?: boolean;
+}): ReactNode {
   const text = <span className={vertical ? 'inline-block max-h-28 truncate [writing-mode:vertical-rl] rotate-180' : 'inline-block max-w-40 truncate'}>{node.label}</span>;
+  if (node.kind === 'others' && onOthers === undefined) {
+    return (
+      <span data-heading-others="" title={`${node.label} · ${String(node.pods)} pods`} className={`italic ${lit ? 'text-accent' : 'text-muted'}`}>
+        {text}
+      </span>
+    );
+  }
+  if (node.kind === 'others') {
+    return (
+      <button type="button" data-heading-others="" title={`${node.label} · ${String(node.pods)} pods`} onClick={onOthers} className={`italic ${lit ? 'text-accent' : 'text-muted'} hover:text-accent ${focusRing}`}>
+        {text}
+      </button>
+    );
+  }
   if (node.kind !== 'namespace' || node.namespace === undefined) {
     return (
-      <span title={node.label} className="text-muted">
+      <span title={node.label} className={lit ? 'text-accent' : 'text-muted'}>
         {text}
       </span>
     );
   }
   const ns = node.namespace;
   return (
-    <button type="button" data-heading={ns} title={`${node.label} · ${String(node.pods)} pods`} onClick={() => onNamespace(ns)} className={`text-fg hover:text-accent ${focusRing}`}>
+    <button type="button" data-heading={ns} title={`${node.label} · ${String(node.pods)} pods`} onClick={() => onNamespace(ns)} className={`${lit ? 'text-accent' : 'text-fg'} hover:text-accent ${focusRing}`}>
       {text}
     </button>
   );
 }
 
-function Legend(): ReactNode {
+function Legend({ cut, others }: { cut: boolean; others: boolean }): ReactNode {
   const items: { state: State; label: string }[] = [
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
-    { state: 'refused', label: 'refused' },
-    { state: 'open', label: 'open' },
+    ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
+    ...(others ? [{ state: 'folded' as const, label: 'folded' }] : []),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">

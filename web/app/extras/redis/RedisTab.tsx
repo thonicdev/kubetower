@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Pending, type ExtensionTabProps } from '@kubetower/ui';
 
 import { getProbe, serviceQuery, type Member, type ProbeState } from './data';
-import { DeploymentCard, ProblemNotice } from './parts';
+import { DeploymentCard, ExternalTile, ProblemNotice } from './parts';
 
 /**
  * The Redis viewer in a Service's panel: the
@@ -56,6 +56,13 @@ function OnService({
       </div>
     ) : (
       <Pending what="what is behind this Service" />
+    );
+  }
+  if (service.data.external !== undefined) {
+    return (
+      <div className="flex flex-col gap-3 text-sm" data-redis-tab="external">
+        <ExternalTile door={service.data.external} />
+      </div>
     );
   }
   return (

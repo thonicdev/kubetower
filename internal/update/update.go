@@ -1,10 +1,13 @@
 // Package update asks GitHub, once a day at most, whether a newer KubeTower
-// release exists, and says so. It never downloads or installs anything.
+// release exists, and says so. It never downloads or installs anything:
+// internal/updater does, on the desktop, when the operator asks, and only what
+// a signed checksums.txt vouches for.
 //
 // A desktop binary has no package manager telling the operator it is four
 // releases old. This offers a version, a link and a sentence, and the operator
-// decides; auto-update needs a signing story, and half of one is worse than
-// none.
+// decides. Installing needs a signing story, and half of one is worse than
+// none: the release's checksums.txt is signed (internal/releasesig), and
+// internal/updater installs nothing that signature does not cover.
 //
 //   - Desktop only: a pod calling github.com on boot meets air gaps and egress
 //     policy and reaches out for operators who did not ask; the in-cluster
@@ -546,6 +549,11 @@ func EnabledFromEnv() bool {
 // Its own parser rather than statefile's: GitHub may still name an early
 // `v`-prefixed tag, while a state stamp never has one. The shared rule is that
 // anything that is not three numbers compares as no opinion.
+// IsNewer says whether the release latest is newer than the running version,
+// as the check decides it: false for any pair that cannot be ordered, such as
+// a development build. internal/updater asks it again before installing.
+func IsNewer(latest, running string) bool { return newer(latest, running) }
+
 func newer(latest, running string) bool {
 	left, ok := triple(latest)
 	if !ok {
