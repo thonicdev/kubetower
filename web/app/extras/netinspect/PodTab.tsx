@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
-import { Failure, GoneNotice, Pending, focusRing, useDeclarePageFacts, type ExtensionTabProps } from '@kubetower/ui';
+import { Dialog, Failure, GoneNotice, KeyLayer, Pending, focusRing, useDeclarePageFacts, useEscape, type ExtensionTabProps } from '@kubetower/ui';
 
 import { FlowUIButtons } from './FlowUIs';
 import { PAGE_PATH, podQuery, problemCode, type PodAnswer } from './data';
-import { arrowsOf, flowsOf, type Arrow, type Flow, type Side } from './flows';
+import { MAX_ARROWS, MAX_ARROWS_LARGE, arrowsOf, flowsOf, type Arrow, type Flow, type Side } from './flows';
+import { PodFlows } from './PodFlows';
 import { IsolationChips, ModeBadge, Notices } from './parts';
 import { PodGraph, type GraphSide, type Lit } from './PodGraph';
 import { DirectionBox, type RowsLit } from './PodRules';
@@ -15,7 +16,20 @@ import { DirectionBox, type RowsLit } from './PodRules';
  * policies that select it, and whom their rules let it talk to - as rules,
  * drawn dashed, never as traffic. One read when the tab opens; no interval.
  */
-export default function PodTab({ cluster, namespace, name }: ExtensionTabProps): ReactNode {
+export default function PodTab(props: ExtensionTabProps): ReactNode {
+  return <PodAnswerView {...props} large={false} />;
+}
+
+/**
+ * The same answer enlarged, as the dialog draws it: what the Details line
+ * opens over the panel (`ExtensionShortcut.dialog`), and what the tab's small
+ * graph opens when pressed.
+ */
+export function PodLarge(props: ExtensionTabProps): ReactNode {
+  return <PodAnswerView {...props} large />;
+}
+
+function PodAnswerView({ cluster, namespace, name, large }: ExtensionTabProps & { large: boolean }): ReactNode {
   const query = useQuery({ ...podQuery(cluster, namespace ?? '', name), enabled: namespace !== undefined && namespace !== '' });
   if (query.isError) {
     if (problemCode(query.error) === 'list_forbidden') {
@@ -36,7 +50,7 @@ export default function PodTab({ cluster, namespace, name }: ExtensionTabProps):
     return <Failure error={query.error} onRetry={() => void query.refetch()} />;
   }
   if (query.data === undefined) return <Pending what="the NetworkPolicies that select this pod" />;
-  return <PodView cluster={cluster} answer={query.data} />;
+  return <PodView cluster={cluster} answer={query.data} large={large} />;
 }
 
 /**
@@ -60,29 +74,41 @@ export function PodPage(): ReactNode {
   );
 }
 
-export function PodView({ cluster, answer }: { cluster: string; answer: PodAnswer }): ReactNode {
+/**
+ * One pod's rules: the graph, each direction's rows, and the links to the
+ * page. `large` is the enlarged view of the dialog: a wider graph with more
+ * arrows and whole labels, one filter over both directions, every row, and
+ * what the flow source saw over a period picked. Otherwise the small graph
+ * opens that view in a dialog when pressed.
+ */
+export function PodView({ cluster, answer, large = false }: { cluster: string; answer: PodAnswer; large?: boolean }): ReactNode {
   const pod = answer.pod;
   const id = `${pod.namespace}/${pod.name}`;
   const page = `/c/${encodeURIComponent(cluster)}/${PAGE_PATH}`;
+  const [enlarged, setEnlarged] = useState(false);
+  const [filter, setFilter] = useState('');
   const sides = useMemo(() => {
     const make = (side: Side): { flows: Flow[]; arrows: Arrow[] } => {
       const direction = side === 'ingress' ? answer.ingress : answer.egress;
       const flows = flowsOf(direction, side, pod.namespace);
-      return { flows, arrows: direction.isolated ? arrowsOf(flows) : [] };
+      return { flows, arrows: direction.isolated ? arrowsOf(flows, large ? MAX_ARROWS_LARGE : MAX_ARROWS) : [] };
     };
     return { ingress: make('ingress'), egress: make('egress') };
-  }, [answer, pod.namespace]);
+  }, [answer, pod.namespace, large]);
   // What a hover is on, and what a press has fixed: an arrow (`key`) or a row (`flow`).
   const [hover, setHover] = useState<{ side: Side; key?: string; flow?: string } | null>(null);
   const [sticky, setSticky] = useState<{ side: Side; key: string } | null>(null);
+  // In the dialog, Escape first lets go of a pressed arrow, above the
+  // dialog's own layer; a second one closes the dialog.
+  useEscape(KeyLayer.Overlay + 5, () => setSticky(null), large && sticky !== null);
   useEffect(() => {
-    if (sticky === null) return;
+    if (large || sticky === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setSticky(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sticky]);
+  }, [sticky, large]);
   const litOf = (side: Side): { graph: Lit; rows: RowsLit } => {
     const { flows, arrows } = sides[side];
     const pressed = sticky?.side === side ? arrows.find((a) => a.key === sticky.key) : undefined;
@@ -128,11 +154,41 @@ export function PodView({ cluster, answer }: { cluster: string; answer: PodAnswe
         </span>
       </div>
       <Notices complete={answer.complete} notes={answer.notes} cni={answer.cni} unevaluated={answer.unevaluated} />
-      <PodGraph ingress={graphSide('ingress', answer.ingress.isolated)} egress={graphSide('egress', answer.egress.isolated)} lit={{ ingress: lit.ingress.graph, egress: lit.egress.graph }} onHover={onHover} onPick={onPick} />
-      <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
-        <DirectionBox title="Ingress" side="ingress" direction={answer.ingress} hostNetwork={pod.hostNetwork} flows={sides.ingress.flows} lit={lit.ingress.rows} onRow={onRow('ingress')} onClearFilter={() => setSticky(null)} />
-        <DirectionBox title="Egress" side="egress" direction={answer.egress} hostNetwork={pod.hostNetwork} flows={sides.egress.flows} lit={lit.egress.rows} onRow={onRow('egress')} onClearFilter={() => setSticky(null)} />
+      <PodGraph
+        ingress={graphSide('ingress', answer.ingress.isolated)}
+        egress={graphSide('egress', answer.egress.isolated)}
+        lit={{ ingress: lit.ingress.graph, egress: lit.egress.graph }}
+        onHover={onHover}
+        onPick={onPick}
+        large={large}
+        {...(large
+          ? {}
+          : {
+              onEnlarge: () => {
+                // What the small graph held is let go: the dialog starts clear,
+                // and nothing is left pressed behind it once it closes.
+                setSticky(null);
+                setHover(null);
+                setEnlarged(true);
+              },
+            })}
+      />
+      {large ? (
+        <input
+          type="search"
+          name="podq"
+          value={filter}
+          placeholder="Filter"
+          aria-label="Filter the rules and flows"
+          onChange={(e) => setFilter(e.target.value)}
+          className={`w-64 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs text-fg placeholder:text-muted ${focusRing}`}
+        />
+      ) : null}
+      <div className={`grid grid-cols-1 gap-3 ${large ? 'xl:grid-cols-2' : '2xl:grid-cols-2'}`}>
+        <DirectionBox title="Ingress" side="ingress" direction={answer.ingress} hostNetwork={pod.hostNetwork} flows={sides.ingress.flows} lit={lit.ingress.rows} onRow={onRow('ingress')} onClearFilter={() => setSticky(null)} {...(large ? { query: filter, expanded: true } : {})} />
+        <DirectionBox title="Egress" side="egress" direction={answer.egress} hostNetwork={pod.hostNetwork} flows={sides.egress.flows} lit={lit.egress.rows} onRow={onRow('egress')} onClearFilter={() => setSticky(null)} {...(large ? { query: filter, expanded: true } : {})} />
       </div>
+      {large ? <PodFlows cluster={cluster} namespace={pod.namespace} pod={pod.name} query={filter} /> : null}
       <p className="flex flex-wrap gap-3 text-xs">
         <Link to={`${page}?ns=${encodeURIComponent(pod.namespace)}`} className={`text-accent underline ${focusRing}`}>
           Namespace
@@ -144,6 +200,13 @@ export function PodView({ cluster, answer }: { cluster: string; answer: PodAnswe
           Verdict to
         </Link>
       </p>
+      {enlarged ? (
+        <Dialog title={`Network Inspector · ${pod.name}`} onClose={() => setEnlarged(false)} size="viewport" layer={KeyLayer.Overlay}>
+          <div data-pod-enlarged="">
+            <PodView cluster={cluster} answer={answer} large />
+          </div>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

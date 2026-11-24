@@ -49,6 +49,8 @@ export function DirectionBox({
   lit,
   onRow,
   onClearFilter,
+  query: shared,
+  expanded: open = false,
 }: {
   title: string;
   side: Side;
@@ -58,12 +60,18 @@ export function DirectionBox({
   lit: RowsLit;
   onRow: (id: string | null) => void;
   onClearFilter: () => void;
+  /** A filter held above both directions (the enlarged view's): the box draws
+   *  no field of its own. */
+  query?: string;
+  /** Every row, never cut at eight. */
+  expanded?: boolean;
 }): ReactNode {
-  const [query, setQuery] = useState('');
+  const [own, setQuery] = useState('');
+  const query = shared ?? own;
   const [all, setAll] = useState(false);
   const base = lit.filter === null ? flows : flows.filter((f) => lit.filter?.ids.has(f.id) === true);
   const matching = filterFlows(base, query);
-  const expanded = all || lit.pinned;
+  const expanded = open || all || lit.pinned;
   const shown = expanded ? matching : matching.slice(0, MAX_ROWS);
   const scrolls = expanded && matching.length > SCROLL_ROWS;
   return (
@@ -81,7 +89,7 @@ export function DirectionBox({
             {lit.ids.size} of {flows.length}
           </span>
         ) : null}
-        {flows.length > MAX_ROWS ? (
+        {shared === undefined && flows.length > MAX_ROWS ? (
           <input
             type="search"
             value={query}
@@ -117,7 +125,7 @@ export function DirectionBox({
               ) : null}
             </ul>
           </div>
-          {matching.length > MAX_ROWS && !lit.pinned ? (
+          {matching.length > MAX_ROWS && !lit.pinned && !open ? (
             <button type="button" data-show-all="" aria-expanded={all} onClick={() => setAll(!all)} className={`self-start rounded-md px-1 text-accent underline ${focusRing}`}>
               {all ? 'Show fewer' : `Show all ${String(matching.length)}`}
             </button>
