@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { Failure, Pill, focusRing, btnSecondary } from '@kubetower/ui';
+import { CopyButton, Failure, Pill, Tile, focusRing, btnSecondary } from '@kubetower/ui';
 
 import {
   EVIDENCE_WORDS,
@@ -14,6 +14,7 @@ import {
   type Deployment,
   type Door,
   type Evidence,
+  type External,
   type Member,
   type ProbeState,
 } from './data';
@@ -40,6 +41,38 @@ export function inventoryHref(cluster: string, scope: string): string {
 export function instanceHref(cluster: string, door: Pick<Door, 'namespace' | 'service' | 'port'>, scope = ''): string {
   const path = `/c/${encodeURIComponent(cluster)}/${PAGE_PATH}/${encodeURIComponent(door.namespace)}/${encodeURIComponent(door.service)}/${door.port}`;
   return scope === '' ? path : `${path}?${new URLSearchParams({ scope }).toString()}`;
+}
+
+/** A Service's Details, in the console. */
+export function serviceHref(cluster: string, namespace: string, name: string): string {
+  return `/c/${encodeURIComponent(cluster)}/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
+}
+
+/** Where an ExternalName Service points: its host, and its port when it has one. */
+export function externalAddress(door: Pick<External, 'host' | 'port'>): string {
+  return door.port === undefined || door.port === 0 ? door.host : `${door.host}:${door.port}`;
+}
+
+/**
+ * An ExternalName Service to a Redis outside the cluster: no probe, no keys,
+ * no tunnel - a pod port-forward cannot reach it. `to` opens its Service.
+ */
+export function ExternalTile({ door, to }: { door: External; to?: string }): ReactNode {
+  const address = externalAddress(door);
+  return (
+    <Tile
+      data-external={`${door.namespace}/${door.service}`}
+      title={door.service}
+      {...(to === undefined ? {} : { to, openLabel: `Open Service ${door.service}` })}
+      badges={
+        <Pill neutral="muted" title={`Outside the cluster: ${door.why}`}>
+          external
+        </Pill>
+      }
+      detail={`${door.namespace} · ${address}`}
+      action={<CopyButton value={address} label="Copy address" />}
+    />
+  );
 }
 
 /**

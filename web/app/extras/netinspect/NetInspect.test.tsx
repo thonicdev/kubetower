@@ -371,7 +371,9 @@ describe('on a cluster of 5 000 pods and 1 000 policies', () => {
     await waitFor(() => expect(document.querySelector('[data-matrix]')).not.toBeNull());
     await waitFor(() => expect(document.querySelectorAll('[data-pod]').length).toBeGreaterThan(0));
     expect(document.querySelectorAll('[data-pod]').length).toBeLessThanOrEqual(300);
-    expect(document.querySelectorAll('[data-cell]')).toHaveLength(40 * 40);
+    // The 24 busiest namespaces and one "others" holding the 16 left.
+    expect(document.querySelectorAll('[data-cell]')).toHaveLength(25 * 25);
+    expect(document.querySelector('[data-matrix-count]')?.textContent).toBe('24 / 40');
 
     const tab = document.querySelector('[data-list-tab="policies"]');
     if (tab === null) throw new Error('no Policies tab');
@@ -403,8 +405,8 @@ describe('Cilium on the page', () => {
     // A deny outweighs an allow on the same pair; a rule not evaluated is neither.
     const deny = document.querySelector('[data-cell="ns:ops>ns:shop"]');
     expect(deny?.getAttribute('data-state')).toBe('denied');
-    expect(deny?.getAttribute('title')).toContain('deny 5432/TCP · db-deny');
-    expect(deny?.getAttribute('title')).toContain('allow 9090/TCP · api-from-ops');
+    expect(deny?.getAttribute('title')).toMatch(/deny (in|out|in and out) · 5432\/TCP · db-deny/);
+    expect(deny?.getAttribute('title')).toMatch(/allow (in|out|in and out) · 9090\/TCP · api-from-ops/);
     const unevaluated = document.querySelector('[data-cell="ns:shop>unevaluated:toFQDNs"]');
     expect(unevaluated?.getAttribute('data-state')).toBe('unevaluated');
     expect(unevaluated?.getAttribute('title')).toContain('not evaluated');

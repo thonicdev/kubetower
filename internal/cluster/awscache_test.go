@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -158,6 +159,34 @@ func TestTheExecEnvironmentAContextIsGiven(t *testing.T) {
 			// pinning the shared files back would be pinning them into a home this
 			// code did not choose.
 			absent: []string{"USERPROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"},
+		},
+		{
+			name:    "a GKE plugin keeps the process's home",
+			context: "GKE-1",
+			exec: &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1beta1",
+				Command: "gke-gcloud-auth-plugin", InteractiveMode: clientcmdapi.NeverExecInteractiveMode},
+			changed: false,
+			absent:  []string{"HOME", "USERPROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"},
+		},
+		{
+			name:    "a kubelogin plugin keeps the process's home",
+			context: "AKS-1",
+			exec: &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1beta1",
+				Command: "/usr/local/bin/kubelogin", Args: []string{"get-token", "--login", "azurecli"},
+				Env:             []clientcmdapi.ExecEnvVar{{Name: "AAD_LOGIN_METHOD", Value: "azurecli"}},
+				InteractiveMode: clientcmdapi.NeverExecInteractiveMode},
+			changed: false,
+			want:    map[string]string{"AAD_LOGIN_METHOD": "azurecli"},
+			absent:  []string{"HOME", "USERPROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"},
+		},
+		{
+			name:    "the AWS CLI by path keeps its separation",
+			context: "PATH-EKS",
+			exec: &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1beta1",
+				Command: `C:\Program Files\Amazon\AWSCLIV2\aws.exe`, Args: []string{"eks", "get-token"},
+				InteractiveMode: clientcmdapi.NeverExecInteractiveMode},
+			changed: true,
+			want:    map[string]string{"HOME": homeFor(home.Base, "PATH-EKS")},
 		},
 		{
 			name:    "an exec block that already names the shared files keeps its own",
@@ -458,21 +487,30 @@ func TestNoSSODirectoryIsNotAFailure(t *testing.T) {
 	}
 }
 
-// A plugin that is not the AWS CLI (kubelogin, gke-gcloud-auth-plugin) has no
-// SSO cache to share: nothing is created in the operator's home for it.
-func TestNoSSOCacheIsCreatedForAnotherPlugin(t *testing.T) {
+// A plugin that is not the AWS CLI (kubelogin, gke-gcloud-auth-plugin) gets
+// no private home: none is made for it, and nothing is created in the
+// operator's home either.
+func TestNoHomeIsMadeForAnotherPlugin(t *testing.T) {
 	home, root := awsHomeForTest(t)
 	home.SSODir = filepath.Join(root, "user", ".aws", "sso")
 
-	exec := execConfig()
-	exec.Command = "kubelogin"
-	exec.Args = []string{"get-token"}
-	cfg := &rest.Config{ExecProvider: exec}
-	if _, changed, err := home.separate(cfg, "AKS-1"); err != nil || !changed {
-		t.Fatalf("changed=%v err=%v", changed, err)
+	for _, command := range []string{"kubelogin", "gke-gcloud-auth-plugin", "aws-vault"} {
+		exec := execConfig()
+		exec.Command = command
+		exec.Args = []string{"get-token"}
+		cfg := &rest.Config{ExecProvider: exec}
+		if _, changed, err := home.separate(cfg, "OTHER-1"); err != nil || changed {
+			t.Fatalf("%s: changed=%v err=%v", command, changed, err)
+		}
+		if got := envOf(cfg); len(got) != 0 {
+			t.Errorf("%s: the exec environment became %v", command, got)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "user", ".aws")); err == nil {
 		t.Error("~/.aws was created for a plugin that is not the AWS CLI")
+	}
+	if _, err := os.Stat(filepath.Join(home.Base, awsHomeKey("OTHER-1"))); err == nil {
+		t.Error("a private home was made for a plugin that is not the AWS CLI")
 	}
 }
 
@@ -601,10 +639,9 @@ func TestTheExecPluginRunsWithItsOwnHome(t *testing.T) {
 	}))
 	defer server.Close()
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatalf("finding this test binary: %v", err)
-	}
+	// The plugin is this test binary under the AWS CLI's name: only that
+	// one gets a private home.
+	self := pluginNamed(t, "aws")
 	record := filepath.Join(t.TempDir(), "homes.txt")
 	t.Setenv(pluginRecordEnv, record)
 
@@ -661,6 +698,89 @@ func TestTheExecPluginRunsWithItsOwnHome(t *testing.T) {
 		}
 	}
 	t.Logf("the credential plugin ran under:\n  %s", strings.Join(got, "\n  "))
+}
+
+// pluginNamed is a copy of this test binary under a plugin's name, so the
+// command an exec block names is that plugin's.
+func pluginNamed(t *testing.T, name string) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("finding this test binary: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.Link(self, path); err != nil {
+		data, err := os.ReadFile(self)
+		if err != nil {
+			t.Fatalf("reading this test binary: %v", err)
+		}
+		if err := os.WriteFile(path, data, 0o700); err != nil {
+			t.Fatalf("copying this test binary: %v", err)
+		}
+	}
+	return path
+}
+
+// A GKE plugin, the whole way: it runs under the process's own HOME, where its
+// gcloud configuration is.
+func TestAnotherPluginRunsWithTheProcessHome(t *testing.T) {
+	t.Setenv("KT_IN_CONTAINER", "0")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	self := pluginNamed(t, "gke-gcloud-auth-plugin")
+	record := filepath.Join(t.TempDir(), "homes.txt")
+	t.Setenv(pluginRecordEnv, record)
+	own := filepath.Join(t.TempDir(), "operator")
+	t.Setenv("HOME", own)
+
+	const alpha, beta = "GKE-1", "GKE-2"
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(kubeconfig, []byte(kubeconfigYAML(server.URL, self, alpha, beta)), 0o600); err != nil {
+		t.Fatalf("writing the kubeconfig: %v", err)
+	}
+	m, err := NewManager(kubeconfig)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	home, _ := awsHomeForTest(t)
+	m.awsHome = home
+
+	for _, name := range []string{alpha, beta} {
+		client, err := m.Client(name)
+		if err != nil {
+			t.Fatalf("%s: Client: %v", name, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		if _, err := client.Clients.Discovery().RESTClient().Get().AbsPath("/version").DoRaw(ctx); err != nil {
+			cancel()
+			t.Fatalf("%s: the request through the exec plugin failed: %v", name, err)
+		}
+		cancel()
+	}
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the credential plugin never ran: %v", err)
+	}
+	got := strings.Fields(string(raw))
+	if len(got) == 0 {
+		t.Fatal("the credential plugin recorded no HOME")
+	}
+	for _, h := range got {
+		if h != own {
+			t.Errorf("the plugin ran with HOME %q, want the process's %q", h, own)
+		}
+	}
+	if entries, err := os.ReadDir(home.Base); err == nil && len(entries) > 0 {
+		t.Errorf("private homes were made for a GKE plugin: %d", len(entries))
+	}
 }
 
 // kubeconfigYAML writes two contexts onto one cluster with identical exec

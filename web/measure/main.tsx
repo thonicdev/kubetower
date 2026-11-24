@@ -35,6 +35,7 @@ import { security } from '../app/extras/security';
 import { redis } from '../app/extras/redis';
 
 import { ACTIVITY_EXTRA, activityAnswers, activityPath } from './events.fixture';
+import { UPDATE_STEPS, updateSettings } from './update.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
 import { EXTRA_CLUSTER, EXTRA_SCENES, ExtraProblem, type ExtraAnswer } from './extras.fixture';
 import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
@@ -1288,6 +1289,38 @@ const CONSOLES: Readonly<
       '/api/c/staging/extensions': {
         state: 'ok',
         items: SETTINGS_EXTRA_ITEMS.map((item, index) => ({ ...item, enabled: index % 2 === 0 ? !item.enabled : item.enabled })),
+      },
+    },
+  },
+  // A newer release and the desktop's installer at each step (#48): Settings ›
+  // Infos with its banner, and the overview with the badge on Settings.
+  ...Object.fromEntries(
+    Object.entries(UPDATE_STEPS).map(([phase, install]) => [
+      `console-update-${phase}`,
+      { at: '/settings/infos', answers: { ...OVERVIEW_ANSWERS, ...updateSettings(install) } },
+    ]),
+  ),
+  'console-update-badge': {
+    at: `/c/${OVERVIEW_CLUSTER}`,
+    answers: { ...OVERVIEW_ANSWERS, ...updateSettings(UPDATE_STEPS.idle) },
+  },
+  // The kinds column with kinds that hold nothing, so its Show / Hide unused
+  // kinds toggle is drawn (#60).
+  'console-unused-kinds': {
+    at: `/c/${OVERVIEW_CLUSTER}`,
+    answers: {
+      ...OVERVIEW_ANSWERS,
+      [`/api/c/${OVERVIEW_CLUSTER}/nav/occupancy`]: {
+        state: 'ok',
+        data: {
+          kinds: {
+            pods: { state: 'some' },
+            deployments: { state: 'some' },
+            jobs: { state: 'none' },
+            cronjobs: { state: 'none' },
+            persistentvolumeclaims: { state: 'none' },
+          },
+        },
       },
     },
   },

@@ -79,6 +79,7 @@ module.exports = {
         'svcgroup',
         'terminal',
         'update',
+        'updater',
       ],
     ],
 
