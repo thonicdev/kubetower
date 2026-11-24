@@ -14,9 +14,37 @@ import (
 // outside the cluster, with its host and port. It is never an instance: the
 // instance routes look among discovery's Instances only, so nothing dials it.
 
-// managedHosts are the parts of a managed Redis's host name that say so
-// without the word: AWS names ElastiCache and MemoryDB endpoints this way.
-var managedHosts = []string{".cache.amazonaws.com", ".memorydb."}
+// managedHost reports whether a host is an AWS ElastiCache or MemoryDB
+// endpoint, which names neither engine: `….cache.amazonaws.com`, or a
+// `memorydb` label under `amazonaws.com`.
+func managedHost(host string) bool {
+	if !strings.HasSuffix(host, ".amazonaws.com") {
+		return false
+	}
+	if strings.HasSuffix(host, ".cache.amazonaws.com") {
+		return true
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "memorydb" {
+			return true
+		}
+	}
+	return false
+}
+
+// engineToken is the engine a host or a name says as a token of its own,
+// between `.`, `-` and `_` (`demo.redis.cache.windows.net`, `redis-ha`,
+// `valkey7`), never inside another word (`rediscover`, `credis`, `predis`).
+func engineToken(s string) string {
+	for _, token := range strings.FieldsFunc(s, func(r rune) bool { return r == '.' || r == '-' || r == '_' }) {
+		for _, engine := range engines {
+			if rest, ok := strings.CutPrefix(token, engine); ok && strings.Trim(rest, "0123456789") == "" {
+				return engine
+			}
+		}
+	}
+	return ""
+}
 
 // externalDoor is one ExternalName Service to a Redis outside the cluster.
 type externalDoor struct {
@@ -54,9 +82,6 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 		return externalDoor{}, false
 	}
 	out := externalDoor{Namespace: service.Namespace, Service: service.Name, Host: host}
-	if len(ports) == 1 {
-		out.Port, out.PortName = int(ports[0].Port), ports[0].Name
-	}
 	for _, port := range ports {
 		if why, ok := looksLikeRedis(port); ok {
 			out.Port, out.PortName, out.Why = int(port.Port), port.Name, why
@@ -64,24 +89,28 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 		}
 	}
 	switch {
-	case hasAny(host, engines) || hasAny(host, managedHosts):
+	case engineToken(host) != "" || managedHost(host):
 		out.Why = "it points at " + host
-	case hasAny(name, engines):
-		out.Why = "its name says " + engineIn(name)
+		if len(ports) == 1 {
+			out.Port, out.PortName = int(ports[0].Port), ports[0].Name
+		}
+	case engineToken(name) != "":
+		// The name alone does not say which port: only one that looks like a
+		// Redis's is kept (`redis-ha` with `api:443` gets its host alone).
+		out.Why = "its name says " + engineToken(name)
+		if len(ports) == 1 && redisLikePort(ports[0]) {
+			out.Port, out.PortName = int(ports[0].Port), ports[0].Name
+		}
 	default:
 		return externalDoor{}, false
 	}
 	return out, true
 }
 
-// engineIn is the engine word a name carries.
-func engineIn(name string) string {
-	for _, engine := range engines {
-		if strings.Contains(name, engine) {
-			return engine
-		}
-	}
-	return ""
+// redisLikePort is a port whose name says the engine or whose number is in
+// the range Redis and Valkey deployments use (6379 to 6399).
+func redisLikePort(port corev1.ServicePort) bool {
+	return engineToken(strings.ToLower(port.Name)) != "" || (port.Port >= 6379 && port.Port <= 6399)
 }
 
 // externals is every ExternalName Service to a Redis, in namespace then name
