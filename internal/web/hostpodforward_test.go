@@ -87,9 +87,32 @@ func TestAPodTunnelIsReviewedAndRecordedForThePerson(t *testing.T) {
 		t.Fatalf("records = %+v, want an attempt and its outcome", records)
 	}
 	for _, r := range records {
-		if r.Act != audit.PortForward || r.Who != "grace@example.com" || r.Namespace != "shop" || r.Name != "api-0" {
+		if r.Act != audit.PortForward || r.Who != "grace@example.com" || r.Namespace != "shop" || r.Name != "api-0" ||
+			r.Extension != "runtime" {
 			t.Errorf("the %s record reads %+v", r.Phase, r)
 		}
+	}
+}
+
+// A door handed to no extension has nobody to record the tunnel as.
+func TestAPodTunnelThroughAHostWithNoExtensionIsRefused(t *testing.T) {
+	reviews := &accesstest.Reviews{Answer: func(accesstest.Question) (bool, error) { return true, nil }}
+	sink := &revealSink{}
+	gate := access.New(access.Options{Reviews: reviews.For, InCluster: true, Audit: audit.New(sink)})
+	dig := &reviewedPodTunnels{reviewedTunnels{gate: gate}}
+	s, err := New(Options{Clusters: navFixture(t, "prod").clusters, Tunnels: dig, InCluster: true, Access: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pods, ok := s.Host().(extension.PodForwarder)
+	if !ok {
+		t.Fatal("the console's own door opens no tunnel to a pod")
+	}
+	if _, err := pods.ForwardPod(podRequest(grace()), "prod", "shop", "api-0", 6060); err == nil {
+		t.Fatal("a host handed to no extension opened a pod tunnel")
+	}
+	if dig.count() != 0 || len(sink.records(t)) != 0 || s.tunnels.(*countedTunnels).live() != 0 {
+		t.Errorf("a refused anonymous pod tunnel dug %d, recorded or held a slot", dig.count())
 	}
 }
 

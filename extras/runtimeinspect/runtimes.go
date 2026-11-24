@@ -117,6 +117,13 @@ func detect(c corev1.Container, annotated map[string]string) detection {
 	if isSidecar(c) {
 		return detection{}
 	}
+	// Java is read as the JVM Inspector read it, and nothing but another
+	// runtime's own interpreter, started as the program, takes a container
+	// with a Java hint away from it: a package manager (Hadoop's `yarn`), a
+	// Go variable or a word among the arguments does not.
+	if java := hints(c); len(java) > 0 && !startsAnInterpreter(c) {
+		return detection{runtime: runtimeJava, hints: java}
+	}
 	best, bestRank := detection{}, 0
 	for _, p := range providers {
 		found := p.hints(c)
@@ -132,7 +139,8 @@ func detect(c corev1.Container, annotated map[string]string) detection {
 }
 
 // annotatedRuntimes reads AnnotationRuntime against containers: a bare
-// runtime applies to each of them, `name=runtime` to that one.
+// runtime applies to each of them but the known sidecars, `name=runtime` to
+// that one, sidecar or not.
 func annotatedRuntimes(annotations map[string]string, containers []corev1.Container) map[string]string {
 	value := strings.TrimSpace(annotations[AnnotationRuntime])
 	if value == "" {
@@ -146,7 +154,7 @@ func annotatedRuntimes(annotations map[string]string, containers []corev1.Contai
 		if !named {
 			if valid(part) {
 				for _, c := range containers {
-					if _, set := out[c.Name]; !set {
+					if _, set := out[c.Name]; !set && !isSidecar(c) {
 						out[c.Name] = part
 					}
 				}
@@ -161,24 +169,157 @@ func annotatedRuntimes(annotations map[string]string, containers []corev1.Contai
 	return out
 }
 
+// --- The program -------------------------------------------------------------
+
+// A command line names a runtime by the program it starts, never by a word
+// among its arguments: `kubectl label node x` starts kubectl, and
+// `-Dscript=/etc/init.js` is a JVM's argument.
+
+// program is one program a command line starts, with its arguments.
+type program struct {
+	words []string
+	// afterEntrypoint is a program read from args with no command: the
+	// image's own entrypoint, which the API does not carry, may take it as a
+	// subcommand (the EBS CSI driver's `node`).
+	afterEntrypoint bool
+}
+
+// shells run the script after their -c; wrappers run the program after them.
+var (
+	shells   = map[string]bool{"sh": true, "bash": true, "ash": true, "dash": true, "zsh": true}
+	wrappers = map[string]bool{"exec": true, "env": true, "nohup": true, "tini": true, "dumb-init": true}
+)
+
+// programs are the programs c's command line starts: its first word, the
+// first word of a shell's -c script and of each command the script chains
+// (`&&`, `||`, `;`, `|`), each past exec, env and their variables.
+func programs(c corev1.Container) []program {
+	var out []program
+	at := -1 // the program the next arguments belong to, if any
+	start, wrapped, shell := true, false, false
+	reset := func() { at, start, wrapped, shell = -1, true, false, false }
+	for _, token := range commandLine(c) {
+		switch token {
+		case "&&", "||", ";", "|", "&":
+			reset()
+			continue
+		}
+		token, end := strings.CutSuffix(token, ";")
+		switch {
+		case token == "":
+		case shell:
+			if isFlag(token) {
+				if !strings.HasPrefix(token, "--") && strings.Contains(token, "c") {
+					shell, start = false, true
+				}
+				break
+			}
+			// The shell runs a script file: the program is the shell.
+			shell, start = false, false
+		case start:
+			switch base := path.Base(token); {
+			case isFlag(token) && wrapped, isAssignment(token):
+			case wrappers[base] || token == "--":
+				wrapped = true
+			case shells[base]:
+				shell = true
+			case isFlag(token):
+				// An argument to an entrypoint the spec does not carry.
+				start = false
+			default:
+				out = append(out, program{words: []string{token}, afterEntrypoint: len(out) == 0 && len(c.Command) == 0})
+				at, start = len(out)-1, false
+			}
+		case at >= 0:
+			out[at].words = append(out[at].words, token)
+		}
+		if end {
+			reset()
+		}
+	}
+	return out
+}
+
+func isFlag(token string) bool { return strings.HasPrefix(token, "-") }
+
+// isAssignment is a shell's or env's `NAME=value` before a program.
+func isAssignment(token string) bool {
+	name, _, ok := strings.Cut(token, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (i == 0 || r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// interpreters are the runtimes' own programs, which alone take a container
+// with a Java hint away from Java (detect).
+func isInterpreter(base string) bool {
+	return base == "node" || base == "nodejs" || isPythonInterpreter(base)
+}
+
+// runsAScript is whether an interpreter read after an entrypoint is given
+// something to run: a script, or Python's -m or -c. `node --endpoint=…` is
+// the EBS CSI driver's subcommand, not Node.js.
+func runsAScript(p program) bool {
+	for _, w := range p.words[1:] {
+		if isNodeScript(w) || isPythonScript(w) || w == "-m" || w == "-c" {
+			return true
+		}
+	}
+	return false
+}
+
+// counts is whether p, whose program's base is base, may name a runtime:
+// an interpreter read after an entrypoint must be given a script.
+func counts(p program, base string) bool {
+	return !p.afterEntrypoint || !isInterpreter(base) || runsAScript(p)
+}
+
+// programHint is the command-line hint of the first program of c that
+// isProgram knows, or that is a script isScript knows.
+func programHint(c corev1.Container, isProgram func(base string) bool, isScript func(token string) bool) (Hint, bool) {
+	for _, p := range programs(c) {
+		first := p.words[0]
+		base := path.Base(first)
+		switch {
+		case isProgram(base) && counts(p, base):
+			return Hint{Source: sourceCommand, Reason: "the command line starts " + quote(first)}, true
+		case isScript(first):
+			return Hint{Source: sourceCommand, Reason: "the command line runs a script: " + quote(clip(first))}, true
+		}
+	}
+	return Hint{}, false
+}
+
+// startsAnInterpreter is whether c's command line starts Node.js or Python
+// itself.
+func startsAnInterpreter(c corev1.Container) bool {
+	for _, p := range programs(c) {
+		if base := path.Base(p.words[0]); isInterpreter(base) && counts(p, base) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Node.js -----------------------------------------------------------------
 
 // nodePrograms start Node.js or a package manager that runs it.
 var nodePrograms = map[string]bool{"node": true, "nodejs": true, "npm": true, "npx": true, "yarn": true, "pnpm": true}
 
+func isNodeScript(token string) bool {
+	return strings.HasSuffix(token, ".js") || strings.HasSuffix(token, ".mjs") || strings.HasSuffix(token, ".cjs")
+}
+
 func nodeHints(c corev1.Container) []Hint {
 	var out []Hint
-	for _, token := range commandLine(c) {
-		base := path.Base(token)
-		switch {
-		case nodePrograms[base]:
-			out = append(out, Hint{Source: sourceCommand, Reason: "the command line starts " + quote(token)})
-		case strings.HasSuffix(token, ".js") || strings.HasSuffix(token, ".mjs") || strings.HasSuffix(token, ".cjs"):
-			out = append(out, Hint{Source: sourceCommand, Reason: "the command line names a script: " + quote(clip(token))})
-		default:
-			continue
-		}
-		break
+	if h, ok := programHint(c, func(base string) bool { return nodePrograms[base] }, isNodeScript); ok {
+		out = append(out, h)
 	}
 	for _, e := range c.Env {
 		switch e.Name {
@@ -200,29 +341,24 @@ var pythonServers = map[string]bool{
 	"django-admin": true, "uwsgi": true,
 }
 
-func isPythonProgram(base string) bool {
+// isPythonInterpreter is Python itself: `python`, `python3`, `python3.12`,
+// `pypy`.
+func isPythonInterpreter(base string) bool {
 	if base == "python" || base == "python3" || base == "pypy" || base == "pypy3" {
 		return true
 	}
-	if rest, ok := strings.CutPrefix(base, "python3."); ok && rest != "" && strings.Trim(rest, "0123456789") == "" {
-		return true
-	}
-	return pythonServers[base]
+	rest, ok := strings.CutPrefix(base, "python3.")
+	return ok && rest != "" && strings.Trim(rest, "0123456789") == ""
 }
+
+func isPythonProgram(base string) bool { return isPythonInterpreter(base) || pythonServers[base] }
+
+func isPythonScript(token string) bool { return strings.HasSuffix(token, ".py") }
 
 func pythonHints(c corev1.Container) []Hint {
 	var out []Hint
-	for _, token := range commandLine(c) {
-		base := path.Base(token)
-		switch {
-		case isPythonProgram(base):
-			out = append(out, Hint{Source: sourceCommand, Reason: "the command line starts " + quote(token)})
-		case strings.HasSuffix(token, ".py"):
-			out = append(out, Hint{Source: sourceCommand, Reason: "the command line names a script: " + quote(clip(token))})
-		default:
-			continue
-		}
-		break
+	if h, ok := programHint(c, isPythonProgram, isPythonScript); ok {
+		out = append(out, h)
 	}
 	for _, e := range c.Env {
 		switch e.Name {
@@ -248,6 +384,25 @@ var goProducts = []string{
 	"tempo", "grafana", "caddy", "kube-state-metrics", "external-dns", "cert-manager-controller",
 }
 
+// notGo are images named after a Go product that are not written in Go:
+// Grafana's image renderer runs on Node.js.
+var notGo = map[string]bool{"grafana-image-renderer": true}
+
+// productOnly is whether a Go reading rests on the image's product name
+// alone, which every cluster's coredns, etcd and Prometheus give: not a
+// reason to offer the inspector (Suggest).
+func productOnly(c Container) bool {
+	if c.Runtime != runtimeGo || len(c.Hints) == 0 {
+		return false
+	}
+	for _, h := range c.Hints {
+		if h.Source != sourceImage {
+			return false
+		}
+	}
+	return true
+}
+
 func goHints(c corev1.Container) []Hint {
 	var out []Hint
 	for _, e := range c.Env {
@@ -261,7 +416,7 @@ func goHints(c corev1.Container) []Hint {
 	}
 	repo, _ := splitImage(c.Image)
 	last := path.Base(repo)
-	if strings.HasSuffix(last, "-exporter") {
+	if strings.HasSuffix(last, "-exporter") || notGo[last] {
 		return out
 	}
 	for _, product := range goProducts {
