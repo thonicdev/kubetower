@@ -1148,6 +1148,27 @@ paths:
         '403': { $ref: '#/components/responses/Refused' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /api/settings/update/open-folder:
+    post:
+      operationId: openUpdateFolder
+      tags: [session]
+      summary: Show the verified file where the installation cannot be written.
+      description: |
+        In the `manual` phase - the installer found the installation's folder
+        not writable - opens the folder holding the verified file in this
+        machine's file manager. Refused (409) in any other phase.
+      parameters:
+        - $ref: '#/components/parameters/RequestMarker'
+      responses:
+        '200':
+          description: The folder was opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateInstall' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Refused' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /api/health:
     get:
       operationId: getHealth
@@ -4401,7 +4422,10 @@ components:
       properties:
         phase:
           type: string
-          enum: [idle, downloading, verifying, ready, installing, failed]
+          enum: [idle, downloading, verifying, ready, installing, failed, manual]
+          description: >-
+            `manual`: the installation's folder is not writable; the verified
+            file waits in `folder`.
         enabled:
           type: boolean
           description: The "Install updates" setting.
@@ -4433,6 +4457,9 @@ components:
         reason:
           type: string
           description: The one line of a failure.
+        folder:
+          type: string
+          description: The folder that holds the verified file, in the manual phase.
         ends:
           type: object
           description: What the restart closes for good.

@@ -272,6 +272,17 @@ func (a *API) downloadUpdate(w http.ResponseWriter, _ *http.Request) {
 	writeOK(w, out)
 }
 
+// openUpdateFolder shows the verified file where the installation's folder is
+// not writable.
+func (a *API) openUpdateFolder(w http.ResponseWriter, _ *http.Request) {
+	out, err := a.deps.Installer.OpenUpdateFolder()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
 // installUpdate is the second click: the installer runs and the console restarts.
 func (a *API) installUpdate(w http.ResponseWriter, r *http.Request) {
 	out, err := a.deps.Installer.InstallUpdate(r.Context())

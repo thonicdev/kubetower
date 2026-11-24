@@ -33,6 +33,9 @@ const (
 	Ready       Phase = "ready"
 	Installing  Phase = "installing"
 	Failed      Phase = "failed"
+	// Manual: the installation's folder is not writable. The verified file
+	// waits in Folder, for the operator to install by hand.
+	Manual Phase = "manual"
 )
 
 // Status is what the Settings page is told.
@@ -53,6 +56,8 @@ type Status struct {
 	Total int64 `json:"total,omitempty"`
 	// Reason is the one line of a failure.
 	Reason string `json:"reason,omitempty"`
+	// Folder holds the verified file, in the manual phase.
+	Folder string `json:"folder,omitempty"`
 }
 
 // Plan is what an installer is handed: a verified file and what it replaces.
@@ -78,10 +83,38 @@ var (
 	ErrNotReady = errors.New("no verified update is ready")
 	// ErrNotNewer: the release is not newer than this build.
 	ErrNotNewer = errors.New("the latest release is not newer than this build")
+	// ErrNotRestarted: the new build is in place, but starting it failed. The
+	// update is installed: the next start of KubeTower runs it.
+	ErrNotRestarted = errors.New("the update is installed but KubeTower did not start again")
+	// ErrNotWritable: the installer cannot write where KubeTower is installed.
+	// The update ends in the manual phase rather than failed.
+	ErrNotWritable = errors.New("the installation folder is not writable")
+	// ErrNoFolder: Open folder was asked outside the manual phase.
+	ErrNoFolder = errors.New("no verified file waits to be installed by hand")
 )
 
 // installers is filled by the per-platform files (#49, #50, #51).
 var installers = map[Kind]Installer{}
+
+// sweepers clean what an install cut short left beside an installation, at
+// start. Filled by the platform files.
+var sweepers = map[Kind]func(path string){}
+
+// sweepBeside removes the entries beside path that match the patterns: the
+// temporary names an install writes before its rename.
+func sweepBeside(path string, patterns ...string) {
+	for _, pattern := range patterns {
+		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
+		for _, one := range found {
+			_ = os.RemoveAll(one)
+		}
+	}
+}
+
+// installable says whether a kind's installer can run on this machine, for
+// the kinds that need a tool (pkexec and a package manager): without it the
+// installation is not supported, rather than failing after the download.
+var installable = map[Kind]func() bool{}
 
 const (
 	latestRelease = "https://api.github.com/repos/thonicdev/kubetower/releases/latest"
@@ -138,8 +171,12 @@ func New(o Options) *Updater {
 	u.status = Status{
 		Phase:        Idle,
 		Enabled:      u.readEnabled(),
-		Supported:    supported && u.installer() != nil,
+		Supported:    supported && u.installer() != nil && u.canInstall(),
 		Installation: o.Installation.Kind,
+	}
+	if sweep := sweepers[o.Installation.Kind]; sweep != nil && o.Install == nil && o.Installation.Path != "" {
+		path := o.Installation.Path
+		safego.Go("update sweep", func() error { sweep(path); return nil }, nil)
 	}
 	return u
 }
@@ -211,18 +248,116 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 	if !update.IsNewer(plan.Version, u.o.Version) {
 		return u.fail(ErrNotNewer.Error()), ErrNotNewer
 	}
-	if sum, err := fileSHA256(plan.File); err != nil || sum != plan.SHA256 {
-		return u.fail("The downloaded file changed on disk since it was verified."), errors.New("hash changed")
+	staged, err := u.stage(plan)
+	if errors.Is(err, errChanged) {
+		return u.fail("The downloaded file changed on disk since it was verified."), err
 	}
+	if err != nil {
+		return u.fail(textutil.FirstLine(err.Error())), err
+	}
+	plan.File = staged
 	install := u.installer()
 	safego.Go("update install", func() error {
 		return install(context.WithoutCancel(ctx), plan)
 	}, func(err error) {
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrNotRestarted):
+			u.installed(err)
+		case errors.Is(err, ErrNotWritable):
+			u.manual(plan.File, err)
+		default:
 			u.fail(textutil.FirstLine(err.Error()))
 		}
 	})
 	return out, nil
+}
+
+// stage copies the verified file into a folder made for this install, from
+// one open handle, hashing what it writes. The installer (and pkexec, as root,
+// for a package) reads that copy: nothing swapped at the checked path between
+// the check and the install reaches it.
+func (u *Updater) stage(plan Plan) (string, error) {
+	in, err := os.Open(plan.File)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	dir, err := os.MkdirTemp(filepath.Join(u.dir(), workDir), "install-")
+	if err != nil {
+		return "", err
+	}
+	staged := filepath.Join(dir, filepath.Base(plan.File))
+	out, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(out, h), io.LimitReader(in, MaxAsset+1))
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && hex.EncodeToString(h.Sum(nil)) != plan.SHA256 {
+		err = errChanged
+	}
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return staged, nil
+}
+
+// errChanged: the file no longer has the hash it was verified with.
+var errChanged = errors.New("hash changed")
+
+// canInstall is installable for this kind; an installer given in Options
+// (tests) needs nothing.
+func (u *Updater) canInstall() bool {
+	if u.o.Install != nil {
+		return true
+	}
+	ready := installable[u.o.Installation.Kind]
+	return ready == nil || ready()
+}
+
+// manual: the installation's folder is not writable. The verified copy stays
+// where it is, and Open folder shows it.
+func (u *Updater) manual(file string, err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.o.Logf != nil {
+		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
+	}
+	u.status.Phase = Manual
+	u.status.Folder = filepath.Dir(file)
+	u.status.Reason = ""
+}
+
+// OpenFolder shows the folder that holds the verified file, in the manual
+// phase, in the platform's file manager.
+func (u *Updater) OpenFolder() (Status, error) {
+	u.mu.Lock()
+	status := u.status
+	u.mu.Unlock()
+	if status.Phase != Manual || status.Folder == "" {
+		return status, ErrNoFolder
+	}
+	return status, openFolder(status.Folder)
+}
+
+// installed: the new build is in place but did not start. Not a failure: the
+// update is done and the next start runs it, so the state goes back to idle.
+func (u *Updater) installed(err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.o.Logf != nil {
+		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
+	}
+	u.forget()
 }
 
 func (u *Updater) installer() Installer {
@@ -478,11 +613,17 @@ func (u *Updater) assetPrefix() string {
 	return assetPrefix
 }
 
+// dir is the state directory, absolute: pkexec runs from root's home, and
+// apt-get reads a relative "a/b.deb" as a package name.
 func (u *Updater) dir() string {
-	if u.o.Dir != "" {
-		return u.o.Dir
+	dir := u.o.Dir
+	if dir == "" {
+		dir = statefile.Dir()
 	}
-	return statefile.Dir()
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
 
 func (u *Updater) readEnabled() bool {
@@ -504,7 +645,7 @@ func (u *Updater) forget() {
 	_ = os.RemoveAll(filepath.Join(u.dir(), workDir))
 	u.planned = Plan{}
 	u.status.Phase, u.status.Version, u.status.Asset = Idle, "", ""
-	u.status.Done, u.status.Total, u.status.Reason = 0, 0, ""
+	u.status.Done, u.status.Total, u.status.Reason, u.status.Folder = 0, 0, "", ""
 }
 
 func (u *Updater) fail(reason string) Status {
@@ -516,17 +657,4 @@ func (u *Updater) fail(reason string) Status {
 		u.o.Logf("update: %s", reason)
 	}
 	return u.status
-}
-
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }

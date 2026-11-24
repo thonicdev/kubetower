@@ -608,7 +608,8 @@ type SettingsUpdate struct {
 // UpdateInstall is where an update download and install stands, and what the
 // restart would end. internal/updater.Status, with the open work counted.
 type UpdateInstall struct {
-	// Phase is `idle`, `downloading`, `verifying`, `ready`, `installing` or `failed`.
+	// Phase is `idle`, `downloading`, `verifying`, `ready`, `installing`,
+	// `failed` or `manual` (the installation's folder is not writable).
 	Phase string `json:"phase"`
 	// Enabled is the "Install updates" setting.
 	Enabled bool `json:"enabled"`
@@ -621,6 +622,8 @@ type UpdateInstall struct {
 	Done         int64  `json:"done,omitempty"`
 	Total        int64  `json:"total,omitempty"`
 	Reason       string `json:"reason,omitempty"`
+	// Folder holds the verified file, in the manual phase.
+	Folder string `json:"folder,omitempty"`
 	// Ends is what the restart closes for good.
 	Ends UpdateEnds `json:"ends"`
 }

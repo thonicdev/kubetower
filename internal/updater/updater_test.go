@@ -70,6 +70,16 @@ func TestDetectReadsHowItWasInstalled(t *testing.T) {
 			return ""
 		}
 	}
+	envs := func(pairs ...string) func(string) string {
+		return func(key string) string {
+			for i := 0; i+1 < len(pairs); i += 2 {
+				if pairs[i] == key {
+					return pairs[i+1]
+				}
+			}
+			return ""
+		}
+	}
 	for _, tc := range []struct {
 		name, goos, exe string
 		probe           Probe
@@ -82,10 +92,28 @@ func TestDetectReadsHowItWasInstalled(t *testing.T) {
 		{"an app bundle", "darwin", "/Applications/KubeTower.app/Contents/MacOS/kubetower", Probe{},
 			Installation{MacApp, "/Applications/KubeTower.app"}},
 		{"a macOS binary", "darwin", "/usr/local/bin/kubetower", Probe{}, Installation{MacTar, "/usr/local/bin/kubetower"}},
-		{"an AppImage", "linux", "/tmp/.mount_x/usr/bin/kubetower", Probe{Getenv: env("APPIMAGE", "/home/a/KubeTower.AppImage")},
+		{"another app's executable", "darwin", "/Applications/Other.app/Contents/MacOS/other", Probe{}, Installation{}},
+		{"an AppImage", "linux", "/tmp/.mount_x/usr/bin/kubetower",
+			Probe{Getenv: envs("APPIMAGE", "/home/a/KubeTower.AppImage", "APPDIR", "/tmp/.mount_x")},
 			Installation{LinuxAppImage, "/home/a/KubeTower.AppImage"}},
-		{"a relative APPIMAGE is not one", "linux", "/opt/kt/kubetower", Probe{Getenv: env("APPIMAGE", "x.AppImage")},
-			Installation{LinuxTar, "/opt/kt/kubetower"}},
+		{"a relative APPIMAGE is not one", "linux", "/tmp/.mount_x/usr/bin/kubetower",
+			Probe{Getenv: envs("APPIMAGE", "x.AppImage", "APPDIR", "/tmp/.mount_x")},
+			Installation{LinuxTar, "/tmp/.mount_x/usr/bin/kubetower"}},
+		// Started from a terminal or an IDE that is itself an AppImage: both
+		// variables are inherited, and they name that other application.
+		{"a tar.gz under another AppImage's variables", "linux", "/home/a/bin/kubetower",
+			Probe{Getenv: envs("APPIMAGE", "/home/a/Editor.AppImage", "APPDIR", "/tmp/.mount_editor")},
+			Installation{LinuxTar, "/home/a/bin/kubetower"}},
+		{"a .deb under another AppImage's variables", "linux", "/usr/bin/kubetower",
+			Probe{Getenv: envs("APPIMAGE", "/home/a/Editor.AppImage", "APPDIR", "/tmp/.mount_editor"),
+				Owner: func(string) string { return "deb" }},
+			Installation{LinuxDeb, "/usr/bin/kubetower"}},
+		{"a mount whose name only starts like APPDIR", "linux", "/tmp/.mount_editor2/usr/bin/kubetower",
+			Probe{Getenv: envs("APPIMAGE", "/home/a/Editor.AppImage", "APPDIR", "/tmp/.mount_editor")},
+			Installation{LinuxTar, "/tmp/.mount_editor2/usr/bin/kubetower"}},
+		{"APPIMAGE without APPDIR", "linux", "/tmp/.mount_x/usr/bin/kubetower",
+			Probe{Getenv: env("APPIMAGE", "/home/a/KubeTower.AppImage")},
+			Installation{LinuxTar, "/tmp/.mount_x/usr/bin/kubetower"}},
 		{"a .deb", "linux", "/usr/bin/kubetower", Probe{Owner: func(string) string { return "deb" }}, Installation{LinuxDeb, "/usr/bin/kubetower"}},
 		{"an .rpm", "linux", "/usr/bin/kubetower", Probe{Owner: func(string) string { return "rpm" }}, Installation{LinuxRPM, "/usr/bin/kubetower"}},
 		{"a tar.gz", "linux", "/home/a/bin/kubetower", Probe{}, Installation{LinuxTar, "/home/a/bin/kubetower"}},

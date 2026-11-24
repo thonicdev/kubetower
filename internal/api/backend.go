@@ -349,6 +349,8 @@ type UpdateInstaller interface {
 	SetInstallUpdates(on bool) (UpdateInstall, error)
 	DownloadUpdate() (UpdateInstall, error)
 	InstallUpdate(ctx context.Context) (UpdateInstall, error)
+	// OpenUpdateFolder shows the verified file's folder, in the manual phase.
+	OpenUpdateFolder() (UpdateInstall, error)
 }
 
 // ToolWindows is the desktop's windows for a forward's flow UI. Available is

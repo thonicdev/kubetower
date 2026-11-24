@@ -1172,6 +1172,14 @@ func (i apiInstaller) InstallUpdate(ctx context.Context) (api.UpdateInstall, err
 	return updateInstallOf(i.s, status), nil
 }
 
+func (i apiInstaller) OpenUpdateFolder() (api.UpdateInstall, error) {
+	status, err := i.s.setup.Installer.OpenFolder()
+	if err != nil {
+		return updateInstallOf(i.s, status), fmt.Errorf("%w: %s", api.ErrConflict, firstLine(err.Error()))
+	}
+	return updateInstallOf(i.s, status), nil
+}
+
 // updateInstaller is api.Deps.Installer: nil, as an interface, where nothing
 // installs, so the routes are not registered.
 // toolWindows is SetupInfo.ToolWindows, nil under the server profile and

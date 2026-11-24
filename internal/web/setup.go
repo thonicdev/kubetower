@@ -95,6 +95,7 @@ type UpdateInstaller interface {
 	SetEnabled(on bool) (updater.Status, error)
 	Download() (updater.Status, error)
 	Install(ctx context.Context) (updater.Status, error)
+	OpenFolder() (updater.Status, error)
 }
 
 // UpdateReport is what SetupInfo.Updates answers with, declared here so a caller
