@@ -13,12 +13,15 @@ type PodForwarder interface {
 	// Tunnel.Pod is that pod, PodKnown true.
 	//
 	//   - **Reviewed for the person behind r**, as `create pods/portforward`
-	//     on that pod, and recorded: the audit names the person, the pod and
-	//     the act. A refusal is classifiable with errors.Is: ErrDenied when
+	//     on that pod, and recorded: the audit names the person, the
+	//     extension, the pod and the act, so it is answered only to a mounted
+	//     extension. A refusal is classifiable with errors.Is: ErrDenied when
 	//     the cluster says no, ErrUnreviewable when the console could not ask.
 	//     An unknown cluster is ErrUnknownCluster, wrapped.
 	//   - **Counted with Forward's tunnels**, against the same ceiling and the
-	//     same per-person share.
+	//     same per-person share. A tunnel that did not open holds no slot.
+	//   - **Not refused on a read-only cluster** (KT_READONLY_CLUSTERS), as
+	//     Forward is not: a tunnel changes nothing in the cluster.
 	//   - **Closed when r ends, at the latest.** Stop gives the slot back
 	//     sooner, and a page calls it when it is done.
 	//   - **Whether something listens on port is not known when it opens**: a

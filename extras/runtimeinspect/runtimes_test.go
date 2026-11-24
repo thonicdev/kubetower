@@ -63,6 +63,30 @@ func TestEachRuntimeIsReadFromTheSpec(t *testing.T) {
 		{"node exporter", corev1.Container{Image: "quay.io/prometheus/node-exporter:v1.8"}, "", ""},
 		{"a word that only starts like a program", corev1.Container{Image: "registry.example.com/x:1", Command: []string{"nodemon-like", "pythonic"}}, "", ""},
 		{"a runtime word past the first", corev1.Container{Image: "registry.example.com/web-python:1"}, "", ""},
+
+		// A runtime is read from the program a command line starts, never
+		// from a word among its arguments.
+		{"node through env and its variables", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"env", "NODE_ENV=production", "node", "server.js"}}, runtimeNode, sourceCommand},
+		{"node chained in sh -ec", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-ec", "npm ci && exec node dist/main.mjs"}}, runtimeNode, sourceCommand},
+		{"node with a script, in args", corev1.Container{Image: "registry.example.com/web:1", Args: []string{"node", "server.js"}}, runtimeNode, sourceCommand},
+		{"python -m, in args", corev1.Container{Image: "registry.example.com/api:1", Args: []string{"python", "-m", "app"}}, runtimePython, sourceCommand},
+		{"the EBS CSI driver's node subcommand", corev1.Container{Image: "public.ecr.aws/ebs-csi-driver/aws-ebs-csi-driver:v1.37.0", Args: []string{"node", "--endpoint=$(CSI_ENDPOINT)", "--v=2"}, Env: envNamed("CSI_ENDPOINT")}, "", ""},
+		{"kubectl labelling a node", corev1.Container{Image: "bitnami/kubectl:1.31", Command: []string{"sh", "-c", "kubectl label node $NODE_NAME role=worker --overwrite"}}, "", ""},
+		{"a url ending in node.js", corev1.Container{Image: "quay.io/prometheus/prometheus:v3.0.0", Args: []string{"--web.external-url=http://x/node.js"}}, runtimeGo, sourceImage},
+		{"python paths among the arguments", corev1.Container{Image: "registry.example.com/x:1", Command: []string{"/app/server", "--venv", "/opt/python", "/usr/lib/python3"}}, "", ""},
+
+		// Java, as the JVM Inspector read it: no other runtime's hint takes a
+		// container with a Java hint, but its own interpreter as the program.
+		{"hadoop's yarn", corev1.Container{Image: "apache/hadoop:3.4.1", Command: []string{"yarn", "resourcemanager"}, Env: envNamed("JAVA_HOME")}, runtimeJava, sourceEnv},
+		{"a jvm property naming a script", corev1.Container{Image: "eclipse-temurin:21-jre", Args: []string{"-Dscript=/etc/init.js"}}, runtimeJava, sourceImage},
+		{"spark running a python application", corev1.Container{Image: "apache/spark:3.5.3", Env: envNamed("JAVA_HOME"), Args: []string{"local:///opt/app.py"}}, runtimeJava, sourceEnv},
+		{"a go variable in a jdk image", corev1.Container{Image: "eclipse-temurin:21-jre", Env: envNamed("GOMAXPROCS")}, runtimeJava, sourceImage},
+
+		// Go products.
+		{"grafana's image renderer", corev1.Container{Image: "grafana/grafana-image-renderer:3.11.0"}, "", ""},
+		{"grafana oss", corev1.Container{Image: "grafana/grafana-oss:11.3.0"}, runtimeGo, sourceImage},
+		{"an exporter named after a go product", corev1.Container{Image: "prom/consul-exporter:v0.12.1"}, "", ""},
+		{"a product's name inside another word", corev1.Container{Image: "registry.example.com/etcdkeeper:0.7"}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := detect(tc.c, nil)
@@ -115,6 +139,11 @@ func TestTheAnnotationWins(t *testing.T) {
 	annotated = annotatedRuntimes(map[string]string{AnnotationRuntime: "node"}, containers)
 	if detect(app, annotated).runtime != runtimeNode || detect(side, annotated).runtime != runtimeNode {
 		t.Errorf("a bare runtime applies to every container: %v", annotated)
+	}
+
+	annotated = annotatedRuntimes(map[string]string{AnnotationRuntime: "app=python,go"}, containers)
+	if detect(app, annotated).runtime != runtimePython || detect(side, annotated).runtime != runtimeGo {
+		t.Errorf("a bare runtime overrode a named one: %v", annotated)
 	}
 
 	annotated = annotatedRuntimes(map[string]string{AnnotationRuntime: "app=none"}, containers)
@@ -226,5 +255,43 @@ func TestTheSuggestionNamesTheRuntimes(t *testing.T) {
 	got, err := New().Suggest(httptest.NewRequest("GET", "/", nil), h, "kind")
 	if err != nil || got != "2 probable Java · Node.js pods in 2 namespaces" {
 		t.Errorf("suggest = %q, %v", got, err)
+	}
+}
+
+// A bare annotation does not reach a mesh's proxy; one naming it does.
+func TestABareAnnotationLeavesTheSidecarsOut(t *testing.T) {
+	app := corev1.Container{Name: "app", Image: "registry.example.com/app:1"}
+	proxy := corev1.Container{Name: "istio-proxy", Image: "docker.io/istio/proxyv2:1.24.0"}
+	containers := []corev1.Container{app, proxy}
+
+	annotated := annotatedRuntimes(map[string]string{AnnotationRuntime: "java"}, containers)
+	if got := detect(app, annotated); got.runtime != runtimeJava {
+		t.Errorf("app = %+v", got)
+	}
+	if got := detect(proxy, annotated); got.runtime != "" {
+		t.Errorf("a bare annotation reached istio-proxy: %+v", got)
+	}
+
+	annotated = annotatedRuntimes(map[string]string{AnnotationRuntime: "istio-proxy=java"}, containers)
+	if got := detect(proxy, annotated); got.runtime != runtimeJava {
+		t.Errorf("an annotation naming istio-proxy did not reach it: %+v", got)
+	}
+}
+
+// Every cluster runs coredns, etcd or Prometheus: an image's product name
+// alone is no reason for the banner, a Go variable is.
+func TestTheSuggestionIgnoresGoProductsAlone(t *testing.T) {
+	system := []*corev1.Pod{
+		pod("kube-system", "coredns", corev1.Container{Name: "coredns", Image: "registry.k8s.io/coredns/coredns:v1.11.3"}),
+		pod("kube-system", "etcd", corev1.Container{Name: "etcd", Image: "registry.k8s.io/etcd:3.5.16-0"}),
+		pod("monitoring", "prometheus", corev1.Container{Name: "prometheus", Image: "quay.io/prometheus/prometheus:v3.0.0"}),
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	if got, err := New().Suggest(r, newHost(t, system...), "kind"); err != nil || got != "" {
+		t.Errorf("suggest on a bare cluster = %q, %v", got, err)
+	}
+	app := pod("shop", "svc", corev1.Container{Name: "svc", Image: "registry.example.com/svc:1", Env: envNamed("GOMEMLIMIT")})
+	if got, err := New().Suggest(r, newHost(t, append(system, app)...), "kind"); err != nil || got != "1 probable Go pod in 1 namespace" {
+		t.Errorf("suggest with a Go application = %q, %v", got, err)
 	}
 }

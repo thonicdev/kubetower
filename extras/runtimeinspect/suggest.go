@@ -13,14 +13,15 @@ import (
 //
 // One pod list through Host.List, reviewed for the person behind r, read
 // against the spec alone: nothing is run in a container. A pod that has
-// finished is not counted. A listing that fails is an error, never "nothing
-// found"; a narrowed one gives a floor, said as one.
+// finished is not counted, nor a container read as Go from its image's
+// product name alone (productOnly). A listing that fails is an error, never
+// "nothing found"; a narrowed one gives a floor, said as one.
 func (JVM) Suggest(r *http.Request, h extension.Host, cluster string) (string, error) {
 	page, err := h.List(r, cluster, extension.ListQuery{GVR: podsGVR})
 	if err != nil {
 		return "", err
 	}
-	pods, _, _ := scanAny(page.Items)
+	pods, _, _ := scanFor(page.Items, func(c Container) bool { return c.Runtime != "" && !productOnly(c) })
 	if len(pods) == 0 {
 		return "", nil
 	}
