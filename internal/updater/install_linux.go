@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/thonicdev/kubetower/textutil"
 )
 
 func init() {
@@ -57,5 +59,5 @@ func pkexecFailure(err error, out []byte) error {
 			return errors.New("not authorized to install packages: nothing was installed")
 		}
 	}
-	return fmt.Errorf("the package manager refused: %s", firstLine(string(out)))
+	return fmt.Errorf("the package manager refused: %s", textutil.FirstLine(string(out)))
 }

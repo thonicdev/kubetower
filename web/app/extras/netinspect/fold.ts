@@ -27,6 +27,15 @@ export const OTHERS = 'others';
 /** At most this many ends no rule names (`entity:world`) get a column. */
 const ENTITY_COLUMNS = 10;
 
+/** The peers that name every pod of the cluster: a rule's empty peer, and Cilium's `all` and `cluster` entities. */
+const EVERYONE = new Set(['anyone', 'entity:all', 'entity:cluster']);
+
+/** Whether a rule whose peer is `everyone` covers the node: `cluster` names the cluster's pods only. */
+function covers(everyone: string, n: GraphNode): boolean {
+  if (everyone !== 'entity:cluster') return true;
+  return n.kind === 'namespace' || n.kind === 'others';
+}
+
 export interface FoldAsk {
   /** Only the namespaces whose name holds this, case-insensitive. */
   find: string;
@@ -41,6 +50,10 @@ export interface CellData {
   allow: string[];
   deny: string[];
   unevaluated: string[];
+  /** An allow from the destination's ingress rules covers the pair. */
+  allowIn: boolean;
+  /** An allow from the source's egress rules covers the pair. */
+  allowOut: boolean;
   forwarded: number;
   dropped: number;
 }
@@ -152,6 +165,9 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     others.isolatedOut += n.isolatedOut;
   }
   others.label = `${String(folded > 0 ? folded : foldedEnds)} others`;
+  // The ends it holds, the server's included: an end never refuses, so an
+  // "others" holding one is never taken as isolated (Matrix).
+  others.ends = foldedEnds + (serverOthers?.ends ?? 0);
   const any = folded + foldedEnds > 0;
   const nodes = any ? [...kept, others] : kept;
   const drawn = (id: string): string | undefined => {
@@ -165,19 +181,41 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
   const at = (key: string) => {
     let c = cells.get(key);
     if (c === undefined) {
-      c = { allow: [], deny: [], unevaluated: [], forwarded: 0, dropped: 0 };
+      c = { allow: [], deny: [], unevaluated: [], allowIn: false, allowOut: false, forwarded: 0, dropped: 0 };
       cells.set(key, c);
     }
     return c;
+  };
+  // Each rule is kept with the side it belongs to: an egress rule of the
+  // source and an ingress rule of the destination are two halves, and a
+  // pair is allowed only where each isolated side has its own (Matrix).
+  const add = (key: string, e: (typeof graph.edges)[number]) => {
+    const c = at(key);
+    const side = e.side === 'both' ? 'in and out' : e.side === 'ingress' ? 'in' : 'out';
+    const what = `${side} · ${e.ports.join(', ')} · ${e.policies.join(', ')}`;
+    const list = e.kind === 'deny' ? c.deny : e.kind === 'allow' ? c.allow : c.unevaluated;
+    if (!list.includes(what)) list.push(what);
+    if (e.kind === 'allow') {
+      c.allowIn ||= e.side !== 'egress';
+      c.allowOut ||= e.side !== 'ingress';
+    }
   };
   for (const e of graph.edges) {
     const from = drawn(e.from);
     const to = drawn(e.to);
     if (from === undefined || to === undefined) continue;
-    const c = at(`${from}>${to}`);
-    const what = `${e.ports.join(', ')} · ${e.policies.join(', ')}`;
-    const list = e.kind === 'deny' ? c.deny : e.kind === 'allow' ? c.allow : c.unevaluated;
-    if (!list.includes(what)) list.push(what);
+    add(`${from}>${to}`, e);
+    // A rule whose peer is everyone speaks for every pair it covers, not
+    // only for the Anyone row or column: without this, every other cell
+    // toward an isolated namespace would read refused. It is one side's
+    // half only: an ingress one never answers for the source's egress, nor
+    // an egress one for the destination's ingress.
+    // Who it covers is read from the rule's own peer, not from where it is
+    // drawn: a cluster entity folded into "others" still covers only the
+    // namespaces.
+    const covered = (drawnAt: string, peer: string) => nodes.filter((n) => n.id !== drawnAt && covers(peer, n));
+    if (EVERYONE.has(e.from)) for (const n of covered(from, e.from)) add(`${n.id}>${to}`, e);
+    if (EVERYONE.has(e.to)) for (const n of covered(to, e.to)) add(`${from}>${n.id}`, e);
   }
   for (const e of seen) {
     const from = drawn(e.from);
