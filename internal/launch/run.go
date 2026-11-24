@@ -301,6 +301,14 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
+	// An installed update ends this process the same way, once its helper
+	// waits to start the new version (internal/updater, #49 to #51).
+	updater.SetStop(func() {
+		select {
+		case stop <- os.Interrupt:
+		default:
+		}
+	})
 
 	if window {
 		// The window is opened onto a server that answers: openWindow dials
