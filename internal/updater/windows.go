@@ -13,7 +13,17 @@ import (
 
 // psQuote is a PowerShell single-quoted literal: nothing in it is expanded,
 // and a quote is written twice.
-func psQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+// PowerShell also ends such a literal on the typographic quotes U+2018 to
+// U+201B (C:\Users\O’Neil), so each of them is written twice too.
+func psQuote(s string) string { return "'" + psQuotes.Replace(s) + "'" }
+
+var psQuotes = strings.NewReplacer(
+	"'", "''",
+	"\u2018", "\u2018\u2018",
+	"\u2019", "\u2019\u2019",
+	"\u201a", "\u201a\u201a",
+	"\u201b", "\u201b\u201b",
+)
 
 // psArgs is `-ArgumentList` for the restarted console, or nothing.
 func psArgs(args []string) string {

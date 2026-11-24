@@ -43,6 +43,9 @@ func TestPowerShellLiteralsExpandNothing(t *testing.T) {
 		`a$(calc)b`: `'a$(calc)b'`,
 		"it's":      `'it''s'`,
 		"`n":        "'`n'",
+		// PowerShell closes a single-quoted string on U+2018 to U+201B as well.
+		`C:\Users\O’Neil`: `'C:\Users\O’’Neil'`,
+		"‘a’b‚c‛d":        "'‘‘a’’b‚‚c‛‛d'",
 	} {
 		if got := psQuote(in); got != want {
 			t.Errorf("%q: %s, want %s", in, got, want)
