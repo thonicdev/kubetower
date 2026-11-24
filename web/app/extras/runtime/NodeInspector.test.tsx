@@ -133,9 +133,11 @@ describe("the Node.js tab's inspector", () => {
 });
 
 describe('the Node.js probe', () => {
-  it('opens its tunnel once, not again when the window regains focus', () => {
+  it('opens its tunnel once, not again on focus, on reconnect or on failure', () => {
     const options = nodeQuery('kind', 'shop', 'web-0', 'app');
     expect(options.refetchOnWindowFocus).toBe(false);
+    expect(options.refetchOnReconnect).toBe(false);
+    expect(options.retry).toBe(false);
     expect('refetchInterval' in options).toBe(false);
   });
 });

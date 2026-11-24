@@ -1084,8 +1084,9 @@ export function nodeQuery(cluster: string, namespace: string, name: string, cont
     gcTime: 60_000,
     retry: false,
     // Each probe opens an audited tunnel: once when the tab opens, never
-    // again because the window came back into focus.
+    // again because the window came back into focus or online.
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
