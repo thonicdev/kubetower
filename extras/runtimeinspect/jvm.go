@@ -106,8 +106,9 @@ func (JVM) Legacy() []string { return []string{legacyKey} }
 // Routes are three reads from the spec, all GETs, which run nothing in a
 // container, one GET that only asks whether jcmd is there (tools.go), and the JVM tab's four POSTs, which run jcmd through Host.Exec
 // on the person's click (inspect.go, threads.go, histogram.go), and the heap
-// dump, whose POST answers the file itself (heapdump.go). Nothing here changes a
-// cluster.
+// dump, whose POST answers the file itself (heapdump.go); and Go's pprof
+// through a tunnel to the pod (pprof.go): one GET that asks whether it answers,
+// and POSTs that read it. Nothing here changes a cluster.
 func (x JVM) Routes(h extension.Host) []extension.Route {
 	return []extension.Route{
 		{Method: http.MethodGet, Pattern: "/{$}", Handler: x.inventory(h)},
@@ -121,5 +122,8 @@ func (x JVM) Routes(h extension.Host) []extension.Route {
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/histogram", Handler: x.histogram(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/heapdump", Handler: x.heapDump(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/recording", Handler: x.flightRecording(h)},
+		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/pprof", Handler: x.pprofState(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/goroutines", Handler: x.pprofGoroutines(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/{profile}", Handler: x.pprofDownload(h)},
 	}
 }

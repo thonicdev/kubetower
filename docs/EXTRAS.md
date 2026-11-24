@@ -169,6 +169,24 @@ The Runtime column names each runtime a pod or workload runs (`Java · Go`),
 toned by the worst Java container's heap risk where there is one. A pod gets a
 tab per runtime: JVM, Go, Node.js, Python.
 
+## The Runtime Inspector’s Go tab
+
+A Go container's tab reads `net/http/pprof` where the application serves it,
+through a tunnel to the pod (`create pods/portforward`, recorded). The port is
+the pod's `kubetower.io/pprof-port` annotation (`6060`, or `app=6060,worker=6061`),
+else a container port named `pprof`, else 6060. The tab asks `/debug/pprof/`
+when it opens and greys every action when it does not answer.
+
+| Action | Asks | Gives |
+|---|---|---|
+| Goroutines | `goroutine?debug=2` | the goroutines grouped by state and stack, the longest wait, a filter, the dump as a file |
+| Heap profile | `heap` | `.heap.pb.gz`, for `go tool pprof` |
+| CPU profile | `profile?seconds=10`, `30` or `60` | `.cpu.pb.gz` |
+| Trace | `trace?seconds=5` or `10` | `.trace`, for `go tool trace` |
+
+No other pprof endpoint is asked, no signal is sent (`SIGQUIT` ends a Go
+program) and no debugger attaches.
+
 ## The Runtime Inspector’s JVM tab
 
 The Runtime Inspector’s page reads pod specs only and runs nothing. On a pod whose
