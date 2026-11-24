@@ -149,20 +149,33 @@ export function Matrix({
   );
 }
 
-type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'open' | 'inside' | 'folded' | 'unknown';
+type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
 
-/** What the rules say of one pair. A namespace to itself is allowed when a
- *  rule speaks between its own pods (`internal`). */
+/** Every pod of a namespace is isolated that way: nothing passes unless a rule of its own lets it. */
+const isolatedIn = (n: GraphNode) => n.kind === 'namespace' && n.pods > 0 && n.isolatedIn >= n.pods;
+const isolatedOut = (n: GraphNode) => n.kind === 'namespace' && n.pods > 0 && n.isolatedOut >= n.pods;
+
+/**
+ * What the rules say of one pair. A flow passes only if **each** isolated
+ * side lets it: the source's egress rules and the destination's ingress
+ * rules are two halves, and an allow on one never answers for the other. A
+ * deny anywhere wins. A namespace to itself is allowed when a rule speaks
+ * between its own pods (`internal`). On a cut answer nothing but a deny is
+ * concluded: a rule left out could deny or allow any pair.
+ */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   if (cell !== undefined && cell.deny.length > 0) return 'denied';
-  if (cell !== undefined && cell.allow.length > 0) return 'allowed';
-  if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
-  if (from.id === to.id && to.internal > 0) return 'inside';
-  if (to.kind === 'others') return 'folded';
-  // A rule may have been left out of a cut answer: no verdict on a pair with none.
   if (cut) return 'unknown';
-  if (to.kind === 'namespace' && to.pods > 0 && to.isolatedIn >= to.pods) return 'refused';
-  return 'open';
+  if (from.id === to.id && to.internal > 0) return 'inside';
+  const inOK = !isolatedIn(to) || cell?.allowIn === true;
+  const outOK = !isolatedOut(from) || cell?.allowOut === true;
+  if (inOK && outOK) {
+    if (cell !== undefined && cell.allow.length > 0) return 'allowed';
+    if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
+    return to.kind === 'others' ? 'folded' : 'open';
+  }
+  if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
+  return inOK ? 'refusedOut' : 'refused';
 }
 
 const LOOK: Record<State, string> = {
@@ -171,6 +184,7 @@ const LOOK: Record<State, string> = {
   denied: 'bg-bad/60',
   unevaluated: 'border border-dotted border-muted',
   refused: 'bg-panel-2 text-muted',
+  refusedOut: 'bg-panel-2 text-muted',
   open: 'border border-line',
   folded: 'border border-dashed border-line',
   unknown: 'border border-dotted border-warn/60',
@@ -182,6 +196,7 @@ const WORD: Record<State, string> = {
   denied: 'denied by a rule',
   unevaluated: 'a rule not evaluated here (FQDN, Service, layer 7)',
   refused: 'refused: the destination is isolated and no rule lets this in',
+  refusedOut: 'refused: the source is isolated and no rule lets this out',
   open: 'open: no policy isolates the destination',
   folded: 'no rule toward the folded namespaces',
   unknown: 'unknown: the rules were cut',
@@ -230,7 +245,7 @@ const Cell = memo(function Cell({
       title={title}
       className={`relative size-6 rounded-sm text-center align-middle ${showRules ? LOOK[state] : 'border border-line'}`}
     >
-      {showRules && state === 'refused' ? <span aria-hidden="true">×</span> : null}
+      {showRules && (state === 'refused' || state === 'refusedOut') ? <span aria-hidden="true">×</span> : null}
       {seen ? (
         <span aria-hidden="true" className={`absolute right-0.5 bottom-0.5 size-1.5 rounded-full ${cell.dropped > 0 ? 'bg-bad' : 'bg-ok'}`} />
       ) : null}

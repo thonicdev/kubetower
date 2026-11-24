@@ -405,8 +405,8 @@ describe('Cilium on the page', () => {
     // A deny outweighs an allow on the same pair; a rule not evaluated is neither.
     const deny = document.querySelector('[data-cell="ns:ops>ns:shop"]');
     expect(deny?.getAttribute('data-state')).toBe('denied');
-    expect(deny?.getAttribute('title')).toContain('deny 5432/TCP · db-deny');
-    expect(deny?.getAttribute('title')).toContain('allow 9090/TCP · api-from-ops');
+    expect(deny?.getAttribute('title')).toMatch(/deny (in|out|in and out) · 5432\/TCP · db-deny/);
+    expect(deny?.getAttribute('title')).toMatch(/allow (in|out|in and out) · 9090\/TCP · api-from-ops/);
     const unevaluated = document.querySelector('[data-cell="ns:shop>unevaluated:toFQDNs"]');
     expect(unevaluated?.getAttribute('data-state')).toBe('unevaluated');
     expect(unevaluated?.getAttribute('title')).toContain('not evaluated');

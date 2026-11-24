@@ -69,7 +69,7 @@ describe('fold', () => {
     const f = fold(graph(), flows, true, ask({ top: 2, order: 'rules' }));
     // team-000 and team-001 kept; team-002..009 allow into team-000 through others.
     const intoZero = f.cells.get('others>ns:team-000');
-    expect(intoZero?.allow).toEqual(['8080/TCP · p']);
+    expect(intoZero?.allow).toEqual(['in · 8080/TCP · p']);
     const traffic = f.cells.get('others>others');
     expect(traffic?.forwarded).toBe(957);
     expect(traffic?.dropped).toBe(3);
@@ -123,28 +123,30 @@ describe('a rule open to everyone', () => {
   it('allows every source into its namespace, its own included', () => {
     const f = fold(g([allow('anyone', 'ns:team-001', 1, 'open-to-all')]), [], true, ask());
     for (const from of ['ns:team-000', 'ns:team-001', 'ns:team-002', 'anyone']) {
-      expect(f.cells.get(`${from}>ns:team-001`)?.allow, from).toEqual(['8080/TCP · open-to-all']);
+      expect(f.cells.get(`${from}>ns:team-001`)?.allow, from).toEqual(['in · 8080/TCP · open-to-all']);
+      expect(f.cells.get(`${from}>ns:team-001`), from).toMatchObject({ allowIn: true, allowOut: false });
     }
     expect(f.cells.get('ns:team-000>ns:team-002')).toBeUndefined();
   });
 
-  it('allows every destination from its namespace, for an egress rule', () => {
+  it("carries an egress rule to every destination as the source's half only", () => {
     const f = fold(g([{ ...allow('ns:team-000', 'anyone', 1, 'out-to-all'), side: 'egress' }]), [], true, ask());
     for (const to of ['ns:team-001', 'ns:team-002']) {
-      expect(f.cells.get(`ns:team-000>${to}`)?.allow, to).toEqual(['8080/TCP · out-to-all']);
+      expect(f.cells.get(`ns:team-000>${to}`)?.allow, to).toEqual(['out · 8080/TCP · out-to-all']);
+      expect(f.cells.get(`ns:team-000>${to}`), to).toMatchObject({ allowIn: false, allowOut: true });
     }
   });
 
   it('denies every source for a deny rule', () => {
     const f = fold(g([{ ...allow('anyone', 'ns:team-002', 1, 'deny-all'), kind: 'deny' }]), [], true, ask());
-    expect(f.cells.get('ns:team-000>ns:team-002')?.deny).toEqual(['8080/TCP · deny-all']);
+    expect(f.cells.get('ns:team-000>ns:team-002')?.deny).toEqual(['in · 8080/TCP · deny-all']);
   });
 
   it('counts the cluster entity for the namespaces, not for an end outside the cluster', () => {
     const world: GraphNode = { id: 'entity:world', label: 'world', kind: 'entity', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
     const cluster: GraphNode = { id: 'entity:cluster', label: 'cluster', kind: 'entity', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
     const f = fold(g([allow('entity:cluster', 'ns:team-001', 1, 'from-cluster')], [cluster, world]), [], true, ask());
-    expect(f.cells.get('ns:team-000>ns:team-001')?.allow).toEqual(['8080/TCP · from-cluster']);
+    expect(f.cells.get('ns:team-000>ns:team-001')?.allow).toEqual(['in · 8080/TCP · from-cluster']);
     expect(f.cells.get('entity:world>ns:team-001')).toBeUndefined();
   });
 });

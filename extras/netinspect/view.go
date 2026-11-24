@@ -139,6 +139,10 @@ type Graph struct {
 	Truncated bool `json:"truncated"`
 }
 
+// everyone are the nodes that name every pod: a rule's empty peer, and
+// Cilium's all and cluster entities.
+var everyone = map[string]bool{"anyone": true, "entity:all": true, "entity:cluster": true}
+
 // Node kinds.
 const (
 	nodeNamespace = "namespace"
@@ -585,6 +589,12 @@ func (g *graphBuilder) finish(scope, focus string) Graph {
 	}
 	sort.Slice(ids, func(i, j int) bool {
 		a, b := g.nodes[ids[i]], g.nodes[ids[j]]
+		// A peer naming everyone is never folded: its rules speak for every
+		// pair it covers, which the page can only draw if it can tell them
+		// from the rules of the namespaces folded beside it.
+		if ei, ej := everyone[ids[i]], everyone[ids[j]]; ei != ej {
+			return ei
+		}
 		if degree[ids[i]] != degree[ids[j]] {
 			return degree[ids[i]] > degree[ids[j]]
 		}

@@ -50,6 +50,10 @@ export interface CellData {
   allow: string[];
   deny: string[];
   unevaluated: string[];
+  /** An allow from the destination's ingress rules covers the pair. */
+  allowIn: boolean;
+  /** An allow from the source's egress rules covers the pair. */
+  allowOut: boolean;
   forwarded: number;
   dropped: number;
 }
@@ -174,16 +178,24 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
   const at = (key: string) => {
     let c = cells.get(key);
     if (c === undefined) {
-      c = { allow: [], deny: [], unevaluated: [], forwarded: 0, dropped: 0 };
+      c = { allow: [], deny: [], unevaluated: [], allowIn: false, allowOut: false, forwarded: 0, dropped: 0 };
       cells.set(key, c);
     }
     return c;
   };
+  // Each rule is kept with the side it belongs to: an egress rule of the
+  // source and an ingress rule of the destination are two halves, and a
+  // pair is allowed only where each isolated side has its own (Matrix).
   const add = (key: string, e: (typeof graph.edges)[number]) => {
     const c = at(key);
-    const what = `${e.ports.join(', ')} · ${e.policies.join(', ')}`;
+    const side = e.side === 'both' ? 'in and out' : e.side === 'ingress' ? 'in' : 'out';
+    const what = `${side} · ${e.ports.join(', ')} · ${e.policies.join(', ')}`;
     const list = e.kind === 'deny' ? c.deny : e.kind === 'allow' ? c.allow : c.unevaluated;
     if (!list.includes(what)) list.push(what);
+    if (e.kind === 'allow') {
+      c.allowIn ||= e.side !== 'egress';
+      c.allowOut ||= e.side !== 'ingress';
+    }
   };
   for (const e of graph.edges) {
     const from = drawn(e.from);
@@ -192,7 +204,9 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     add(`${from}>${to}`, e);
     // A rule whose peer is everyone speaks for every pair it covers, not
     // only for the Anyone row or column: without this, every other cell
-    // toward an isolated namespace would read refused.
+    // toward an isolated namespace would read refused. It is one side's
+    // half only: an ingress one never answers for the source's egress, nor
+    // an egress one for the destination's ingress.
     const covered = (id: string) => nodes.filter((n) => n.id !== id && covers(id, n));
     if (EVERYONE.has(e.from)) for (const n of covered(from)) add(`${n.id}>${to}`, e);
     if (EVERYONE.has(e.to)) for (const n of covered(to)) add(`${from}>${n.id}`, e);

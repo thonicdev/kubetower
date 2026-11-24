@@ -324,3 +324,26 @@ func TestSuggestCountsThePolicies(t *testing.T) {
 		t.Error("a refused listing is an error, never nothing found")
 	}
 }
+
+// A peer naming everyone is never folded into "others", however little it is
+// connected: the page spreads its rules over every pair it covers.
+func TestAnyoneIsNeverFolded(t *testing.T) {
+	// Dense namespaces, each far more connected than the one Anyone edge.
+	h := teams(t, 120, true)
+	h.namespace(t, "zz-open", nil)
+	h.pod(t, "zz-open", "app", "10.9.9.1", map[string]string{"app": "app"})
+	p := np("zz-open", "open-to-all", nil)
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
+	h.policy(t, p)
+	g := overviewOf(t, h, "").Graph
+	if g.Folded == 0 {
+		t.Fatalf("nothing folded: %d nodes", len(g.Nodes))
+	}
+	found := false
+	for _, n := range g.Nodes {
+		found = found || n.ID == "anyone"
+	}
+	if !found {
+		t.Errorf("anyone was folded into others (%d nodes, %d folded)", len(g.Nodes), g.Folded)
+	}
+}
