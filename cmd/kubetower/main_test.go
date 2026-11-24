@@ -20,6 +20,7 @@ import (
 
 	"github.com/thonicdev/kubetower/app"
 	"github.com/thonicdev/kubetower/extras/argocd"
+	kextras "github.com/thonicdev/kubetower/internal/extras"
 	"github.com/thonicdev/kubetower/web"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -48,12 +49,12 @@ func TestTheBinaryRegistersItsExtras(t *testing.T) {
 	if err := app.Register(extras()...); err != nil {
 		t.Fatalf("the core refused this binary's extras: %v", err)
 	}
-	if got := app.Keys(); !slices.Equal(got, []string{"argocd", "certmanager", "cnpg", "dns", "events", "jvm", "kubeadjust", "kubecron", "netinspect", "pending", "redis", "security"}) {
-		t.Fatalf("registered keys = %v, want [argocd certmanager cnpg dns events jvm kubeadjust kubecron netinspect pending redis security]", got)
+	if got := app.Keys(); !slices.Equal(got, []string{"argocd", "certmanager", "cnpg", "dns", "events", "kubeadjust", "kubecron", "netinspect", "pending", "redis", "runtime", "security"}) {
+		t.Fatalf("registered keys = %v, want [argocd certmanager cnpg dns events kubeadjust kubecron netinspect pending redis runtime security]", got)
 	}
 	// The labels are what the menu draws, so they are asserted as the operator
 	// reads them, in menu order.
-	for i, want := range []string{"Cert Manager", "Delivery Center", "Event Intelligence", "DNS", "JVM Inspector", "KubeAdjust", "KubeCron", "Network Inspector", "Pod Debugging", "Postgres (CNPG)", "Redis viewer", "Security Center"} {
+	for i, want := range []string{"Cert Manager", "Delivery Center", "Event Intelligence", "DNS", "Runtime Inspector", "KubeAdjust", "KubeCron", "Network Inspector", "Pod Debugging", "Postgres (CNPG)", "Redis viewer", "Security Center"} {
 		if got := app.Extensions()[i].Label(); got != want {
 			t.Fatalf("label %d = %q, want %q", i, got, want)
 		}
@@ -392,5 +393,36 @@ func TestTheRenamedExtrasKeepTheirKeys(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("not registered under their new label: %v", want)
+	}
+}
+
+// The Runtime Inspector was published as the JVM Inspector under the key
+// `jvm`. Every place that key was written before 0.2.0 still turns the page on:
+// KT_EXTRAS, a state file, and a ClusterRole granting `use` on it.
+func TestTheRuntimeInspectorStillAnswersToJvm(t *testing.T) {
+	app.Reset()
+	t.Cleanup(app.Reset)
+	if err := app.Register(extras()...); err != nil {
+		t.Fatalf("the core refused this binary's extras: %v", err)
+	}
+
+	if got := kextras.Canonical("jvm"); got != "runtime" {
+		t.Fatalf("Canonical(\"jvm\") = %q, want runtime", got)
+	}
+	if got := kextras.LegacyOf("runtime"); !slices.Equal(got, []string{"jvm"}) {
+		t.Errorf("LegacyOf(\"runtime\") = %v, want [jvm]: a ClusterRole granting use on jvm would stop granting the page", got)
+	}
+
+	pinned, complaints := kextras.ParseEnv("jvm=on")
+	if len(complaints) != 0 || !pinned["runtime"] {
+		t.Errorf("KT_EXTRAS=jvm=on pinned %v, complaints %v, want runtime on", pinned, complaints)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "extras.json"), []byte(`{"on":{"prod":{"jvm":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !kextras.New(dir, []string{"prod"}, nil).EnabledOn("prod", "runtime") {
+		t.Error("a state file holding jvm left the Runtime Inspector off")
 	}
 }

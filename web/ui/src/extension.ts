@@ -32,6 +32,11 @@ export interface Extension {
   /** **Optional.** Its glyph on its card in Settings > Extra and in its About
    *  window. Absent, the generic `extra` glyph is drawn. */
   icon?: IconName;
+  /** Every key it was published under before, each held to the same pattern.
+   *  A bookmark to `/c/{cluster}/x/<old>/…` is redirected to `x/<key>/…`, and
+   *  a `?tab=x.<old>.<tab>` opens `x.<key>.<tab>`: the Go side's `Legacy()`
+   *  keeps the switch, this keeps the links. One-way, never written back. */
+  legacyKeys?: readonly string[];
   /** Where the Shell offers it. `path` is relative to `/c/:cluster`.
    *
    *  **The menu does not read `path`: the server's href is authoritative.** The
@@ -191,7 +196,7 @@ export interface ExtensionShortcutTarget {
    *  address with `?tab=x.<key>.<tab>` to open the extension's tab on it. */
   to: string;
   /** **Optional.** A graded word drawn first among the chips, in its tone, and
-   *  the tile's left bar in the same tone: the JVM Inspector's "OOMKill".
+   *  the tile's left bar in the same tone: the Runtime Inspector's "OOMKill".
    *  Without it the tile is drawn as before, in the neutral info tone. */
   status?: ExtensionStatus;
   /** **Optional.** A small bar under the second line: what the tile is about,

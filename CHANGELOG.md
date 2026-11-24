@@ -9,6 +9,17 @@ release's highlights: every entry under `### Added`, and an entry under
 `### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
 per release. Keep the bold lead short: it is all the banner draws.
 
+## Unreleased
+
+### Changed
+
+- **The JVM Inspector is the Runtime Inspector**, key `runtime`. Nothing to
+  change on upgrade: `jvm` is still read wherever it was written - `KT_EXTRAS`
+  and the chart's `extras`, the stored switch, bookmarks and tab links, API
+  addresses under `/x/<cluster>/jvm/` (a 308 to `runtime`), and a ClusterRole
+  granting `use` on `extras.kubetower.dev/jvm`. Grant `runtime` in new roles
+  (#18).
+
 ## 0.1.2 — signed updates, Redis viewer and Network Inspector fixes
 
 ### Added

@@ -1,9 +1,9 @@
-import type { ThreadDump } from '../app/extras/jvm/data';
+import type { ThreadDump } from '../app/extras/runtime/data';
 
 /**
  * The JVM tab's thread dump, for its picture (`pnpm shots:extras jvm-threads`):
- * what `extras/jvm` answered for the JDK 21 dump of its tests
- * (`extras/jvm/testdata/jdk21-Thread-print_-l.txt`), where two threads,
+ * what `extras/runtimeinspect` answered for the JDK 21 dump of its tests
+ * (`extras/runtimeinspect/testdata/jdk21-Thread-print_-l.txt`), where two threads,
  * worker-a and worker-b, each hold the monitor the other waits for. Generated
  * from the Go parser's answer; only the cluster, pod and container were put in
  * the scene's names.

@@ -7,9 +7,9 @@ import { extras } from './index';
 // Which extras have a page in the menu and which are reached only from the
 // panel of what they are about: the operator's decision.
 describe('the extras the menu offers', () => {
-  it('leaves out JVM Inspector and Pod Debugging, and only them', () => {
+  it('leaves out Runtime Inspector and Pod Debugging, and only them', () => {
     const contextual = extras.filter((one) => one.nav.menu === false).map((one) => one.key).sort();
-    expect(contextual).toEqual(['jvm', 'pending']);
+    expect(contextual).toEqual(['pending', 'runtime']);
   });
 
   it('draws the Redis viewer in the Extra group once the server lists it', () => {
@@ -20,7 +20,7 @@ describe('the extras the menu offers', () => {
         deferred: false,
         items: [
           { text: 'Redis viewer', href: '/c/demo/x/redis' },
-          { text: 'JVM Inspector', href: '/c/demo/x/jvm' },
+          { text: 'Runtime Inspector', href: '/c/demo/x/runtime' },
         ],
       },
     ];
