@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,9 +29,13 @@ import (
 type Container struct {
 	Name  string `json:"name"`
 	Image string `json:"image"`
-	// Java is whether anything in the spec says it runs a JVM: Hints is not
-	// empty. False is "not seen from the spec", never "not Java".
-	Java  bool   `json:"java"`
+	// Runtime is what the spec says it runs (runtimes.go): `java`, `go`,
+	// `node`, `python`, or empty for "not seen from the spec", never "none".
+	Runtime string `json:"runtime"`
+	// Java is Runtime `java`. False is "not seen from the spec", never "not
+	// Java".
+	Java bool `json:"java"`
+	// Hints are what Runtime rests on.
 	Hints []Hint `json:"hints"`
 	// Request and Limit are its memory request and limit, null when unset.
 	Request *Memory `json:"request"`
@@ -54,7 +59,10 @@ type Pod struct {
 	Name      string `json:"name"`
 	Phase     string `json:"phase"`
 	// Java is whether any of its containers is probably Java.
-	Java       bool        `json:"java"`
+	Java bool `json:"java"`
+	// Runtimes are its containers' runtimes, each once, in the containers'
+	// order: empty when the spec says none.
+	Runtimes   []string    `json:"runtimes"`
 	Containers []Container `json:"containers"`
 	// Owner is the workload that runs it, null for a pod nothing controls.
 	Owner *Owner `json:"owner"`
@@ -210,16 +218,18 @@ func cut(pods []Pod, max int) ([]Pod, bool) {
 	return kept, true
 }
 
-// read is c's reading. Nothing is run: it is the spec alone.
-func read(c corev1.Container) Container {
+// read is c's reading, in a pod annotated with annotated (annotatedRuntimes).
+// Nothing is run: it is the spec alone.
+func read(c corev1.Container, annotated map[string]string) Container {
+	found := detect(c, annotated)
 	out := Container{
-		Name: c.Name, Image: c.Image, Hints: hints(c), Notes: []string{},
+		Name: c.Name, Image: c.Image, Runtime: found.runtime, Hints: found.hints, Notes: []string{},
 		Request: memoryOf(c.Resources.Requests), Limit: memoryOf(c.Resources.Limits),
 	}
 	if out.Hints == nil {
 		out.Hints = []Hint{}
 	}
-	out.Java = len(out.Hints) > 0
+	out.Java = out.Runtime == runtimeJava
 	if !out.Java {
 		return out
 	}
@@ -232,13 +242,25 @@ func read(c corev1.Container) Container {
 	return out
 }
 
-// readPod is every container of p, in the spec's order.
+// readPod is every container of p, in the spec's order, then its native
+// sidecars (init containers that keep running); an init container that runs
+// to completion is not read.
 func readPod(p *corev1.Pod) Pod {
 	out := Pod{Namespace: p.Namespace, Name: p.Name, Phase: string(p.Status.Phase), Containers: []Container{},
-		Owner: ownerOf(p)}
-	for _, c := range p.Spec.Containers {
-		row := read(c)
+		Runtimes: []string{}, Owner: ownerOf(p)}
+	containers := append([]corev1.Container(nil), p.Spec.Containers...)
+	for _, c := range p.Spec.InitContainers {
+		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			containers = append(containers, c)
+		}
+	}
+	annotated := annotatedRuntimes(p.Annotations, containers)
+	for _, c := range containers {
+		row := read(c, annotated)
 		out.Java = out.Java || row.Java
+		if row.Runtime != "" && !slices.Contains(out.Runtimes, row.Runtime) {
+			out.Runtimes = append(out.Runtimes, row.Runtime)
+		}
 		out.Containers = append(out.Containers, row)
 	}
 	return out
@@ -253,6 +275,17 @@ func finished(p *corev1.Pod) bool {
 // Java containers only, how many pods it read, and how many could not be
 // decoded.
 func scan(items []unstructured.Unstructured) (pods []Pod, read, bad int) {
+	return scanFor(items, func(c Container) bool { return c.Java })
+}
+
+// scanAny is scan for every container with a runtime, whichever it is.
+func scanAny(items []unstructured.Unstructured) (pods []Pod, read, bad int) {
+	return scanFor(items, func(c Container) bool { return c.Runtime != "" })
+}
+
+// scanFor is the pods among items that still run with a container keep
+// keeps, each with those containers only.
+func scanFor(items []unstructured.Unstructured, keep func(Container) bool) (pods []Pod, read, bad int) {
 	for i := range items {
 		var p corev1.Pod
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(items[i].Object, &p); err != nil {
@@ -264,16 +297,16 @@ func scan(items []unstructured.Unstructured) (pods []Pod, read, bad int) {
 		}
 		read++
 		row := readPod(&p)
-		if !row.Java {
-			continue
-		}
-		java := row.Containers[:0]
+		kept := row.Containers[:0]
 		for _, c := range row.Containers {
-			if c.Java {
-				java = append(java, c)
+			if keep(c) {
+				kept = append(kept, c)
 			}
 		}
-		row.Containers = java
+		if len(kept) == 0 {
+			continue
+		}
+		row.Containers = kept
 		pods = append(pods, row)
 	}
 	sort.Slice(pods, func(i, j int) bool {

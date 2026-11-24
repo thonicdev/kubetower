@@ -335,7 +335,7 @@ describe('the page’s arithmetic', () => {
 describe('the Java column', () => {
   it('is declared on pods and the workloads that own them, one read per list', async () => {
     const column = jvm.columns?.[0];
-    expect(column?.label).toBe('Java');
+    expect(column?.label).toBe('Runtime');
     expect(column?.kinds).toEqual(['pods', 'deployments', 'statefulsets', 'daemonsets', 'replicasets', 'jobs']);
     const asked = stub(200, { 'shop/billing-0': { text: 'Java', tone: 'bad', hint: 'h', href: '/c/k/x/runtime?ns=shop&q=billing-0' } });
     const cells = await javaColumn({ cluster: 'k', kind: 'deployments' }, new AbortController().signal);

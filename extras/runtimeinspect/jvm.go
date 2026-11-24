@@ -1,7 +1,8 @@
 // Package runtimeinspect is the Runtime Inspector, published until 0.2.0 as
-// the JVM Inspector (key `jvm`, kept as its legacy key): which pods of a cluster probably run a
-// Java virtual machine, and how close each one's maximum heap is to its
-// container's memory limit, behind its own per-cluster switch.
+// the JVM Inspector (key `jvm`, kept as its legacy key): which runtime each
+// container of a cluster's pods runs - Java, Go, Node.js or Python, read from
+// the spec (runtimes.go) - and, for Java, how close each one's maximum heap is
+// to its container's memory limit, behind its own per-cluster switch.
 //
 // # What is here
 //
@@ -89,13 +90,14 @@ func (JVM) Label() string { return Label }
 
 // Summary is the catalog entry.
 func (JVM) Summary() string {
-	return "Which pods probably run Java, read from their spec, and how close each one's maximum heap is " +
-		"to its memory limit, before the container is OOMKilled."
+	return "Which runtime each pod runs - Java, Go, Node.js or Python - read from its spec, and for Java how " +
+		"close each one's maximum heap is to its memory limit, before the container is OOMKilled."
 }
 
 // Needs is drawn beside the switch.
 func (JVM) Needs() string {
-	return "pods running a JVM; it is recognized from the image, the command line or the Java environment variables in the spec"
+	return "pods running Java, Go, Node.js or Python; each is recognized from the image, the command line, the " +
+		"environment or the " + AnnotationRuntime + " annotation in the spec"
 }
 
 // Legacy is the JVM Inspector's key, which this page replaced.

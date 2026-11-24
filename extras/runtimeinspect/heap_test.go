@@ -36,7 +36,7 @@ func reading(t *testing.T, c corev1.Container) (Heap, Risk, []string) {
 	if c.Image == "" {
 		c.Image = "eclipse-temurin:21-jre"
 	}
-	got := read(c)
+	got := read(c, nil)
 	if got.Heap == nil || got.Risk == nil {
 		t.Fatalf("no estimate for a Java container: %+v", got)
 	}
@@ -169,7 +169,7 @@ func TestWithNoOptionTheJVMsDefaultsAreFollowed(t *testing.T) {
 
 // With no limit, the heap is sized on the node: no number, and no grade.
 func TestWithNoLimitTheHeapIsSizedOnTheNode(t *testing.T) {
-	got := read(memory(corev1.Container{Image: "openjdk:17"}, "512Mi", ""))
+	got := read(memory(corev1.Container{Image: "openjdk:17"}, "512Mi", ""), nil)
 	if got.Heap == nil || got.Heap.Bytes != nil || got.Heap.From != heapNoLimit || !strings.Contains(got.Heap.Source, "node") {
 		t.Errorf("heap = %+v, want no number, sized on the node", got.Heap)
 	}
@@ -180,7 +180,7 @@ func TestWithNoLimitTheHeapIsSizedOnTheNode(t *testing.T) {
 		t.Errorf("request %+v, limit %+v, want 512Mi and none", got.Request, got.Limit)
 	}
 	// An -Xmx with no limit is still the heap, and still ungraded.
-	got = read(corev1.Container{Image: "openjdk:17", Args: []string{"-Xmx1g"}})
+	got = read(corev1.Container{Image: "openjdk:17", Args: []string{"-Xmx1g"}}, nil)
 	if got.Heap.Bytes == nil || *got.Heap.Bytes != gi || got.Risk.Level != riskNoLimit {
 		t.Errorf("-Xmx1g with no limit: heap %+v, risk %+v", got.Heap, got.Risk)
 	}
@@ -213,7 +213,7 @@ func TestWhatCouldNotBeReadIsSaid(t *testing.T) {
 // A container nothing says is Java has no heap and no risk: an estimate for a
 // process with no heap would be invented.
 func TestANonJavaContainerHasNoEstimate(t *testing.T) {
-	got := read(memory(corev1.Container{Name: "proxy", Image: "nginx:1.27", Args: []string{"-g", "daemon off;"}}, "64Mi", "128Mi"))
+	got := read(memory(corev1.Container{Name: "proxy", Image: "nginx:1.27", Args: []string{"-g", "daemon off;"}}, "64Mi", "128Mi"), nil)
 	if got.Java || got.Heap != nil || got.Risk != nil || len(got.Hints) != 0 || got.Limit == nil {
 		t.Errorf("reading = %+v, want not Java, no heap, no risk, its limit still said", got)
 	}
