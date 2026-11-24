@@ -19,14 +19,17 @@ built from its tag.
   progress in place, and **Install updates** in Settings › Infos to turn it
   off (#45, #47, #48, #53, #55).
   - Windows: the setup, silently and per user, or the zip (#50, #57).
-  - macOS: the app from the disk image, swapped in place; the Dock badge
-    says a newer release is there (#51, #64).
+  - macOS: the app from the disk image, swapped in place, or the `.tar.gz`
+    (#51, #64).
   - Linux: the AppImage and the `.tar.gz` in place, the `.deb` and `.rpm`
-    through `pkexec` with `apt-get`, `dnf` or `zypper` (#49, #56).
+    through `pkexec` with `apt-get` or `dpkg -i`, `dnf`, `zypper` or
+    `rpm -U` (#49, #56).
   - A folder that is not writable says **Not writable**, with **Open folder**
     on the verified file (#56, #57, #64).
   - Never in a cluster or a container, never a downgrade, never a file the
     signature does not vouch for.
+  - The Windows and macOS installs have not been tried on a real machine
+    yet.
 - **Settings has a Back control** to the page it was opened from, its
   filters and open object included (#13, #30).
 - **Settings › Extra reads at a glance.** Each extra has its icon, Edit and

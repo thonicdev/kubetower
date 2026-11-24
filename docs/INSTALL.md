@@ -134,8 +134,9 @@ has not been tried on a real Linux desktop yet.
 
 ## Updating
 
-The desktop checks for a newer release at most once a day (`KT_UPDATE_CHECK=off` turns
-the check off) and installs it from **Settings**, in two clicks:
+The desktop checks for a newer release once a day, an hour after a check that
+failed, and on **Check now** in Settings › Infos (`KT_UPDATE_CHECK=off` turns the
+check off). It installs it from **Settings**, in two clicks:
 
 1. **Download** fetches the release file for this installation from GitHub over
    HTTPS and keeps it only when `checksums.txt.sig` verifies against the key
@@ -145,7 +146,7 @@ the check off) and installs it from **Settings**, in two clicks:
 2. **Restart to update** replaces KubeTower and starts it again. The terminals
    and port-forwards it ends are counted beside the button.
 
-A badge on Settings (and on the Dock icon on macOS) says a newer release is
+A badge on Settings, and on the Dock icon on macOS, says a newer release is
 there. **Install updates**, in Settings › Infos, turns the download and the
 install off; the check stays.
 
@@ -154,14 +155,16 @@ install off; the check stays.
 | Windows setup | The new setup runs silently in the same folder, for your user, with no administrator rights |
 | Windows zip | `kubetower.exe` is replaced beside itself |
 | macOS `.app` | The new `KubeTower.app` from the disk image takes the old one's place |
-| AppImage, `.tar.gz` | The file is replaced where it is |
-| `.deb`, `.rpm` | The package manager installs it (`apt-get`, `dnf` or `zypper`, through `pkexec`, which asks for your password) |
+| AppImage, `.tar.gz` (Linux, macOS) | The file is replaced where it is |
+| `.deb`, `.rpm` | The package manager installs it through `pkexec`, which asks for your password: `apt-get`, else `dpkg -i`; `dnf`, else `zypper`, else `rpm -U`. Without `pkexec` or one of them, no Download is offered |
 
 Where KubeTower's folder is not writable (`C:\Program Files`, a system folder,
 an app run from the disk image or Downloads), Settings says **Not writable**
 and **Open folder** shows the verified file, to install by hand. A console in a
 cluster or in a container never downloads or installs anything: its image tag
 decides its version.
+
+The Windows and macOS installs have not been tried on a real machine yet.
 
 ---
 
