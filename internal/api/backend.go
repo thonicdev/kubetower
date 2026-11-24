@@ -118,6 +118,9 @@ type Deps struct {
 	// Updates is Settings › Infos' Check now. Nil where
 	// nothing checks, and the route is then not registered.
 	Updates UpdateCheck
+	// Installer downloads and installs an update on the desktop (#47). Nil
+	// where nothing installs, and the routes are then not registered.
+	Installer UpdateInstaller
 
 	// Now is the clock, held here so the plan store's expiry can be tested at
 	// its boundaries rather than by waiting.
@@ -332,6 +335,16 @@ type KindPreferenceStore interface {
 // apply; that is decided below it, in internal/update, before any socket.
 type UpdateCheck interface {
 	CheckUpdates(ctx context.Context) SettingsUpdate
+}
+
+// UpdateInstaller is the desktop's two clicks: Download, then Restart to
+// update. A refusal (turned off, nothing to install here, busy, nothing
+// verified) is ErrConflict with its reason.
+type UpdateInstaller interface {
+	UpdateInstall() UpdateInstall
+	SetInstallUpdates(on bool) (UpdateInstall, error)
+	DownloadUpdate() (UpdateInstall, error)
+	InstallUpdate(ctx context.Context) (UpdateInstall, error)
 }
 
 // PreferenceStore is the read half and the twelve writes.

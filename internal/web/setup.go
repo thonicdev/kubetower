@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/thonicdev/kubetower/internal/cluster"
+	"github.com/thonicdev/kubetower/internal/updater"
 )
 
 // SetupInfo is what `internal/launch` tells this package about its own
@@ -73,6 +74,21 @@ type SetupInfo struct {
 	// CheckUpdates is Check now: the same check past its cache, answering once it
 	// has settled. Nil where nothing checks, and the route is not registered.
 	CheckUpdates func(context.Context) UpdateReport
+
+	// Installer downloads and installs an update (#47), on the desktop only.
+	// Nil where nothing installs: the routes are then not registered.
+	Installer UpdateInstaller
+
+	// OpenWork counts the terminals and port-forwards a restart would end.
+	OpenWork func() (terminals, forwards int)
+}
+
+// UpdateInstaller is internal/updater.Updater, as the Settings page drives it.
+type UpdateInstaller interface {
+	Status() updater.Status
+	SetEnabled(on bool) (updater.Status, error)
+	Download() (updater.Status, error)
+	Install(ctx context.Context) (updater.Status, error)
 }
 
 // UpdateReport is what SetupInfo.Updates answers with, declared here so a caller

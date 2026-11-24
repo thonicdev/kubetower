@@ -239,6 +239,49 @@ func (a *API) checkUpdates(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, a.deps.Updates.CheckUpdates(r.Context()))
 }
 
+// getUpdateInstall is the download's progress, read while it runs.
+func (a *API) getUpdateInstall(w http.ResponseWriter, _ *http.Request) {
+	writeOK(w, a.deps.Installer.UpdateInstall())
+}
+
+// saveUpdateInstall writes the "Install updates" setting.
+func (a *API) saveUpdateInstall(w http.ResponseWriter, r *http.Request) {
+	var body UpdateInstallWrite
+	if !decode(w, r, maxBody, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		badRequest(w, "enabled is required")
+		return
+	}
+	out, err := a.deps.Installer.SetInstallUpdates(*body.Enabled)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
+// downloadUpdate is the first click: it starts the download and answers at once.
+func (a *API) downloadUpdate(w http.ResponseWriter, _ *http.Request) {
+	out, err := a.deps.Installer.DownloadUpdate()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
+// installUpdate is the second click: the installer runs and the console restarts.
+func (a *API) installUpdate(w http.ResponseWriter, r *http.Request) {
+	out, err := a.deps.Installer.InstallUpdate(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
 func (a *API) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var body SettingsWrite
 	if !decode(w, r, maxBody, &body) {

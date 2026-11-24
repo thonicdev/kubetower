@@ -171,6 +171,7 @@ var order = []string{
 	"previewNodeShell",
 	"getPrereq", "previewPrereq", "installPrereq",
 	"checkUpdates",
+	"getUpdateInstall", "setUpdateInstall", "downloadUpdate", "installUpdate",
 	"clearState",
 	"getKindPreferences", "setKindPreferences",
 	"getPreferences",
@@ -281,7 +282,11 @@ func exercises() map[string]exercise {
 				return `{"token":` + strconv.Quote(state["prereq"]) + `,"confirmed":"trivy-operator"}`
 			}},
 
-		"checkUpdates": {status: 200, path: at("/api/settings/update-check")},
+		"checkUpdates":     {status: 200, path: at("/api/settings/update-check")},
+		"getUpdateInstall": {status: 200, path: at("/api/settings/update")},
+		"setUpdateInstall": {status: 200, path: at("/api/settings/update"), body: sends(`{"enabled":false}`)},
+		"downloadUpdate":   {status: 200, path: at("/api/settings/update/download")},
+		"installUpdate":    {status: 200, path: at("/api/settings/update/install")},
 
 		"clearState": {status: 200, path: at("/api/settings/clear"),
 			body: sends(`{"scope":"preferences","preview":true}`)},
@@ -422,7 +427,7 @@ func walkContract(t *testing.T, spec map[string]any,
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{},
 		// Every channel on offer: this exercises every operation the contract
 		// declares, and two of them - the node-shell preview and its setting -
 		// exist only where the node-shell channel does. A build offering no
@@ -906,7 +911,7 @@ func TestEveryRequestBodyMatchesTheContract(t *testing.T) {
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{},
 		AllowOrigin: func(*http.Request, string) bool { return true },
 	}).Mount(mux)
 

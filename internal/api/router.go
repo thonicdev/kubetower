@@ -183,6 +183,14 @@ func (a *API) routes() {
 	if a.deps.Updates != nil && !a.deps.InCluster {
 		m.HandleFunc("POST /api/settings/update-check", a.guard(a.checkUpdates))
 	}
+	// The desktop's download and install (#47): never under the server profile,
+	// and only where internal/launch built an installer.
+	if a.deps.Installer != nil && !a.deps.InCluster {
+		m.HandleFunc("GET /api/settings/update", a.getUpdateInstall)
+		m.HandleFunc("PUT /api/settings/update", a.guard(a.saveUpdateInstall))
+		m.HandleFunc("POST /api/settings/update/download", a.guard(a.downloadUpdate))
+		m.HandleFunc("POST /api/settings/update/install", a.guard(a.installUpdate))
+	}
 	m.HandleFunc("GET /api/health", a.getHealth)
 
 	// Resources.
