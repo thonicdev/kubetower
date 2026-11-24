@@ -70,14 +70,16 @@ var pprofProfiles = map[string]pprofProfile{
 	"trace":   {path: "trace", ext: ".trace", seconds: []int{5, 10}},
 }
 
-const (
+// Variables so that the tests can reach them in milliseconds and bytes.
+var (
 	// pprofProbeBudget bounds the probe and the goroutine read.
 	pprofProbeBudget = 15 * time.Second
 	// pprofGoroutineLimit is the most bytes of a goroutine dump read: past
 	// it the dump is cut and the answer says so.
 	pprofGoroutineLimit = 16 << 20
-	// pprofDownloadLimit is the most bytes a profile download carries.
-	pprofDownloadLimit = 256 << 20
+	// pprofDownloadLimit is the most bytes a profile download carries: a
+	// larger profile fails rather than arrive cut.
+	pprofDownloadLimit int64 = 256 << 20
 )
 
 // pprofPort is where pprof listens in c of p, and what says so: the
@@ -232,10 +234,38 @@ func pprofGet(ctx context.Context, tunnel extension.Tunnel, path string) (*http.
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("/debug/pprof/%s answered %s", path, resp.Status)
+		return nil, &pprofAnswered{path: path, status: resp.Status, body: firstLine(strings.TrimSpace(string(body)))}
 	}
 	return resp, nil
+}
+
+// pprofAnswered is pprof answering with something else than 200: a 500
+// "cpu profiling already in use" is an answer, not a silence.
+type pprofAnswered struct{ path, status, body string }
+
+func (e *pprofAnswered) Error() string {
+	msg := "/debug/pprof/" + e.path + " answered " + e.status
+	if e.body != "" {
+		msg += ": " + e.body
+	}
+	return msg
+}
+
+// writePprofError tells pprof answering with an error from pprof not
+// answering at all.
+func writePprofError(w http.ResponseWriter, port int, err error) {
+	var answered *pprofAnswered
+	if errors.As(err, &answered) {
+		msg := "pprof on port " + strconv.Itoa(port) + " answered " + answered.status
+		if answered.body != "" {
+			msg += ": " + answered.body
+		}
+		writeProblem(w, http.StatusBadGateway, CodePprofFailed, msg+".", err)
+		return
+	}
+	writeProblem(w, http.StatusBadGateway, CodePprofUnreachable, "pprof did not answer on port "+strconv.Itoa(port)+".", err)
 }
 
 func (JVM) pprofState(h extension.Host) http.Handler {
@@ -278,11 +308,11 @@ func (JVM) pprofGoroutines(h extension.Host) http.Handler {
 		defer cancel()
 		resp, err := pprofGet(ctx, tunnel, "goroutine?debug=2")
 		if err != nil {
-			writeProblem(w, http.StatusBadGateway, CodePprofUnreachable, "pprof did not answer on port "+strconv.Itoa(g.port)+".", err)
+			writePprofError(w, g.port, err)
 			return
 		}
 		defer resp.Body.Close()
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, pprofGoroutineLimit+1))
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(pprofGoroutineLimit)+1))
 		if err != nil {
 			writeProblem(w, http.StatusBadGateway, CodePprofFailed, "The goroutine dump could not be read.", err)
 			return
@@ -291,7 +321,8 @@ func (JVM) pprofGoroutines(h extension.Host) http.Handler {
 		if truncated {
 			raw = raw[:pprofGoroutineLimit]
 		}
-		groups, total := parseGoroutines(string(raw))
+		groups, total, cut := parseGoroutines(string(raw))
+		truncated = truncated || cut
 		writeJSON(w, http.StatusOK, goroutinesAnswer{Total: total, Groups: groups, Truncated: truncated, Raw: string(raw)})
 	})
 }
@@ -329,17 +360,36 @@ func (JVM) pprofDownload(h extension.Host) http.Handler {
 		defer cancel()
 		resp, err := pprofGet(ctx, tunnel, path)
 		if err != nil {
-			writeProblem(w, http.StatusBadGateway, CodePprofUnreachable, "pprof did not answer on port "+strconv.Itoa(g.port)+".", err)
+			writePprofError(w, g.port, err)
 			return
 		}
 		defer resp.Body.Close()
+		if resp.ContentLength > pprofDownloadLimit {
+			writeProblem(w, http.StatusBadGateway, CodePprofFailed,
+				fmt.Sprintf("The profile is larger than %d MiB.", pprofDownloadLimit>>20), nil)
+			return
+		}
 		hd := w.Header()
 		hd.Set("Content-Type", "application/octet-stream")
 		hd.Set("Content-Disposition", `attachment; filename="`+g.name+"-"+g.container+"-"+
 			time.Now().UTC().Format("20060102-150405")+profile.ext+`"`)
 		hd.Set("Cache-Control", "no-store")
 		hd.Set("X-Content-Type-Options", "nosniff")
-		_, _ = io.Copy(w, io.LimitReader(resp.Body, pprofDownloadLimit))
+		if resp.ContentLength >= 0 {
+			hd.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+		}
+		n, err := io.Copy(w, io.LimitReader(resp.Body, pprofDownloadLimit))
+		if err == nil && n == pprofDownloadLimit {
+			var one [1]byte
+			if k, _ := io.ReadFull(resp.Body, one[:]); k > 0 {
+				err = fmt.Errorf("the profile is larger than %d MiB", pprofDownloadLimit>>20)
+			}
+		}
+		if err != nil {
+			// The status is sent: end the response broken, so the download
+			// fails rather than leave a cut file that looks whole.
+			panic(http.ErrAbortHandler)
+		}
 	})
 }
 
@@ -356,14 +406,15 @@ func firstLine(s string) string { return textutil.FirstLineN(s, 80) }
 
 // parseGoroutines groups a `goroutine?debug=2` dump by state and stack (the
 // functions, without their arguments and lines), the largest groups first,
-// and counts every goroutine read.
+// and counts every goroutine read. cut is a line too long to read (over
+// 1 MiB): the dump past it is not counted.
 //
 //	goroutine 18 [chan receive, 5 minutes]:
 //	main.worker(0xc000010000)
 //		/src/main.go:42 +0x45
 //	created by main.main in goroutine 1
 //		/src/main.go:20 +0x2a
-func parseGoroutines(dump string) ([]goroutineGroup, int) {
+func parseGoroutines(dump string) ([]goroutineGroup, int, bool) {
 	type key struct{ state, stack string }
 	groups := map[key]*goroutineGroup{}
 	var order []key
@@ -419,7 +470,7 @@ func parseGoroutines(dump string) ([]goroutineGroup, int) {
 		out = append(out, *groups[k])
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
-	return out, total
+	return out, total, scanner.Err() != nil
 }
 
 // longer is whether wait a ("5 minutes") is longer than b; an empty b is
