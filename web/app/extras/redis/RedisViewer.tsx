@@ -93,7 +93,9 @@ export function RedisViewer(): ReactNode {
               · {plural(data.redises, 'deployment')}, {plural(data.services, 'Service')}
             </>
           )}
-          {data === undefined || (data.external ?? []).length === 0 ? null : <> · {(data.external ?? []).length} external</>}
+          {data === undefined || (data.external ?? []).length === 0 || AXES.some((a) => filters[a] !== undefined) ? null : (
+            <> · {(data.external ?? []).length} external</>
+          )}
         </p>
         <span className="flex-1" />
         {scope === '' ? null : (
@@ -287,7 +289,7 @@ function Listed({
       {external.length === 0 || filtered ? null : (
         <TileGrid label="Outside the cluster">
           {external.map((door) => (
-            <ExternalTile key={`${door.namespace}/${door.service}`} door={door} to={serviceHref(cluster, door.namespace, door.service)} />
+            <ExternalTile key={`${door.namespace}/${door.service}`} door={door} to={`${serviceHref(cluster, door.namespace, door.service)}?tab=x.redis.backend`} />
           ))}
         </TileGrid>
       )}

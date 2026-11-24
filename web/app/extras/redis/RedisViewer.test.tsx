@@ -51,6 +51,8 @@ function mount(path: string) {
 
 const INVENTORY = '/x/docker-desktop/redis/';
 
+const EXTERNAL_DOOR = { namespace: 'apps', service: 'sessions', host: 'demo.abc123.cache.amazonaws.com', port: 6379, why: 'it is on 6379' };
+
 const door = (namespace: string, service: string, why = 'the port is named redis') => ({
   namespace,
   service,
@@ -336,12 +338,20 @@ describe('the inventory: one tile per deployment', () => {
     mount('x/redis');
     await waitFor(() => expect(document.querySelector('[data-external="apps/sessions"]')).not.toBeNull());
     const tile = document.querySelector('[data-external="apps/sessions"]');
-    expect(tile?.querySelector('a')?.getAttribute('href')).toBe('/c/docker-desktop/services/apps/sessions');
+    expect(tile?.querySelector('a')?.getAttribute('href')).toBe('/c/docker-desktop/services/apps/sessions?tab=x.redis.backend');
     expect(tile?.querySelector('[data-tile-detail]')?.textContent).toBe('apps · demo.abc123.cache.amazonaws.com:6379');
     expect(tile?.querySelector('[data-probe]')).toBeNull();
     expect(document.querySelector('[data-state="empty"]')).toBeNull();
     expect(document.querySelector('[data-counts]')?.textContent).toContain('1 external');
     expect(asked).toEqual([INVENTORY]);
+  });
+
+  it('hides the external tiles and their count while a filter narrows the grid', async () => {
+    stub({ [INVENTORY]: { body: inventory({ external: [EXTERNAL_DOOR] }) } });
+    mount('x/redis?show=engine.Valkey');
+    await waitFor(() => expect(document.querySelector('[data-counts]')?.textContent).toContain('2 deployments'));
+    expect(document.querySelector('[data-external]')).toBeNull();
+    expect(document.querySelector('[data-counts]')?.textContent).not.toContain('external');
   });
 
   it('draws a tile with nothing behind it as not serving, with no probe and no link', async () => {

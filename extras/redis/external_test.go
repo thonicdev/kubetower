@@ -34,6 +34,23 @@ func TestExternalRedis(t *testing.T) {
 		{"redis-exporter", "demo.abc123.cache.amazonaws.com", nil, 0, ""},
 		{"sessions", "demo.abc123.cache.amazonaws.com", []corev1.ServicePort{{Name: "metrics", Port: 9121}}, 0, ""},
 		{"sessions", "", nil, 0, ""},
+		// Inside another word, the engine says nothing (the review of #74).
+		{"search", "rediscover.example.com", nil, 0, ""},
+		{"search", "credis.internal", nil, 0, ""},
+		{"search", "redistribution.example.com", []corev1.ServicePort{{Name: "https", Port: 443}, {Name: "grpc", Port: 9000}}, 0, ""},
+		{"predis", "db.example.com", nil, 0, ""},
+		{"notredis", "db.example.com", nil, 0, ""},
+		{"search", "my-redis.example.com", nil, 0, "it points at my-redis.example.com"},
+		{"search", "valkey8.example.com", nil, 0, "it points at valkey8.example.com"},
+		// memorydb only under amazonaws.com.
+		{"search", "foo.memorydb.internal", nil, 0, ""},
+		{"search", "cache.example.com", nil, 0, ""},
+		// Taken on its name alone: a port only when it looks like a Redis's.
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "api", Port: 443}}, 0, "its name says redis"},
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6390}}, 6390, "its name says redis"},
+		{"redis_main", "x.example.com", nil, 0, "its name says redis"},
+		// A managed host keeps its one port.
+		{"sessions", "demo.abc123.cache.amazonaws.com", []corev1.ServicePort{{Name: "tls", Port: 443}}, 443, "it points at demo.abc123.cache.amazonaws.com"},
 	} {
 		door, ok := externalRedis(externalService("apps", c.name, c.host, c.ports...))
 		if ok != (c.why != "") || door.Why != c.why || (ok && door.Port != c.port) {
