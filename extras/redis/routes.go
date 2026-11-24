@@ -31,6 +31,9 @@ type inventoryAnswer struct {
 	SlicesNote string `json:"slicesNote,omitempty"`
 	// PodsNotes say which namespaces were grouped without their pods.
 	PodsNotes []string `json:"podsNotes,omitempty"`
+	// External are the ExternalName Services to a Redis outside the cluster:
+	// no probe, no keys, no tunnel.
+	External []externalWire `json:"external"`
 	// Redises counts deployments, Members the servers or pod sets inside
 	// them, Services the doors; most charts make the three differ.
 	Services   int             `json:"services"`
@@ -174,7 +177,10 @@ func (Redis) inventory(h extension.Host) http.Handler {
 		}
 		out := inventoryAnswer{
 			Scope: scope, Complete: found.Complete, Note: found.Note, SlicesNote: found.SlicesNote,
-			Services: len(found.Instances), Namespaces: []namespaceWire{},
+			Services: len(found.Instances), Namespaces: []namespaceWire{}, External: []externalWire{},
+		}
+		for _, door := range found.External {
+			out.External = append(out.External, wireExternal(door))
 		}
 		folded, notes := deployments(r, h, cluster, found)
 		out.PodsNotes = notes
@@ -216,6 +222,9 @@ type serviceAnswer struct {
 	// PodsNotes say the namespace was grouped without its pods, as on the
 	// inventory.
 	PodsNotes []string `json:"podsNotes,omitempty"`
+	// External is set, and Deployments empty, for an ExternalName Service to
+	// a Redis outside the cluster.
+	External *externalWire `json:"external,omitempty"`
 }
 
 // service answers whether a Service is one the inventory would offer, from
@@ -230,6 +239,14 @@ func (Redis) service(h extension.Host) http.Handler {
 			return
 		}
 		out := serviceAnswer{Namespace: namespace, Service: name, Deployments: []deploymentWire{}}
+		for _, door := range found.External {
+			if door.Service == name {
+				wire := wireExternal(door)
+				out.External = &wire
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
+		}
 		// A Service the inventory would offer is one with a Redis door; one
 		// reached on a Sentinel port only is drawn in the inventory as a
 		// member and is not a Redis to open, so it gets no tab.

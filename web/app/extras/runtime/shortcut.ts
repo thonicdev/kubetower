@@ -3,7 +3,7 @@ import { objectPath, type ExtensionShortcutTarget, type ExtensionTabProps } from
 import { KEY, getPod, riskWord, type Container } from './data';
 
 /**
- * The JVM Inspector's tile on a pod's Details: drawn as soon as the pod's spec
+ * The Runtime Inspector's tile on a pod's Details: drawn as soon as the pod's spec
  * says a container is probably Java (the same spec route as the page and the
  * tab's probe - **nothing runs in the container to draw it**). It names the
  * Java runtime where the image says it, grades the OOMKill risk, and draws the

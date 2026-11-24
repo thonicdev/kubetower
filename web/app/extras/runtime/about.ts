@@ -9,7 +9,7 @@ import flightRecorder from './assets/flight-recorder-confirm.png';
 import memoryHistory from './assets/memory-history.png';
 
 /**
- * What Settings → Extra says about the JVM Inspector before it is turned on.
+ * What Settings → Extra says about the Runtime Inspector before it is turned on.
  * The permissions follow the Go half's reads (`extras/runtimeinspect`): keep the two in
  * step when a read is added. `create pods/exec` is what the JVM tab on a pod
  * needs to run `jcmd` in the container, on a click; metrics-server's pod

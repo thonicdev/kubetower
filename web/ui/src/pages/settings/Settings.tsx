@@ -11,6 +11,7 @@ import { CLUSTER_PARAM, useExtraTab, useSettings, type ExtraTab as ExtraTabState
 import { ExtraTab } from './ExtraTab';
 import { GeneralTab } from './GeneralTab';
 import { InfosTab } from './InfosTab';
+import { UpdateBanner } from './UpdateControl';
 
 /**
  * The console's settings, at `/settings/:tab`.
@@ -138,6 +139,8 @@ export function SettingsPage(): ReactNode {
         )}
         <h1 className="text-xl font-medium">Settings</h1>
       </header>
+
+      <UpdateBanner />
 
       <nav aria-label="Settings sections" className="flex gap-1 border-b border-line">
         {drawn.map((each) => (

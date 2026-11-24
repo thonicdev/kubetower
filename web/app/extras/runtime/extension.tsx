@@ -12,7 +12,8 @@ import { TAB, podTile } from './shortcut';
  *
  * One page, under the `x` segment the console reserves for an extra's page:
  * the probable Java pods with their heap against their limit. The Go routes
- * answer JSON at `/x/{cluster}/jvm/…`, a different address.
+ * answer JSON at `/x/{cluster}/runtime/…`, a different address (`/x/{cluster}/jvm/…`
+ * before 0.2.0, redirected there by the server).
  *
  * And one tab, on a pod, drawn where its spec says a container probably runs
  * Java: the `probe` reads the same spec route as the page and runs nothing in
@@ -23,6 +24,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const runtimeInspector: Extension = {
   key: KEY,
+  icon: 'coffee',
   // Published as the JVM Inspector until 0.2.0: its bookmarks and tab links.
   legacyKeys: ['jvm'],
   about,

@@ -25,5 +25,17 @@ file's name in place of `<file>`:
   (Get-FileHash $file -Algorithm SHA256).Hash -eq $want
   ```
 
+`checksums.txt` itself is signed with the project's Ed25519 key. Check it
+first, with OpenSSL 3 and the key from the repository at this release's tag
+([`internal/releasesig/release-key.pem`](https://github.com/thonicdev/kubetower/blob/main/internal/releasesig/release-key.pem)):
+
+```sh
+openssl pkeyutl -verify -rawin -pubin -inkey release-key.pem \
+  -in checksums.txt -sigfile checksums.txt.sig
+```
+
+It prints `Signature Verified Successfully`. The console's own updater
+checks the same signature, and installs nothing it does not verify.
+
 The README's [Unsigned builds](https://github.com/thonicdev/kubetower#unsigned-builds)
 says more, including how to clear the download mark before the first run.

@@ -103,6 +103,21 @@ describe('the Redis tab', () => {
     expect(document.querySelector('[data-redis-tab="unchecked"] [data-problem="list_failed"]')?.getAttribute('data-kind')).toBe('failure');
   });
 
+  it('draws an ExternalName Service to a managed Redis as external, with its address and no probe', async () => {
+    const EXTERNAL = '/x/docker-desktop/redis/services/apps/sessions';
+    const asked = stub({ [EXTERNAL]: { body: { namespace: 'apps', service: 'sessions', deployments: [], external: { namespace: 'apps', service: 'sessions', host: 'demo.abc123.cache.amazonaws.com', port: 6379, why: 'it is on 6379' } } } });
+    const signal = new AbortController().signal;
+    expect(await redis.tabs?.[0]?.probe?.({ cluster: 'docker-desktop', kind: 'services', namespace: 'apps', name: 'sessions' }, signal)).toBe(true);
+
+    withProviders(<RedisTab cluster="docker-desktop" kind="services" namespace="apps" name="sessions" />);
+    await waitFor(() => expect(document.querySelector('[data-redis-tab="external"] [data-external="apps/sessions"]')).not.toBeNull());
+    const tile = document.querySelector('[data-external="apps/sessions"]');
+    expect(tile?.querySelector('[data-tile-detail]')?.textContent).toBe('apps · demo.abc123.cache.amazonaws.com:6379');
+    expect(screen.getByText('external').getAttribute('title')).toBe('Outside the cluster: it is on 6379');
+    expect(document.querySelector('[data-probe]')).toBeNull();
+    expect(asked).toEqual([EXTERNAL, EXTERNAL]);
+  });
+
   it('draws the deployment, the doors, their reasons and the role, and dials nothing on mount', async () => {
     const asked = stub({
       [SERVICE]: { body: service },

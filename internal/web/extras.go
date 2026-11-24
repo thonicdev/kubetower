@@ -152,7 +152,8 @@ func (s *Server) refuseExtraUnused(w http.ResponseWriter, r *http.Request, key s
 		}
 		cluster = name
 	}
-	answer := s.gate.Review(r.Context(), cluster, useAttributes(key))
+	answers, _ := s.reviewUse(r.Context(), cluster, []string{key})
+	answer := answers[0]
 	switch {
 	case answer.Allowed():
 		return false
@@ -203,19 +204,18 @@ func consoleMayNotUse(label, key string) string {
 func (s *Server) extrasInMenu(ctx context.Context, cluster string) (func(string) bool, string) {
 	on := map[string]bool{}
 	var keys []string
-	var questions []access.Attributes
 	for _, e := range extras.Catalogue() {
 		if !s.extras.EnabledOn(cluster, e.Key) {
 			continue
 		}
 		on[e.Key] = true
 		keys = append(keys, e.Key)
-		questions = append(questions, useAttributes(e.Key))
 	}
 	var unreviewed []string
 	reason := ""
-	if s.inCluster && len(questions) > 0 {
-		for i, answer := range s.gate.ReviewAll(ctx, cluster, questions) {
+	if s.inCluster && len(keys) > 0 {
+		answers, _ := s.reviewUse(ctx, cluster, keys)
+		for i, answer := range answers {
 			if answer.Allowed() {
 				continue
 			}
@@ -284,6 +284,45 @@ func useAttributes(key string) access.Attributes {
 	return access.Attributes{Verb: "use", Group: UseGroup, Resource: extras.Canonical(key)}
 }
 
+// reviewUse answers `use` about each of keys on cluster, in order, and the
+// question that answered it. Each is asked about its key first, all in one
+// ReviewAll; one refused is then asked about every key it was published under
+// (extras.LegacyOf), and the first of those allowed answers it.
+//
+// **A rename must not take the page from anyone.** An operator's ClusterRole
+// grants `use` on the resource it named then: `jvm` for the Runtime Inspector
+// published as the JVM Inspector. Asked only about the new key, that person
+// loses the menu entry, the routes and the switch on upgrade, with nothing
+// said. A refusal still names the new key, the one to grant from now on.
+func (s *Server) reviewUse(ctx context.Context, cluster string, keys []string) ([]access.Answer, []access.Attributes) {
+	asked := make([]access.Attributes, len(keys))
+	for i, key := range keys {
+		asked[i] = useAttributes(key)
+	}
+	answers := s.gate.ReviewAll(ctx, cluster, asked)
+	var again []access.Attributes
+	var of []int
+	for i, key := range keys {
+		if answers[i].Allowed() || answers[i].Decision == access.Unreviewable {
+			continue
+		}
+		for _, old := range extras.LegacyOf(extras.Canonical(key)) {
+			again = append(again, access.Attributes{Verb: "use", Group: UseGroup, Resource: old})
+			of = append(of, i)
+		}
+	}
+	if len(again) == 0 {
+		return answers, asked
+	}
+	for j, answer := range s.gate.ReviewAll(ctx, cluster, again) {
+		i := of[j]
+		if answer.Allowed() && !answers[i].Allowed() {
+			answers[i], asked[i] = answer, again[j]
+		}
+	}
+	return answers, asked
+}
+
 // lock is why one extension's switch is not the person's to press, or none.
 type lock struct{ locked, reason string }
 
@@ -300,7 +339,7 @@ type lock struct{ locked, reason string }
 func (s *Server) extensionLocks(ctx context.Context, cluster string, states []extras.State) []lock {
 	out := make([]lock, len(states))
 	var asked []int
-	var questions []access.Attributes
+	var questions []string
 	for i, state := range states {
 		switch {
 		case !s.extensionSwitch():
@@ -311,13 +350,14 @@ func (s *Server) extensionLocks(ctx context.Context, cluster string, states []ex
 			out[i] = lock{api.ExtensionNotInValues, extras.NotInValues}
 		case s.inCluster:
 			asked = append(asked, i)
-			questions = append(questions, useAttributes(state.Key))
+			questions = append(questions, state.Key)
 		}
 	}
 	if len(questions) == 0 {
 		return out
 	}
-	for j, answer := range s.gate.ReviewAll(ctx, cluster, questions) {
+	answers, _ := s.reviewUse(ctx, cluster, questions)
+	for j, answer := range answers {
 		if answer.Allowed() {
 			continue
 		}
@@ -362,7 +402,10 @@ func (s *Server) useOrRefuse(ctx context.Context, cluster, key, change string, w
 	if !s.inCluster || !extras.Known(extras.Canonical(key)) {
 		return write()
 	}
-	_, err := s.gate.Administer(ctx, cluster, useAttributes(key), change, func() (bool, error) {
+	// Administered as the question that allows it, so a grant on the name the
+	// extra was published under writes as it reads.
+	_, granted := s.reviewUse(ctx, cluster, []string{key})
+	_, err := s.gate.Administer(ctx, cluster, granted[0], change, func() (bool, error) {
 		err := write()
 		// A choice in effect that could not be written down was applied.
 		return err == nil || errors.Is(err, statefile.ErrNotSaved), err

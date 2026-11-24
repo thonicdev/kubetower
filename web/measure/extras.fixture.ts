@@ -11,14 +11,14 @@ import {
   CERTMANAGER_TAB,
 } from './certmanager.fixture';
 import { DNS_ANSWERS, DNS_FAILED, DNS_FORWARD_ANSWERS, DNS_NO_METRICS_ANSWERS, DNS_REFUSED } from './dns.fixture';
-import { EVENTS_ANSWERS } from './events.fixture';
+import { EVENTS_ANSWERS, EVENTS_LONG_ANSWERS } from './events.fixture';
 import { jvmClassHistogram } from './jvm-histogram.fixture';
 import { jvmMemoryHistory } from './jvm-history.fixture';
 import { jvmThreadDump } from './jvm-threads.fixture';
 import type { Container as JvmContainer, Inspection as JvmInspection, Inventory as JvmInventory, PodAnswer as JvmPod } from '../app/extras/runtime/data';
 import type { Deployment as RedisDeployment, InstanceAnswer, Inventory } from '../app/extras/redis/data';
 import { BADGE_ANSWERS, CASES as BADGE_CASES } from './netinspect-badges.fixture';
-import { NETINSPECT_ANSWERS, NETINSPECT_AT, NETINSPECT_NEW_ANSWERS, NETINSPECT_NEW_AT } from './netinspect.fixture';
+import { NETINSPECT_ANSWERS, NETINSPECT_AT, NETINSPECT_MANY_ANSWERS, NETINSPECT_MANY_FOLDED_ANSWERS, NETINSPECT_NEW_ANSWERS, NETINSPECT_NEW_AT } from './netinspect.fixture';
 import { PENDING_ANSWERS, PENDING_CHECKOUT, PENDING_NOMINATED_ANSWERS, PENDING_NOMINATED_AT, PENDING_POD, PENDING_POD_AT, PENDING_REFUSED, PENDING_WORKLOAD_ANSWERS } from './pending.fixture';
 import { SECURITY_POLICIES, SECURITY_POLICY } from './policies.fixture';
 import {
@@ -1132,6 +1132,8 @@ export const EXTRA_SCENES = {
   'extra-kubeadjust-namespace': { key: 'kubeadjust', answers: KUBEADJUST_ANSWERS, at: 'x/kubeadjust?ns=shop' },
   'extra-events': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER) },
   'extra-events-namespace': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER), at: 'x/events?namespace=shop' },
+  // The same page with names as long as Kubernetes allows (#34).
+  'extra-events-long': { key: 'events', answers: EVENTS_LONG_ANSWERS(EXTRA_CLUSTER) },
   // Not pages: the compact line on a Deployment's Details, and its Events tab, each alone.
   'extra-events-line': {
     key: 'events',
@@ -1157,9 +1159,24 @@ export const EXTRA_SCENES = {
   'extra-redis': { key: 'redis', answers: REDIS_ANSWERS },
   'extra-runtime': { key: 'runtime', answers: JVM_ANSWERS },
   'extra-netinspect': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.cluster },
+  // 120 namespaces: as this version's server sends them, and folded at 40 as before.
+  'extra-netinspect-many': { key: 'netinspect', answers: NETINSPECT_MANY_ANSWERS, at: 'x/netinspect' },
+  'extra-netinspect-many-folded': { key: 'netinspect', answers: NETINSPECT_MANY_FOLDED_ANSWERS, at: 'x/netinspect' },
   'extra-netinspect-namespace': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.namespace },
   'extra-netinspect-service': { key: 'netinspect', answers: NETINSPECT_ANSWERS, at: NETINSPECT_AT.service },
   // Not a page: the Network tab of a pod, alone.
+  // ledger-db-0's line on its Details, whose press opens the enlarged view.
+  'extra-netinspect-tile-ledger': {
+    key: 'netinspect',
+    answers: {
+      ...NETINSPECT_ANSWERS,
+      [`/api/c/${EXTRA_CLUSTER}/nav`]: {
+        state: 'ok',
+        data: { groups: [{ key: 'extra', label: 'Extra', items: [{ text: 'Network Inspector', href: `/c/${EXTRA_CLUSTER}/x/netinspect` }], deferred: false }] },
+      },
+    },
+    shortcut: { kind: 'pods', namespace: 'payments', name: 'ledger-db-0' },
+  },
   'extra-netinspect-tab': { key: 'netinspect', answers: NETINSPECT_ANSWERS, tab: { key: 'pod', kind: 'pods', namespace: 'payments', name: 'ledger-db-0' } },
   'extra-netinspect-calico': { key: 'netinspect', answers: NETINSPECT_NEW_ANSWERS, at: NETINSPECT_NEW_AT.calico },
   'extra-netinspect-admin': { key: 'netinspect', answers: NETINSPECT_NEW_ANSWERS, at: NETINSPECT_NEW_AT.admin },
