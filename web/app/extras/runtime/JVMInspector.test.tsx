@@ -117,7 +117,7 @@ const inventory = (over: Partial<Inventory> = {}): Inventory => ({
   ...over,
 });
 
-describe('the JVM Inspector page', () => {
+describe('the Runtime Inspector page', () => {
   it('lists each Java container with why, its heap, its limit and its risk', async () => {
     const asked = stub(200, inventory());
     mount();

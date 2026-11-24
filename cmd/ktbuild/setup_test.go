@@ -228,3 +228,24 @@ func readScript(t *testing.T) string {
 	}
 	return string(raw)
 }
+
+// TestEveryDialogOfTheSetupHasASilentAnswer. The console updates a per-user
+// install by running the setup with /S (internal/updater, #50): a MessageBox
+// with no /SD would wait for a click nobody can see.
+func TestEveryDialogOfTheSetupHasASilentAnswer(t *testing.T) {
+	script := readScript(t)
+	boxes := 0
+	for i, line := range strings.Split(script, "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, ";") || !strings.Contains(code, "MessageBox ") {
+			continue
+		}
+		boxes++
+		if !strings.Contains(code, "/SD ") {
+			t.Errorf("%s:%d: a MessageBox with no /SD answer blocks a silent install: %s", setupScript, i+1, code)
+		}
+	}
+	if boxes == 0 {
+		t.Fatalf("%s has no MessageBox, so this checked nothing", setupScript)
+	}
+}

@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from 'react-router';
 import { Failure, Pending, btnSecondary, focusRing, useDeclarePageFacts } from '@kubetower/ui';
 
 import { ENGINES, flowsQuery, overviewQuery, problemCode, showIn, type Ask, type Flows, type Overview, type Show } from './data';
+import { foldAskOf } from './fold';
 import { FlowUIButtons } from './FlowUIs';
 import { Lists, type ListKey } from './Lists';
 import { Matrix } from './Matrix';
@@ -183,6 +184,8 @@ function Body({
               flows={flows?.edges ?? []}
               showRules={!hidden.has('rules')}
               showFlows={!hidden.has('observed')}
+              ask={foldAskOf(params)}
+              onAsk={go}
               onNamespace={(ns) => go({ ns, node: '', show: '', offset: '' })}
             />
           ) : (

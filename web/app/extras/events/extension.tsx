@@ -21,6 +21,7 @@ export const PAGE_PATH = `x/${KEY}`;
 
 export const events: Extension = {
   key: KEY,
+  icon: 'pulse',
   about,
   nav: { label: 'Event Intelligence', path: PAGE_PATH },
   routes: [

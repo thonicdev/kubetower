@@ -319,12 +319,15 @@ jobs:
       # against. An output and not a file: it does not travel in the artifact,
       # so nothing that can reach the artifact can change both.
       sums: ${{ steps.sums.outputs.sha256 }}
+      # The same file whole, base64 on one line, for the sign job: it signs
+      # without downloading the archives, and checks this against `sums`.
+      sums_b64: ${{ steps.sums.outputs.b64 }}
     steps:
       # See verify's first step. zip is the one the first run found missing.
       - name: The runner has every tool this job calls
         shell: bash
         env:
-          TOOLS: git zip tar gzip sha256sum find du cut wc cp mkdir rm cat sed
+          TOOLS: git zip tar gzip sha256sum find du cut wc cp mkdir rm cat sed base64
         run: |
           missing=""
           for tool in $TOOLS; do
@@ -509,6 +512,7 @@ jobs:
           sha256sum ./* > checksums.txt
           cat checksums.txt
           echo "sha256=$(sha256sum checksums.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "b64=$(base64 -w0 checksums.txt)" >> "$GITHUB_OUTPUT"
 
       # The draft job takes its files from here, and an artifact that is only in
       # a draft release is one nobody can inspect if the draft is deleted.
@@ -1149,9 +1153,129 @@ jobs:
           # Red, not a warning: what this job could not remove is still on the runner.
           exit $rc
 
+  sign:
+    name: sign checksums.txt
+    needs: [verify, archives, setup, dmg, packages, appimage]
+    # **On a GitHub-hosted runner, never the pool** (#46): the private key is
+    # written to disk for one command, and a self-hosted VM keeps its disk.
+    # The one job of every workflow allowed off the pool, held by
+    # TestEveryJobRunsOnThePool.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      # The final checksums.txt's hash, which the draft's own copy must equal,
+      # and its Ed25519 signature, base64. Outputs, not an artifact: only this
+      # job's steps set them.
+      sums: ${{ steps.sign.outputs.sums }}
+      sig: ${{ steps.sign.outputs.sig }}
+    steps:
+      # See verify's first step.
+      - name: The runner has every tool this job calls
+        shell: bash
+        env:
+          TOOLS: openssl base64 sha256sum cut wc printf mkdir rm cat
+        run: |
+          missing=""
+          for tool in $TOOLS; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::this runner lacks:$missing. The job calls them and installs none."
+            exit 1
+          fi
+          echo "ok   $TOOLS"
+      # The public key the console embeds, at the tag being released: the
+      # signature is checked against it before anything is published.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: internal/releasesig/release-key.pem
+          sparse-checkout-cone-mode: false
+
+      # checksums.txt as the draft will publish it: the archives' file, checked
+      # against that job's own hash, then one line per installer from each
+      # job's own output, in the draft's order. The draft compares its file's
+      # hash with `sums` below, so the two can never publish different bytes.
+      #
+      # The key is the RELEASE_SIGNING_KEY secret (PEM, PKCS#8, Ed25519). It is
+      # written to a 0600 file in a directory of this job's own, used by one
+      # command, removed at once, and the directory again in the clean-up. It
+      # is never echoed; the step does not trace.
+      - name: Sign checksums.txt
+        id: sign
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          KEY_DIR: ${{ runner.temp }}/release-key
+          WORK: ${{ runner.temp }}/release-sums
+          VERSION: ${{ needs.verify.outputs.version }}
+          SUMS: ${{ needs.archives.outputs.sums }}
+          SUMS_B64: ${{ needs.archives.outputs.sums_b64 }}
+          SETUP: ${{ needs.setup.outputs.sha256 }}
+          DMG_ARM64: ${{ needs.dmg.outputs.sha256_arm64 }}
+          DMG_X64: ${{ needs.dmg.outputs.sha256_x64 }}
+          DEB: ${{ needs.packages.outputs.sha256_deb }}
+          RPM: ${{ needs.packages.outputs.sha256_rpm }}
+          APPIMAGE: ${{ needs.appimage.outputs.sha256 }}
+        run: |
+          set -eu
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::the repository secret RELEASE_SIGNING_KEY is not set: nothing is released unsigned, and the console installs nothing unsigned (#46)"
+            exit 1
+          fi
+          for v in SUMS SETUP DMG_ARM64 DMG_X64 DEB RPM APPIMAGE; do
+            if ! [[ "${!v}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::$v is '${!v}', not a SHA-256: the job that should have computed it did not"
+              exit 1
+            fi
+          done
+          umask 077
+          rm -rf "$KEY_DIR" "$WORK"
+          mkdir "$KEY_DIR" "$WORK"
+          printf '%s' "$SUMS_B64" | base64 -d > "$WORK/checksums.txt"
+          echo "$SUMS  $WORK/checksums.txt" | sha256sum --check --strict
+          {
+            echo "$SETUP  ./kubetower-${VERSION}-setup.exe"
+            echo "$DMG_ARM64  ./kubetower-${VERSION}-arm64.dmg"
+            echo "$DMG_X64  ./kubetower-${VERSION}-x64.dmg"
+            echo "$DEB  ./kubetower-${VERSION}-amd64.deb"
+            echo "$RPM  ./kubetower-${VERSION}-x86_64.rpm"
+            echo "$APPIMAGE  ./kubetower-${VERSION}-x86_64.AppImage"
+          } >> "$WORK/checksums.txt"
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$KEY_DIR/key.pem"
+          openssl pkeyutl -sign -rawin -inkey "$KEY_DIR/key.pem" -in "$WORK/checksums.txt" -out "$WORK/checksums.txt.sig"
+          rm -f "$KEY_DIR/key.pem"
+          openssl pkeyutl -verify -rawin -pubin -inkey internal/releasesig/release-key.pem \
+            -in "$WORK/checksums.txt" -sigfile "$WORK/checksums.txt.sig"
+          if [ "$(wc -c < "$WORK/checksums.txt.sig")" -ne 64 ]; then
+            echo "::error::the signature is not 64 bytes: not an Ed25519 signature"
+            exit 1
+          fi
+          echo "sums=$(sha256sum "$WORK/checksums.txt" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sig=$(base64 -w0 "$WORK/checksums.txt.sig")" >> "$GITHUB_OUTPUT"
+          cat "$WORK/checksums.txt"
+
+      # Whatever happened above: no key file and no work directory outlive the job.
+      - name: Remove the key
+        if: always()
+        env:
+          KEY_DIR: ${{ runner.temp }}/release-key
+          WORK: ${{ runner.temp }}/release-sums
+        run: |
+          set +e -u
+          rc=0
+          for d in "$KEY_DIR" "$WORK"; do
+            rm -rf "$d"
+            if [ -e "$d" ]; then echo "FAIL $d is still there"; rc=1; fi
+          done
+          if [ $rc -eq 0 ]; then echo "ok   no key left by this job"; fi
+          exit $rc
+
   draft:
     name: draft the release
-    needs: [verify, archives, setup, dmg, packages, appimage, image]
+    needs: [verify, archives, setup, dmg, packages, appimage, image, sign]
     # On the pool, though it holds `contents: write`: see the header. The token
     # is only in this job's environment and gh keeps its files in a directory
     # of its own under runner.temp, removed by the last step.
@@ -1167,7 +1291,7 @@ jobs:
       - name: The runner has every tool this job calls
         shell: bash
         env:
-          TOOLS: gh sha256sum cat sed sort find diff rm mkdir ls grep printf
+          TOOLS: gh sha256sum cat sed sort find diff rm mkdir ls grep printf base64 wc
         run: |
           missing=""
           for tool in $TOOLS; do
@@ -1268,6 +1392,28 @@ jobs:
             exit 1
           fi
           cat checksums.txt
+
+      # **checksums.txt.sig**: the sign job's signature, attached only to the
+      # very bytes it signed. That job ran on a GitHub-hosted runner, the only
+      # place the private key goes (#46).
+      - name: Attach the signature of checksums.txt
+        working-directory: dist
+        env:
+          SIGNED: ${{ needs.sign.outputs.sums }}
+          SIG: ${{ needs.sign.outputs.sig }}
+        run: |
+          set -eu
+          if ! [[ "$SIGNED" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::the sign job gave no hash of what it signed"
+            exit 1
+          fi
+          echo "$SIGNED  checksums.txt" | sha256sum --check --strict
+          printf '%s' "$SIG" | base64 -d > checksums.txt.sig
+          if [ "$(wc -c < checksums.txt.sig)" -ne 64 ]; then
+            echo "::error::checksums.txt.sig is not 64 bytes"
+            exit 1
+          fi
+          echo "ok   checksums.txt.sig"
 
       # Draft. See the header: publishing is a person's act.
       #

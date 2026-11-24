@@ -51,18 +51,23 @@ function draw(list: readonly ExtensionInfo[] = items) {
 const tile = (key: string): HTMLElement => document.querySelector<HTMLElement>(`[data-extra="${key}"]`) as HTMLElement;
 
 const edit = (key: string): HTMLElement => tile(key).querySelector('[data-extra-edit]') as HTMLElement;
+const about = (key: string): HTMLElement => tile(key).querySelector('[data-extra-about]') as HTMLElement;
 const modal = (): HTMLElement => document.querySelector('[role="dialog"]') as HTMLElement;
 
-describe('the tiles never grow', () => {
-  it('draws the name, the state, the switch and an Edit button, and nothing else', () => {
+describe('the cards never grow', () => {
+  it('draws the glyph, the name, the state badge, the switch, Edit and About, and nothing else', () => {
     draw();
     const cron = tile('kubecron');
     expect(cron.textContent).toContain('KubeCron');
+    expect(cron.querySelector('[data-extra-icon]')?.getAttribute('data-extra-icon')).toBe('extra');
+    expect(cron.querySelector('[data-extra-state]')?.textContent).toBe('On');
+    expect(tile('a').querySelector('[data-extra-state]')?.textContent).toBe('Off');
     expect(cron.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true');
     expect(edit('kubecron').textContent).toBe('Edit');
     expect(edit('kubecron').querySelector('svg')).not.toBeNull();
+    expect(about('kubecron').textContent).toBe('About');
+    expect(about('kubecron').parentElement).toBe(edit('kubecron').parentElement);
     expect(cron.querySelector('[data-extra-setting]')).toBeNull();
-    expect(cron.querySelector('[data-extra-about]')).toBeNull();
     expect(cron.querySelector('[aria-expanded]')).toBeNull();
   });
 
@@ -73,14 +78,31 @@ describe('the tiles never grow', () => {
     expect(modal().querySelector('h2')?.textContent).toBe('KubeCron');
     expect(modal().querySelector('[data-extra-setting="checks"]')).not.toBeNull();
     expect([...document.querySelectorAll('[data-extra]')].map((one) => one.outerHTML)).toEqual(before);
-    expect(document.querySelector('[data-tile-grid]')?.className).toContain('items-start');
     expect(document.querySelectorAll('[data-extra-modal]')).toHaveLength(1);
+    // Edit holds no About: About is on the card.
+    expect(modal().querySelector('[data-extra-about]')).toBeNull();
   });
 
-  it('opens the same window from a click on the tile', () => {
+  it('opens About from the card, with Close as its only button', () => {
     draw();
-    fireEvent.click(tile('c').querySelector('[data-tile-open]') as Element);
+    fireEvent.click(about('c'));
     expect(modal().querySelector('h2')?.textContent).toBe('Alpha');
+    expect(modal().querySelector('[data-extra-preview="c"]')).not.toBeNull();
+    expect([...modal().querySelectorAll('button')].map((one) => one.textContent)).toEqual(['Close']);
+  });
+
+  it("draws the extra's own glyph where it names one", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ShellProvider extensions={[{ key: 'kubecron', icon: 'clock', nav: { label: 'KubeCron', path: 'x/kubecron' }, routes: [] }]}>
+            <ExtraTab cluster="prod" clusters={[]} items={items} />
+          </ShellProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(tile('kubecron').querySelector('[data-extra-icon] use')?.getAttribute('href')).toBe('#i-clock');
+    expect(tile('a').querySelector('[data-extra-icon] use')?.getAttribute('href')).toBe('#i-extra');
   });
 
   it('turns an extra on from the tile, without opening anything', async () => {
@@ -257,16 +279,16 @@ describe("an extra's tool badges", () => {
       </QueryClientProvider>,
     );
 
-  it('draws them on the tile and in its window', () => {
+  it('draws them on the card and in its window', () => {
     mount(withBadges(['Cilium', 'Calico']));
-    expect(tile('kubecron').querySelector('[data-extra-about-badges]')?.textContent).toBe('CiliumCalico');
+    expect([...tile('kubecron').querySelectorAll('[data-extra-tool]')].map((one) => one.textContent)).toEqual(['Cilium', 'Calico']);
     fireEvent.click(edit('kubecron'));
     expect(modal().querySelector('[data-extra-about-badges]')?.textContent).toBe('CiliumCalico');
   });
 
   it('draws nothing without them', () => {
     mount(withBadges());
-    expect(document.querySelector('[data-extra-about-badges]')).toBeNull();
+    expect(document.querySelector('[data-extra-about-badges], [data-extra-tool]')).toBeNull();
     fireEvent.click(edit('kubecron'));
     expect(document.querySelector('[data-extra-about-badges]')).toBeNull();
   });
@@ -372,7 +394,7 @@ describe('the sentence of a suggested extra', () => {
       );
     });
 
-  it('is the banner sentence, under the tile of an off extra only', async () => {
+  it('is a badge on the card of an off extra only, the banner sentence in its tooltip', async () => {
     answer(200, {
       state: 'ok',
       items: [
@@ -382,10 +404,38 @@ describe('the sentence of a suggested extra', () => {
     });
     draw();
     await waitFor(() => {
-      expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('2 Redis Services in 1 namespace on this cluster.');
+      expect(tile('b').querySelector('[data-extra-suggested]')?.getAttribute('data-extra-suggested')).toBe(
+        '2 Redis Services in 1 namespace on this cluster.',
+      );
     });
+    expect(tile('b').querySelector('[data-extra-suggested]')?.getAttribute('title')).toBe(
+      '2 Redis Services in 1 namespace on this cluster.',
+    );
+    expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('Suggested');
     expect(tile('kubecron').querySelector('[data-extra-suggested]')).toBeNull();
     expect(tile('c').querySelector('[data-extra-suggested]')).toBeNull();
+  });
+
+  it('puts a suggested card first, with an accent the others do not carry (#62)', async () => {
+    answer(200, {
+      state: 'ok',
+      items: [
+        { key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' },
+        // On already: never suggested, never accented.
+        { key: 'kubecron', label: 'KubeCron', evidence: '3 CronJobs' },
+      ],
+    });
+    draw();
+    await waitFor(() => {
+      expect(tile('b').hasAttribute('data-extra-suggested-card')).toBe(true);
+    });
+    const order = [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+    expect(order).toEqual(['b', 'c', 'kubecron', 'a']);
+    expect(tile('b').className).toContain('border-accent');
+    for (const key of ['a', 'c', 'kubecron']) {
+      expect(tile(key).hasAttribute('data-extra-suggested-card')).toBe(false);
+      expect(tile(key).className).not.toContain('border-accent');
+    }
   });
 
   it('is not drawn when the suggestions could not be read', async () => {
@@ -394,5 +444,57 @@ describe('the sentence of a suggested extra', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(document.querySelector('[data-extra-suggested]')).toBeNull();
     expect(document.body.textContent).not.toContain('boom');
+  });
+});
+
+describe('the order of the cards while the page is open (#62)', () => {
+  const answer = () =>
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
+      const body = path.endsWith('/suggestions')
+        ? { state: 'ok', items: [{ key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' }] }
+        : {};
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+  const tree = (list: readonly ExtensionInfo[], cluster = 'prod', client = new QueryClient()) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <KeyboardStack>
+          <ExtraTab cluster={cluster} clusters={[]} items={list} />
+        </KeyboardStack>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const order = () => [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+
+  it('holds: turning the suggested extra on does not move a card under the pointer', async () => {
+    answer();
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+    });
+    // The listing read again after the switch: b is on, so no longer suggested.
+    const after = items.map((one) => (one.key === 'b' ? { ...one, enabled: true } : one));
+    view.rerender(tree(after, 'prod', client));
+    await waitFor(() => {
+      expect(tile('b').getAttribute('data-on')).toBe('true');
+    });
+    expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+  });
+
+  it('is taken again for another cluster', async () => {
+    answer();
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+    });
+    // On staging the same extra is on, so nothing is suggested.
+    const staging = items.map((one) => (one.key === 'b' ? { ...one, enabled: true } : one));
+    view.rerender(tree(staging, 'staging', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['c', 'b', 'kubecron', 'a']);
+    });
   });
 });

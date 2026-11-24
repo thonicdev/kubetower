@@ -17,6 +17,7 @@ import { securityCells, securityProbe, securityShortcut } from './panel';
  */
 export const security: Extension = {
   key: KEY,
+  icon: 'shield',
   about,
   nav: { label: 'Security Center', path: PAGE_PATH },
   routes: [

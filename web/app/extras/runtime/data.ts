@@ -143,9 +143,9 @@ export function inventoryPath(cluster: string, ns: string): string {
  * every refusal the route writes is JSON with a code.
  */
 const GATE_REFUSED =
-  'The JVM Inspector is not enabled for this cluster in this console. Turn it on in Settings > Extra; ' +
+  'The Runtime Inspector is not enabled for this cluster in this console. Turn it on in Settings > Extra; ' +
   "where the console runs inside a cluster, the chart's values must name it and you need the verb use on " +
-  'extras.kubetower.dev/jvm.';
+  'extras.kubetower.dev/runtime (a grant on extras.kubetower.dev/jvm, its name before 0.2.0, is accepted too).';
 
 interface Problem {
   message?: unknown;
@@ -170,7 +170,7 @@ export async function getInventory(cluster: string, ns: string, signal?: AbortSi
     throw said(error);
   }
   if (!Array.isArray(body.pods) || typeof body.complete !== 'boolean' || typeof body.read !== 'number') {
-    throw new EnvelopeError('The JVM Inspector answered without its pods, its count and whether it is complete', body);
+    throw new EnvelopeError('The Runtime Inspector answered without its pods, its count and whether it is complete', body);
   }
   return body;
 }
@@ -357,7 +357,7 @@ export async function getPod(cluster: string, namespace: string, name: string, s
     throw said(error);
   }
   if (!Array.isArray(body.containers) || typeof body.java !== 'boolean') {
-    throw new EnvelopeError('The JVM Inspector answered without the pod’s containers', body);
+    throw new EnvelopeError('The Runtime Inspector answered without the pod’s containers', body);
   }
   return body;
 }
@@ -645,7 +645,7 @@ export async function inspect(
     throw problemOf(error);
   }
   if (body.state !== 'inspected' && body.state !== 'choose') {
-    throw new EnvelopeError('The JVM Inspector answered without saying what it ran', body);
+    throw new EnvelopeError('The Runtime Inspector answered without saying what it ran', body);
   }
   return body;
 }
@@ -669,7 +669,7 @@ export async function reveal(
   } catch (error) {
     throw problemOf(error);
   }
-  if (typeof body.value !== 'string') throw new EnvelopeError('The JVM Inspector answered without the value', body);
+  if (typeof body.value !== 'string') throw new EnvelopeError('The Runtime Inspector answered without the value', body);
   return body.value;
 }
 
@@ -767,7 +767,7 @@ export async function threadDump(
     throw problemOf(error);
   }
   if (body.state !== 'dumped' && body.state !== 'choose') {
-    throw new EnvelopeError('The JVM Inspector answered without saying what it ran', body);
+    throw new EnvelopeError('The Runtime Inspector answered without saying what it ran', body);
   }
   return body;
 }
@@ -889,7 +889,7 @@ export async function getHistory(cluster: string, namespace: string, name: strin
     throw problemOf(error);
   }
   if (!HISTORY_STATES.includes(body.state) || !Array.isArray(body.series)) {
-    throw new EnvelopeError('The JVM Inspector answered without saying what Prometheus held', body);
+    throw new EnvelopeError('The Runtime Inspector answered without saying what Prometheus held', body);
   }
   return body;
 }
@@ -954,7 +954,7 @@ export async function classHistogram(
     throw problemOf(error);
   }
   if (body.state !== 'histogram' && body.state !== 'choose') {
-    throw new EnvelopeError('The JVM Inspector answered without saying what it ran', body);
+    throw new EnvelopeError('The Runtime Inspector answered without saying what it ran', body);
   }
   return body;
 }
