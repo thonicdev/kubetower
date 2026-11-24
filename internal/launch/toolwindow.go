@@ -77,7 +77,8 @@ func toolWindowPath(path string) error {
 		return nil
 	case len(path) > maxToolWindowPath:
 		return fmt.Errorf("%w: the path is longer than %d bytes", api.ErrInvalid, maxToolWindowPath)
-	case !strings.HasPrefix(path, "/"), strings.HasPrefix(path, "//"), strings.ContainsAny(path, "\\#"):
+	// "//host" is refused below, where url.Parse reads it as a host.
+	case !strings.HasPrefix(path, "/"), strings.ContainsAny(path, "\\#"):
 		return fmt.Errorf("%w: the path must be an absolute path on the tunnel", api.ErrInvalid)
 	}
 	for _, r := range path {
@@ -276,10 +277,19 @@ func (t *toolWindows) forget(n int) string {
 	if !entry.closeTunnel {
 		return ""
 	}
-	for _, other := range t.open {
-		if other.forward == entry.forward {
-			return ""
+	// Another window still shows the tunnel: it takes the tunnel over, so
+	// the last window on it closes it (the lowest id, for a stable answer).
+	heir := 0
+	for m, other := range t.open {
+		if other.forward == entry.forward && (heir == 0 || m < heir) {
+			heir = m
 		}
+	}
+	if heir != 0 {
+		next := t.open[heir]
+		next.closeTunnel = true
+		t.open[heir] = next
+		return ""
 	}
 	return entry.forward
 }
@@ -382,3 +392,76 @@ const (
 	toolWindowWidth  = 1280
 	toolWindowHeight = 820
 )
+
+// toolHandOuts is the tool windows' budget for addresses handed to the
+// default browser: a tool's page is not this console's, and one that loops
+// over window.open or location must not open a browser tab per attempt.
+var toolHandOuts = &handOutBudget{max: 3, per: 10 * time.Second}
+
+// handOutBudget allows an address out of a tool window when it is http or
+// https (never mailto or another application's scheme), the operator asked
+// for it (a click, not a script), and fewer than max went out in the last
+// per.
+type handOutBudget struct {
+	max int
+	per time.Duration
+
+	mu   sync.Mutex
+	sent []time.Time
+}
+
+// allow says whether raw may go to the browser now, and when not, why.
+func (b *handOutBudget) allow(raw string, userInitiated bool, now time.Time) (bool, string) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false, "only an http or https address leaves a tool window"
+	}
+	if !userInitiated {
+		return false, "the tool's page asked for " + loggableURL(raw) + " without a click"
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	kept := b.sent[:0]
+	for _, at := range b.sent {
+		if now.Sub(at) < b.per {
+			kept = append(kept, at)
+		}
+	}
+	b.sent = kept
+	if len(b.sent) >= b.max {
+		return false, fmt.Sprintf("%d addresses already left the tool windows in %s", b.max, b.per)
+	}
+	b.sent = append(b.sent, now)
+	return true, ""
+}
+
+// embedOutcome is what to do once go-webview2's Embed has returned on the
+// Windows tool window.
+//
+// Embed builds the engine inside a GetMessage loop of its own, on the
+// console's thread, until the controller exists. That loop hands every
+// message to DispatchMessage, which drops the WM_APP thread message the
+// console window's Dispatch posts, and it stops on WM_QUIT, the console
+// window closing, after which go-webview2 calls Init on a web view that does
+// not exist and panics. So, whatever happened, Dispatch is woken again
+// (wakeDispatch); and when the loop stopped with no controller, it stopped on
+// WM_QUIT, which is posted again (repostQuit) so the console's own loop ends.
+type embedOutcome struct {
+	usable       bool
+	repostQuit   bool
+	wakeDispatch bool
+}
+
+// afterEmbed decides from what Embed did: whether it returned (true) or
+// failed before its loop (false), whether it panicked, and whether the
+// controller exists.
+func afterEmbed(returned, panicked, controller bool) embedOutcome {
+	switch {
+	case controller && returned && !panicked:
+		return embedOutcome{usable: true, wakeDispatch: true}
+	case !controller && (returned || panicked):
+		return embedOutcome{repostQuit: true, wakeDispatch: true}
+	default:
+		return embedOutcome{wakeDispatch: true}
+	}
+}

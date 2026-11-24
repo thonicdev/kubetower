@@ -1180,8 +1180,6 @@ func (i apiInstaller) OpenUpdateFolder() (api.UpdateInstall, error) {
 	return updateInstallOf(i.s, status), nil
 }
 
-// updateInstaller is api.Deps.Installer: nil, as an interface, where nothing
-// installs, so the routes are not registered.
 // toolWindows is SetupInfo.ToolWindows, nil under the server profile and
 // where there are no forwards: a window shows a forward of this process.
 func (s *Server) toolWindows() api.ToolWindows {
@@ -1191,6 +1189,8 @@ func (s *Server) toolWindows() api.ToolWindows {
 	return s.setup.ToolWindows
 }
 
+// updateInstaller is api.Deps.Installer: nil, as an interface, where nothing
+// installs, so the routes are not registered.
 func (s *Server) updateInstaller() api.UpdateInstaller {
 	if s.setup.Installer == nil {
 		return nil

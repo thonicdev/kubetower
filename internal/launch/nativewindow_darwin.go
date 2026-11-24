@@ -828,7 +828,7 @@ func registerClasses() {
 			{
 				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
 				Fn: func(_ objc.ID, _ objc.SEL, _, _, action, _ objc.ID) objc.ID {
-					openOutside(actionURL(action))
+					handOutOfToolWindow(action)
 					return 0
 				},
 			},
@@ -997,9 +997,29 @@ func decideToolNavigation(webView, action objc.ID) uintptr {
 		return policyAllow
 	}
 	if handOut {
-		openOutside(target)
+		handOutOfToolWindow(action)
 	}
 	return policyCancel
+}
+
+// WKNavigationType: a link clicked and a form sent are the operator's; a
+// script's window.open or location is WKNavigationTypeOther (-1).
+const (
+	navigationTypeLinkActivated = 0
+	navigationTypeFormSubmitted = 1
+)
+
+// handOutOfToolWindow opens the action's address in the default browser if
+// toolHandOuts allows it, and logs why not otherwise.
+func handOutOfToolWindow(action objc.ID) {
+	target := actionURL(action)
+	kind := objc.Send[int](action, hot.navigationType)
+	user := kind == navigationTypeLinkActivated || kind == navigationTypeFormSubmitted
+	if ok, why := toolHandOuts.allow(target, user, time.Now()); !ok {
+		log.Printf("[kubetower] a tool window's link was not opened in the browser: %s", why)
+		return
+	}
+	openOutside(target)
 }
 
 // closeAllToolWindows closes every tool window: the console's window has
@@ -1580,7 +1600,7 @@ var hot struct {
 	setWebsiteDataStore, initWithFrameConfiguration       objc.SEL
 	setUIDelegate, setNavigationDelegate, initContentRect objc.SEL
 	setContentView, setAppearance, center, loadRequest    objc.SEL
-	requestWithURL, close                                 objc.SEL
+	requestWithURL, close, navigationType                 objc.SEL
 	wkWebViewConfiguration, wkWebsiteDataStore, wkWebView objc.Class
 	nsWindow, nsURLRequest                                objc.Class
 	darkAppearance                                        objc.ID // NSAppearanceNameDarkAqua
@@ -1716,6 +1736,7 @@ func warmHotPath() {
 	hot.loadRequest = sel("loadRequest:")
 	hot.requestWithURL = sel("requestWithURL:")
 	hot.close = sel("close")
+	hot.navigationType = sel("navigationType")
 	hot.wkWebViewConfiguration = objc.GetClass("WKWebViewConfiguration")
 	hot.wkWebsiteDataStore = objc.GetClass("WKWebsiteDataStore")
 	hot.wkWebView = objc.GetClass("WKWebView")

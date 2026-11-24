@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/jchv/go-webview2"
@@ -79,7 +80,12 @@ var (
 	procDestroyWindow    = user32.NewProc("DestroyWindow")
 	procLoadImageW       = user32.NewProc("LoadImageW")
 	procUpdateWindow     = user32.NewProc("UpdateWindow")
+	procPostQuitMessage  = user32.NewProc("PostQuitMessage")
+	procPostThreadMsg    = user32.NewProc("PostThreadMessageW")
 )
+
+// wmApp is the thread message go-webview2's Dispatch posts and its Run reads.
+const wmApp = 0x8000
 
 const (
 	wmDestroy          = 0x0002
@@ -176,7 +182,7 @@ func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) {
 	chromium.DataPath = filepath.Join(statefile.Dir(), "toolwindows-webview2")
 	// No message callback: web messages are turned off below, and the engine
 	// drops a message that has no callback.
-	if !chromium.Embed(hwnd) {
+	if !embedToolWindow(chromium, hwnd) {
 		log.Printf("[kubetower] the tool window for %s was not drawn: WebView2 could not be embedded", loggableURL(target.URL))
 		procDestroyWindow.Call(hwnd)
 		return
@@ -195,6 +201,32 @@ func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) {
 	chromium.Resize()
 	chromium.Navigate(target.URL)
 	log.Printf("[kubetower] opened %s in a tool window, %q", loggableURL(target.URL), target.Title)
+}
+
+// embedToolWindow runs go-webview2's Embed and puts back what its own message
+// loop took from the console's (afterEmbed): the Dispatch wake-up, always,
+// and WM_QUIT when the loop stopped on it. It reports whether the engine is
+// usable.
+func embedToolWindow(chromium *edge.Chromium, hwnd uintptr) bool {
+	returned, panicked := false, false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+				log.Printf("[kubetower] a tool window's engine failed while it was built (%v)", r)
+			}
+		}()
+		returned = chromium.Embed(hwnd)
+	}()
+	outcome := afterEmbed(returned, panicked, chromium.GetController() != nil)
+	if outcome.repostQuit {
+		log.Printf("[kubetower] the console's window closed while a tool window was built; KubeTower stops")
+		procPostQuitMessage.Call(0)
+	}
+	if outcome.wakeDispatch {
+		procPostThreadMsg.Call(uintptr(windows.GetCurrentThreadId()), wmApp, 0, 0)
+	}
+	return outcome.usable
 }
 
 // holdTheToolWindow gives the tool's web view its policy: settings, web
@@ -241,6 +273,21 @@ func closeController(chromium *edge.Chromium) {
 	ctl.vtbl.close.Call(uintptr(unsafe.Pointer(ctl)))
 }
 
+// releaseToolWindow closes the engine and releases the references this
+// process holds: the web view this file read (get_CoreWebView2 adds one), and
+// the AddRef go-webview2 makes on the web view, the controller and the
+// environment once each is created. go-webview2's own out-parameter
+// reference on the web view is its, never released here: one too many would
+// free an object the engine still uses, one too few only leaks it.
+func releaseToolWindow(w *toolWindow) {
+	closeController(w.chromium)
+	release(unsafe.Pointer(w.web))
+	release(unsafe.Pointer(w.web))
+	release(unsafe.Pointer(w.chromium.GetController()))
+	release(unsafe.Pointer(w.chromium.Environment()))
+	w.web = nil
+}
+
 // toolWindowProc is the class's window procedure. A message for a window not
 // (or no longer) in the map, including those sent while it is being created,
 // goes to DefWindowProc.
@@ -258,7 +305,7 @@ func toolWindowProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		case wmDestroy:
 			delete(toolWindowsOpen, hwnd)
 			delete(toolWindowWebs, uintptr(unsafe.Pointer(w.web)))
-			closeController(w.chromium)
+			releaseToolWindow(w)
 			w.tools.closed(w.id)
 			return 0
 		}
@@ -310,9 +357,28 @@ func onToolNavigationStarting(_ *windowEvent, sender uintptr, args *navigationSt
 		log.Printf("[kubetower] a tool window's navigation to %s could not be canceled (%s)", loggableURL(target), hresult(r))
 	}
 	if handOut {
-		openOutside(target)
+		handOutOfToolWindow(target, comBool(args.vtbl.getIsUserInitiated, unsafe.Pointer(args)))
 	}
 	return 0
+}
+
+// handOutOfToolWindow opens target in the default browser if toolHandOuts
+// allows it, and logs why not otherwise.
+func handOutOfToolWindow(target string, userInitiated bool) {
+	if ok, why := toolHandOuts.allow(target, userInitiated, time.Now()); !ok {
+		log.Printf("[kubetower] a tool window's link was not opened in the browser: %s", why)
+		return
+	}
+	openOutside(target)
+}
+
+// comBool calls a COM getter of a BOOL, false when it fails.
+func comBool(getter edge.ComProc, this unsafe.Pointer) bool {
+	var value int32
+	if r, _, _ := getter.Call(uintptr(this), uintptr(unsafe.Pointer(&value))); failed(r) {
+		return false
+	}
+	return value != 0
 }
 
 // onToolNewWindowRequested: no second window from a tool's page; an http or
@@ -322,7 +388,7 @@ func onToolNewWindowRequested(_ *windowEvent, _ uintptr, args *newWindowRequeste
 		log.Printf("[kubetower] a tool window's request for a new window could not be refused (%s)", hresult(r))
 	}
 	if target, err := comString(args.vtbl.getURI, unsafe.Pointer(args)); err == nil {
-		openOutside(target)
+		handOutOfToolWindow(target, comBool(args.vtbl.getIsUserInitiated, unsafe.Pointer(args)))
 	}
 	return 0
 }

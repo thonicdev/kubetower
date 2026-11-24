@@ -3,8 +3,10 @@ package launch
 import (
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thonicdev/kubetower/internal/api"
 	"github.com/thonicdev/kubetower/internal/forward"
@@ -121,7 +123,10 @@ func TestAToolWindowPathStaysOnTheTunnel(t *testing.T) {
 			t.Errorf("path %q refused: %v", ok, err)
 		}
 	}
-	long := "/" + string(make([]byte, maxToolWindowPath))
+	long := "/" + strings.Repeat("a", maxToolWindowPath)
+	if err := toolWindowPath(long[:maxToolWindowPath]); err != nil {
+		t.Errorf("a path of exactly %d bytes refused: %v", maxToolWindowPath, err)
+	}
 	for _, bad := range []string{"flows", "//evil.example.com/", "/\\evil", "/a b", "/a\tb", "/a\nb",
 		"http://evil.example.com/", "/#frag", "/\x7f", long} {
 		if err := toolWindowPath(bad); !errors.Is(err, api.ErrInvalid) {
@@ -238,24 +243,86 @@ func TestClosingAToolWindowClosesTheTunnelOpenedForIt(t *testing.T) {
 	if len(tunnels.closed) != 0 {
 		t.Fatalf("closed %v: f2 was not opened for its window", tunnels.closed)
 	}
-	// Window 2 did not open f1, so closing the last window on it keeps it.
+	// Window 2 took f1 over when window 1 closed, so the last window on it
+	// closes it.
 	tw.closed(2)
-	if len(tunnels.closed) != 0 {
-		t.Fatalf("closed %v: the last window on f1 did not open it", tunnels.closed)
+	if !slices.Equal(tunnels.closed, []string{"f1"}) {
+		t.Fatalf("closed %v; want f1, handed to window 2 when window 1 closed", tunnels.closed)
 	}
 
-	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil {
-		t.Fatal(err)
-	}
-	tw.closed(4)
-	if !slices.Equal(tunnels.closed, []string{"f1"}) {
-		t.Fatalf("closed %v; want f1, opened for the window just closed", tunnels.closed)
-	}
 	// A second report of the same window, or of one never opened, does nothing.
-	tw.closed(4)
+	tw.closed(2)
 	tw.closed(99)
 	if len(tunnels.closed) != 1 {
 		t.Fatalf("closed %v after repeated reports", tunnels.closed)
+	}
+}
+
+func TestATunnelIsHandedToTheLowestRemainingWindow(t *testing.T) {
+	tunnels := &fakeTunnels{live: []forward.Tunnel{hubbleTunnel()}}
+	tw := newToolWindows(tunnels, nil)
+	tw.attach(&fakeHost{})
+	for _, owned := range []bool{true, false, false} {
+		if err := tw.OpenToolWindow("f1", "hubble", "/", owned); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tw.closed(1)
+	if !tw.open[2].closeTunnel || tw.open[3].closeTunnel {
+		t.Fatalf("after window 1 closed: window 2 owns %t, window 3 owns %t; want 2 only", tw.open[2].closeTunnel, tw.open[3].closeTunnel)
+	}
+	tw.closed(3)
+	tw.closed(2)
+	if !slices.Equal(tunnels.closed, []string{"f1"}) {
+		t.Fatalf("closed %v; want f1 once the last window closed", tunnels.closed)
+	}
+}
+
+func TestOnlyAClickedHttpLinkLeavesAToolWindowAndNotTooOften(t *testing.T) {
+	b := &handOutBudget{max: 3, per: 10 * time.Second}
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	for _, refused := range []struct {
+		raw  string
+		user bool
+	}{
+		{"mailto:a@example.com", true},
+		{"ms-settings:privacy", true},
+		{"file:///etc/passwd", true},
+		{"javascript:alert(1)", true},
+		{"https://docs.cilium.io/", false},
+	} {
+		if ok, why := b.allow(refused.raw, refused.user, now); ok || why == "" {
+			t.Errorf("%q (clicked %t) allowed; want refused with a reason", refused.raw, refused.user)
+		}
+	}
+	for i := range 3 {
+		if ok, why := b.allow("https://docs.cilium.io/", true, now.Add(time.Duration(i)*time.Second)); !ok {
+			t.Fatalf("click %d refused: %s", i+1, why)
+		}
+	}
+	if ok, _ := b.allow("http://example.com/", true, now.Add(3*time.Second)); ok {
+		t.Fatal("a fourth address within 10 s was allowed")
+	}
+	if ok, why := b.allow("http://example.com/", true, now.Add(10*time.Second)); !ok {
+		t.Fatalf("the first address left 10 s ago, yet the next is refused: %s", why)
+	}
+}
+
+func TestEmbedGivesBackWhatItsLoopTook(t *testing.T) {
+	for _, c := range []struct {
+		name                           string
+		returned, panicked, controller bool
+		want                           embedOutcome
+	}{
+		{"built", true, false, true, embedOutcome{usable: true, wakeDispatch: true}},
+		{"stopped on WM_QUIT, Init panicked", false, true, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		{"stopped with no controller", true, false, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		{"refused before its loop", false, false, false, embedOutcome{wakeDispatch: true}},
+		{"panicked once built", false, true, true, embedOutcome{wakeDispatch: true}},
+	} {
+		if got := afterEmbed(c.returned, c.panicked, c.controller); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
 	}
 }
 

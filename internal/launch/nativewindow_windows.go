@@ -438,7 +438,8 @@ type navigationStartingArgs struct{ vtbl *navigationStartingArgsVtbl }
 type navigationStartingArgsVtbl struct {
 	queryInterface, addRef, release edge.ComProc
 	getURI                          edge.ComProc
-	_                               [4]edge.ComProc // get_IsUserInitiated, get_IsRedirected, get_RequestHeaders, get_Cancel
+	getIsUserInitiated              edge.ComProc
+	_                               [3]edge.ComProc // get_IsRedirected, get_RequestHeaders, get_Cancel
 	putCancel                       edge.ComProc
 }
 
@@ -449,6 +450,8 @@ type newWindowRequestedArgsVtbl struct {
 	getURI                          edge.ComProc
 	_                               [2]edge.ComProc // put_NewWindow, get_NewWindow
 	putHandled                      edge.ComProc
+	_                               [1]edge.ComProc // get_Handled
+	getIsUserInitiated              edge.ComProc
 }
 
 // windowEvent is an event handler handed to WebView2: a COM object with IUnknown
