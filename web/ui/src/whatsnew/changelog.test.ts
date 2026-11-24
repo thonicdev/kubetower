@@ -76,6 +76,10 @@ describe('the changelog', () => {
 
   it("reads this repository's own CHANGELOG.md", () => {
     expect(RELEASES.some((one) => one.version === '0.1.0')).toBe(true);
+    // 0.1.2, released: its Added entries by their bold lead, five at most.
+    const released = RELEASES.find((one) => one.version === '0.1.2');
+    expect(released?.highlights.slice(0, 2)).toEqual(['Releases are signed', 'The desktop updates itself']);
+    expect(released?.highlights).toHaveLength(MAX_HIGHLIGHTS);
     for (const one of RELEASES) expect(one.highlights.length).toBeLessThanOrEqual(MAX_HIGHLIGHTS);
   });
 });
