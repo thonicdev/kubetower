@@ -9,36 +9,66 @@ import (
 
 // An ExternalName Service is a DNS alias: it has no endpoints and no pod, so
 // a pod port-forward cannot reach what it names. One whose target is a
-// managed Redis (ElastiCache, MemoryDB, Azure Cache, a Redis Cloud host) is
+// managed Redis (ElastiCache, MemoryDB, Azure Cache, Redis Cloud, Aiven) is
 // still a Redis the cluster's workloads use, so the inventory lists it, as
 // outside the cluster, with its host and port. It is never an instance: the
 // instance routes look among discovery's Instances only, so nothing dials it.
 
-// managedHost reports whether a host is an AWS ElastiCache or MemoryDB
-// endpoint, which names neither engine: `….cache.amazonaws.com`, or a
-// `memorydb` label under `amazonaws.com`.
+// managedSuffixes are the domains of a managed Redis whose hosts need not
+// name the engine: Azure Cache for Redis Enterprise and Redis Cloud (its
+// private-link hosts included, `pl-….redislabs.com`).
+var managedSuffixes = []string{".redisenterprise.cache.azure.net", ".redislabs.com"}
+
+// aivenSuffix is Aiven's domain, which also serves its PostgreSQL, Kafka and
+// every other service: a host there counts only with a port that looks like
+// a Redis's, unless its own words or the Service's name say the engine.
+const aivenSuffix = ".aivencloud.com"
+
+// awsSuffixes are AWS's domains, China's included.
+var awsSuffixes = []string{".amazonaws.com", ".amazonaws.com.cn"}
+
+// managedHost reports whether a host is a managed Redis's that names neither
+// engine: one of managedSuffixes, or an AWS ElastiCache or MemoryDB endpoint
+// (`….cache.amazonaws.com`, or a `memorydb` label, under `amazonaws.com` or
+// `amazonaws.com.cn`).
 func managedHost(host string) bool {
-	if !strings.HasSuffix(host, ".amazonaws.com") {
-		return false
-	}
-	if strings.HasSuffix(host, ".cache.amazonaws.com") {
-		return true
-	}
-	for _, label := range strings.Split(host, ".") {
-		if label == "memorydb" {
+	for _, suffix := range managedSuffixes {
+		if strings.HasSuffix(host, suffix) {
 			return true
+		}
+	}
+	for _, suffix := range awsSuffixes {
+		rest, ok := strings.CutSuffix(host, suffix)
+		if !ok {
+			continue
+		}
+		if strings.HasSuffix(rest, ".cache") {
+			return true
+		}
+		// A cluster's labels before it: `memorydb.amazonaws.com` alone is
+		// AWS's, not an endpoint.
+		for i, label := range strings.Split(rest, ".") {
+			if label == "memorydb" && i > 0 {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// glued are the role words a name may glue to the engine's (`redismaster`,
+// `valkeyprimary`).
+var glued = map[string]bool{"master": true, "main": true, "primary": true, "replica": true, "cache": true}
+
 // engineToken is the engine a host or a name says as a token of its own,
 // between `.`, `-` and `_` (`demo.redis.cache.windows.net`, `redis-ha`,
-// `valkey7`), never inside another word (`rediscover`, `credis`, `predis`).
+// `valkey7`), or glued to a role word (`redismain`), never inside another
+// word (`rediscover`, `credis`, `predis`).
 func engineToken(s string) string {
 	for _, token := range strings.FieldsFunc(s, func(r rune) bool { return r == '.' || r == '-' || r == '_' }) {
 		for _, engine := range engines {
-			if rest, ok := strings.CutPrefix(token, engine); ok && strings.Trim(rest, "0123456789") == "" {
+			rest, ok := strings.CutPrefix(token, engine)
+			if ok && (strings.Trim(rest, "0123456789") == "" || glued[rest]) {
 				return engine
 			}
 		}
@@ -69,7 +99,10 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 	}
 	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(service.Spec.ExternalName)), ".")
 	name := strings.ToLower(service.Name)
-	if host == "" || isTool(name) || isTool(strings.SplitN(host, ".", 2)[0]) {
+	if host == "" || isTool(name) {
+		return externalDoor{}, false
+	}
+	if hostTool(host) {
 		return externalDoor{}, false
 	}
 	var ports []corev1.ServicePort
@@ -94,6 +127,10 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 		if len(ports) == 1 {
 			out.Port, out.PortName = int(ports[0].Port), ports[0].Name
 		}
+	case strings.HasSuffix(host, aivenSuffix) && redisPortIn(ports) != nil:
+		port := redisPortIn(ports)
+		out.Why = "it points at " + host
+		out.Port, out.PortName = int(port.Port), port.Name
 	case engineToken(name) != "":
 		// The name alone does not say which port: only one that looks like a
 		// Redis's is kept (`redis-ha` with `api:443` gets its host alone).
@@ -107,10 +144,39 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 	return out, true
 }
 
-// redisLikePort is a port whose name says the engine or whose number is in
-// the range Redis and Valkey deployments use (6379 to 6399).
+// redisLikePort is a port whose name says the engine or its TLS scheme
+// (`rediss`, `valkeys`), or whose number is in the range Redis and Valkey
+// deployments use (6379 to 6399).
 func redisLikePort(port corev1.ServicePort) bool {
-	return engineToken(strings.ToLower(port.Name)) != "" || (port.Port >= 6379 && port.Port <= 6399)
+	name := strings.ToLower(port.Name)
+	return engineToken(name) != "" || name == "rediss" || name == "valkeys" || (port.Port >= 6379 && port.Port <= 6399)
+}
+
+// hostTool reports whether a host names a tool beside the server: in its
+// first label, or in a label that carries the engine (`app.redis-exporter`,
+// `valkey-proxy.example.com`). Never in the other labels (`redis.backups`,
+// `redis.prod.web.corp`), nor in the client's part of a managed host, whose
+// names are the customer's (`master.web-sessions.….cache.amazonaws.com`).
+func hostTool(host string) bool {
+	if managedHost(host) {
+		return false
+	}
+	for i, label := range strings.Split(host, ".") {
+		if (i == 0 || engineToken(label) != "") && isTool(label) {
+			return true
+		}
+	}
+	return false
+}
+
+// redisPortIn is the first port that looks like a Redis's, or nil.
+func redisPortIn(ports []corev1.ServicePort) *corev1.ServicePort {
+	for i := range ports {
+		if redisLikePort(ports[i]) {
+			return &ports[i]
+		}
+	}
+	return nil
 }
 
 // externals is every ExternalName Service to a Redis, in namespace then name

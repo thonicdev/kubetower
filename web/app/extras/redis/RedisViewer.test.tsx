@@ -354,6 +354,17 @@ describe('the inventory: one tile per deployment', () => {
     expect(document.querySelector('[data-counts]')?.textContent).not.toContain('external');
   });
 
+  it('counts the deployments the filter shows, out of all of them', async () => {
+    stub({ [INVENTORY]: { body: inventory() } });
+    mount('x/redis?show=state.unprobed');
+    await waitFor(() => expect(document.querySelector('[data-counts]')?.textContent).toContain('2 of 2 deployments'));
+    expect(document.querySelector('[data-counts]')?.textContent).not.toContain('Services');
+    cleanup();
+    stub({ [INVENTORY]: { body: inventory() } });
+    mount('x/redis?show=engine.Valkey');
+    await waitFor(() => expect(document.querySelector('[data-counts]')?.textContent).toContain('0 of 2 deployments'));
+  });
+
   it('draws a tile with nothing behind it as not serving, with no probe and no link', async () => {
     stub({
       [INVENTORY]: {
