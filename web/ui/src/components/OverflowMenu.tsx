@@ -333,9 +333,12 @@ export function OverflowMenuItem({
   icon,
   destructive = false,
   disabled = false,
+  badge,
   onSelect,
 }: {
   label: string;
+  /** A count drawn after the label: Settings' "1" when an update is ready to install. */
+  badge?: string | undefined;
   title?: string | undefined;
   /** A glyph drawn before the label, in the column the tick takes. */
   icon?: IconName | undefined;
@@ -361,6 +364,7 @@ export function OverflowMenuItem({
     >
       {icon === undefined ? <span aria-hidden="true" className="inline-block w-3 shrink-0" /> : <Icon name={icon} />}
       <span>{label}</span>
+      {badge === undefined ? null : <CountBadge title={title}>{badge}</CountBadge>}
     </button>
   );
 }
@@ -373,4 +377,22 @@ export function OverflowMenuItem({
  */
 export function OverflowMenuSeparator(): ReactNode {
   return <div role="separator" className="my-1 border-t border-line" />;
+}
+
+/**
+ * A small accent count, after a label: the Settings entry's "1". Hidden from
+ * the accessibility tree, so the link or item it sits in keeps its own name
+ * ("Settings", not "Settings1"); that control's tooltip says why.
+ */
+export function CountBadge({ children, title }: { children: ReactNode; title?: string | undefined }): ReactNode {
+  return (
+    <span
+      data-count-badge=""
+      aria-hidden="true"
+      title={title}
+      className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-accent px-1 text-2xs leading-4 font-semibold text-fg"
+    >
+      {children}
+    </span>
+  );
 }

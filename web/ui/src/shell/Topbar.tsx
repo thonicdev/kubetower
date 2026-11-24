@@ -4,6 +4,8 @@ import { Link, useParams } from 'react-router';
 import { useCapabilities, useClusters, useKeepsPreferences, type Cluster } from '../api';
 import { clusterPath } from '../clusters/clusterPath';
 import { btnGhost } from '../components/buttons';
+import { CountBadge } from '../components/OverflowMenu';
+import { useUpdateBadge } from '../pages/settings/UpdateControl';
 import { ClusterName } from '../components/ClusterName';
 import { useDockIfPresent } from '../dock/DockContext';
 import { focusRing } from '../focus';
@@ -103,6 +105,8 @@ export function Topbar(): ReactNode {
   const facts = usePageFacts();
   const dock = useDockIfPresent();
   const openSettings = useOpenSettings().onClick;
+  // An update ready to install marks every way into Settings (#48).
+  const badge = useUpdateBadge();
   const settingsTo = cluster === undefined ? '/settings' : `/settings?cluster=${encodeURIComponent(cluster)}`;
 
   const known =
@@ -252,10 +256,11 @@ export function Topbar(): ReactNode {
           <Link
             to={settingsTo}
             onClick={openSettings(settingsTo)}
-            title="Settings"
+            title={badge.shown ? badge.title : 'Settings'}
             className={btnGhost}
           >
             Settings
+            {badge.shown ? <CountBadge>1</CountBadge> : null}
           </Link>
         )}
         {alone !== undefined ? <ArrangeInline /> : null}
