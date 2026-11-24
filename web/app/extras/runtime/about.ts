@@ -34,7 +34,7 @@ export const about: ExtensionAbout = {
     'confirmation, and downloads the file for JDK Mission Control; the file is removed from the container.',
   reads: [
     'On a Node.js pod’s tab: whether its inspector answers; once it is open, on a click, a heap snapshot (confirmed), a CPU profile, and the diagnostic report with its secret-looking environment values masked',
-    'On a Go pod’s tab, on a click: its goroutines and profiles, from net/http/pprof where it serves it (the port from kubetower.io/pprof-port, a port named pprof, or 6060)',
+    'On a Go pod’s tab: whether net/http/pprof answers, once when the tab opens; on a click, its goroutines and profiles (the port from kubetower.io/pprof-port, a port named pprof, or 6060)',
     'Pods, and their containers’ images, command lines, environment and memory requests and limits',
     'Each Java container’s working set now, from metrics-server, where the cluster runs one',
     'On a Java pod’s JVM tab, on a click: what the JVM says about itself, through jcmd run in its container',

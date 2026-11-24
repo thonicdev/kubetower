@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -235,5 +236,158 @@ func TestPprofRefusals(t *testing.T) {
 	if rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines", ""); rec.Code != http.StatusBadGateway ||
 		!strings.Contains(rec.Body.String(), CodeTunnelFailed) {
 		t.Errorf("failed: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// setFor sets *p to v for the test.
+func setFor[T any](t *testing.T, p *T, v T) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}
+
+// A trace is downloaded for a duration from its list.
+func TestATraceIsDownloaded(t *testing.T) {
+	srv, _ := pprofServer(t, true)
+	h := newPodHost(t, srv, goPod(nil, goContainer()))
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/trace?seconds=5", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "PROFILE:/debug/pprof/trace?seconds=5" ||
+		!strings.HasSuffix(strings.Trim(rec.Header().Get("Content-Disposition"), `"`), ".trace") {
+		t.Fatalf("%d %q %q", rec.Code, rec.Body, rec.Header().Get("Content-Disposition"))
+	}
+}
+
+// pprof answering an error is said as its answer, and told from pprof not
+// answering at all.
+func TestAnErrorFromPprofIsNotSilence(t *testing.T) {
+	busy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Could not enable CPU profiling: cpu profiling already in use", http.StatusInternalServerError)
+	}))
+	t.Cleanup(busy.Close)
+	h := newPodHost(t, busy, goPod(nil, goContainer()))
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/profile?seconds=10", "")
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodePprofFailed) ||
+		!strings.Contains(rec.Body.String(), "already in use") || !strings.Contains(rec.Body.String(), "500") {
+		t.Errorf("busy: %d %s", rec.Code, rec.Body)
+	}
+
+	gone := httptest.NewServer(http.NotFoundHandler())
+	h = newPodHost(t, gone, goPod(nil, goContainer()))
+	gone.Close()
+	rec = post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines", "")
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodePprofUnreachable) {
+		t.Errorf("gone: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Every read through the tunnel ends within its budget.
+func TestPprofReadsAreBoundedInTime(t *testing.T) {
+	setFor(t, &pprofProbeBudget, 50*time.Millisecond)
+	stuck := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(stuck.Close)
+	h := newPodHost(t, stuck, goPod(nil, goContainer()))
+	for _, path := range []string{
+		"/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines",
+		"/x/kind/runtime/pod/shop/api-0/app/pprof/heap",
+	} {
+		start := time.Now()
+		rec := post(t, h, path, "")
+		if took := time.Since(start); took > 2*time.Second {
+			t.Errorf("%s took %v", path, took)
+		}
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodePprofUnreachable) {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+	}
+	start := time.Now()
+	rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof")
+	if took := time.Since(start); took > 2*time.Second || decode[pprofAnswer](t, rec).Reachable {
+		t.Errorf("the probe took %v: %d %s", took, rec.Code, rec.Body)
+	}
+}
+
+// A goroutine dump past its limit is cut and says so.
+func TestAGoroutineDumpPastItsLimitIsCut(t *testing.T) {
+	setFor(t, &pprofGoroutineLimit, 100)
+	srv, _ := pprofServer(t, true)
+	h := newPodHost(t, srv, goPod(nil, goContainer()))
+	got := decode[goroutinesAnswer](t, post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines", ""))
+	if !got.Truncated || len(got.Raw) != 100 {
+		t.Errorf("truncated %v, %d bytes", got.Truncated, len(got.Raw))
+	}
+
+	// A dump that never ends is read up to the limit, not to the budget.
+	setFor(t, &pprofProbeBudget, 3*time.Second)
+	endless := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat(goroutineDump, 2)))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	t.Cleanup(endless.Close)
+	h = newPodHost(t, endless, goPod(nil, goContainer()))
+	start := time.Now()
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines", "")
+	if took := time.Since(start); rec.Code != http.StatusOK || took > time.Second {
+		t.Errorf("an endless dump: %d after %v", rec.Code, took)
+	}
+}
+
+// A line over 1 MiB stops the reading, and the answer says it is cut.
+func TestALineTooLongCutsTheDump(t *testing.T) {
+	dump := goroutineDump + "\ngoroutine 30 [select]:\n" + strings.Repeat("x", 1<<20+1) + "\n\ngoroutine 31 [select]:\nmain.late()\n"
+	// Goroutine 30, whose header was read, counts; 31, past the line, does not.
+	_, total, cut := parseGoroutines(dump)
+	if !cut || total != 5 {
+		t.Errorf("cut %v, total %d", cut, total)
+	}
+	if _, _, cut := parseGoroutines(goroutineDump); cut {
+		t.Error("a whole dump read as cut")
+	}
+}
+
+// downloadAt downloads the heap profile from a server that writes body,
+// streamed when stream, and says whether the response was aborted.
+func downloadAt(t *testing.T, body string, stream bool) (rec *httptest.ResponseRecorder, aborted bool) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !stream {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		for _, b := range []byte(body) {
+			_, _ = w.Write([]byte{b})
+			w.(http.Flusher).Flush()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	h := newPodHost(t, srv, goPod(nil, goContainer()))
+	defer func() {
+		if r := recover(); r != nil {
+			if r != http.ErrAbortHandler {
+				panic(r)
+			}
+			aborted = true
+		}
+	}()
+	return post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/heap", ""), false
+}
+
+// A profile larger than the limit fails rather than arrive cut.
+func TestAProfilePastItsLimitFails(t *testing.T) {
+	setFor(t, &pprofDownloadLimit, 10)
+	rec, aborted := downloadAt(t, "0123456789abc", false)
+	if aborted || rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodePprofFailed) {
+		t.Errorf("sized: aborted %v, %d %s", aborted, rec.Code, rec.Body)
+	}
+	if _, aborted := downloadAt(t, "0123456789abc", true); !aborted {
+		t.Error("a streamed profile past the limit ended as a whole file")
+	}
+	if rec, aborted := downloadAt(t, "0123456789", true); aborted || rec.Code != http.StatusOK || rec.Body.String() != "0123456789" {
+		t.Errorf("a profile of exactly the limit: aborted %v, %d %q", aborted, rec.Code, rec.Body)
 	}
 }
