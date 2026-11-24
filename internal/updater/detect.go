@@ -22,8 +22,9 @@ type Probe struct {
 //
 //   - Windows: a folder holding uninstall.exe is the per-user setup's
 //     (packaging/windows/kubetower.nsi writes exactly one); anything else, the zip.
-//   - macOS: an executable at `<X>.app/Contents/MacOS/<name>` is the
-//     application bundle `<X>.app`; anything else, the tar.gz.
+//   - macOS: an executable at `<X>.app/Contents/MacOS/kubetower` is the
+//     application bundle `<X>.app`; another name in a bundle is unknown;
+//     anything else, the tar.gz.
 //   - Linux: `$APPIMAGE` is the AppImage the runtime mounted us from, but only
 //     when exe lies under `$APPDIR`, its mount: a tar.gz or a package started
 //     from a terminal or an IDE that is itself an AppImage inherits both
@@ -45,6 +46,11 @@ func Detect(goos, exe string, probe Probe) Installation {
 		contents := filepath.Dir(macos)
 		bundle := filepath.Dir(contents)
 		if filepath.Base(macos) == "MacOS" && filepath.Base(contents) == "Contents" && strings.HasSuffix(bundle, ".app") {
+			// Only KubeTower's own executable: a kubetower renamed inside
+			// another bundle must not make the updater replace that bundle.
+			if filepath.Base(exe) != "kubetower" {
+				return Installation{}
+			}
 			return Installation{Kind: MacApp, Path: bundle}
 		}
 		return Installation{Kind: MacTar, Path: exe}

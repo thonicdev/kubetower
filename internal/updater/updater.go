@@ -96,6 +96,21 @@ var (
 // installers is filled by the per-platform files (#49, #50, #51).
 var installers = map[Kind]Installer{}
 
+// sweepers clean what an install cut short left beside an installation, at
+// start. Filled by the platform files.
+var sweepers = map[Kind]func(path string){}
+
+// sweepBeside removes the entries beside path that match the patterns: the
+// temporary names an install writes before its rename.
+func sweepBeside(path string, patterns ...string) {
+	for _, pattern := range patterns {
+		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
+		for _, one := range found {
+			_ = os.RemoveAll(one)
+		}
+	}
+}
+
 // installable says whether a kind's installer can run on this machine, for
 // the kinds that need a tool (pkexec and a package manager): without it the
 // installation is not supported, rather than failing after the download.
@@ -158,6 +173,10 @@ func New(o Options) *Updater {
 		Enabled:      u.readEnabled(),
 		Supported:    supported && u.installer() != nil && u.canInstall(),
 		Installation: o.Installation.Kind,
+	}
+	if sweep := sweepers[o.Installation.Kind]; sweep != nil && o.Install == nil && o.Installation.Path != "" {
+		path := o.Installation.Path
+		safego.Go("update sweep", func() error { sweep(path); return nil }, nil)
 	}
 	return u
 }
