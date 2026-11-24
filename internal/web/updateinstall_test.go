@@ -23,6 +23,7 @@ func (f *fakeUpdater) Download() (updater.Status, error) { return f.status, f.er
 func (f *fakeUpdater) Install(context.Context) (updater.Status, error) {
 	return f.status, f.err
 }
+func (f *fakeUpdater) OpenFolder() (updater.Status, error) { return f.status, f.err }
 
 func TestTheInstallerIsNilWhereNothingInstalls(t *testing.T) {
 	if got := (&Server{}).updateInstaller(); got != nil {
@@ -61,7 +62,20 @@ func TestARefusedUpdateIsAConflictAndAnUnsavedSettingSaysSo(t *testing.T) {
 	if _, err := i.InstallUpdate(context.Background()); !errors.Is(err, api.ErrConflict) {
 		t.Errorf("install: %v, want ErrConflict", err)
 	}
+	if _, err := i.OpenUpdateFolder(); !errors.Is(err, api.ErrConflict) {
+		t.Errorf("open folder: %v, want ErrConflict", err)
+	}
 	if out, err := i.SetInstallUpdates(false); !errors.Is(err, api.ErrNotSaved) || out.Enabled {
 		t.Errorf("setting: %+v %v, want not saved and off", out, err)
+	}
+}
+
+func TestTheManualPhaseCarriesItsFolder(t *testing.T) {
+	s := &Server{setup: SetupInfo{Installer: &fakeUpdater{status: updater.Status{
+		Phase: updater.Manual, Enabled: true, Supported: true, Installation: updater.LinuxTar,
+		Version: "0.1.3", Folder: "/home/alice/.local/state/kubetower/update/install-1"}}}}
+	got, err := s.updateInstaller().OpenUpdateFolder()
+	if err != nil || got.Phase != "manual" || got.Folder != "/home/alice/.local/state/kubetower/update/install-1" {
+		t.Fatalf("%+v %v", got, err)
 	}
 }

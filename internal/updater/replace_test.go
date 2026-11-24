@@ -51,7 +51,7 @@ func TestAReplaceThatCannotWriteLeavesTheFileAsItWas(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	err := replaceWith(dst, strings.NewReader("new"))
-	if err == nil || !strings.Contains(err.Error(), "is not writable") {
+	if !errors.Is(err, ErrNotWritable) {
 		t.Fatalf("%v, want not writable", err)
 	}
 	if got, _ := os.ReadFile(dst); string(got) != "old" {
@@ -128,7 +128,7 @@ func TestThePackageIsInstalledThroughPkexecByTheFirstManagerFound(t *testing.T) 
 		{"apt-get", LinuxDeb, []string{"pkexec", "apt-get", "dpkg"}, "/usr/bin/pkexec /usr/bin/apt-get install -y /s/x.deb", nil},
 		{"dpkg alone", LinuxDeb, []string{"pkexec", "dpkg"}, "/usr/bin/pkexec /usr/bin/dpkg -i /s/x.deb", nil},
 		{"dnf", LinuxRPM, []string{"pkexec", "dnf", "rpm"}, "/usr/bin/pkexec /usr/bin/dnf install -y /s/x.deb", nil},
-		{"zypper", LinuxRPM, []string{"pkexec", "zypper", "rpm"}, "/usr/bin/pkexec /usr/bin/zypper --non-interactive install /s/x.deb", nil},
+		{"zypper", LinuxRPM, []string{"pkexec", "zypper", "rpm"}, "/usr/bin/pkexec /usr/bin/zypper --non-interactive install --allow-unsigned-rpm /s/x.deb", nil},
 		{"rpm alone", LinuxRPM, []string{"pkexec", "rpm"}, "/usr/bin/pkexec /usr/bin/rpm -U /s/x.deb", nil},
 		{"no pkexec", LinuxDeb, []string{"apt-get"}, "", ErrNoPackageTool},
 		{"no manager", LinuxRPM, []string{"pkexec"}, "", ErrNoPackageTool},
@@ -139,4 +139,77 @@ func TestThePackageIsInstalledThroughPkexecByTheFirstManagerFound(t *testing.T) 
 			t.Errorf("%s: %q %v, want %q %v", tc.name, got, err, tc.want, tc.err)
 		}
 	}
+}
+
+// failingReader gives some bytes, then an error.
+type failingReader struct{ sent bool }
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.sent {
+		return 0, errors.New("the read broke")
+	}
+	r.sent = true
+	return copy(p, "half"), nil
+}
+
+func onlyEntry(t *testing.T, dir string) {
+	t.Helper()
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("left beside it: %v", entries)
+	}
+}
+
+func TestAReplaceThatFailsMidwayLeavesNoTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "kubetower")
+	_ = os.WriteFile(dst, []byte("old"), 0o755)
+	if err := replaceWith(dst, &failingReader{}); err == nil {
+		t.Fatal("no error from a broken read")
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "old" {
+		t.Errorf("the file changed: %q", got)
+	}
+	onlyEntry(t, dir)
+}
+
+func TestTheNewFileIsSyncedBeforeItReplacesTheOld(t *testing.T) {
+	was := syncFile
+	syncFile = func(*os.File) error { return errors.New("no fsync") }
+	t.Cleanup(func() { syncFile = was })
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "kubetower")
+	_ = os.WriteFile(dst, []byte("old"), 0o755)
+	if err := replaceWith(dst, strings.NewReader("new")); err == nil || err.Error() != "no fsync" {
+		t.Fatalf("%v, want the fsync's error", err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "old" {
+		t.Errorf("replaced without a sync: %q", got)
+	}
+	onlyEntry(t, dir)
+}
+
+func TestAnArchiveEntryOverTheLimitIsRefused(t *testing.T) {
+	// Only the header: an entry declaring more than MaxAsset is refused before
+	// any of it is read.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: "./kubetower", Mode: 0o755, Size: MaxAsset + 1, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_ = gz.Close()
+	archive := filepath.Join(t.TempDir(), "big.tar.gz")
+	_ = os.WriteFile(archive, buf.Bytes(), 0o600)
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "kubetower")
+	_ = os.WriteFile(dst, []byte("old"), 0o755)
+	err := replaceFromTarGz(dst, archive, "kubetower")
+	if err == nil || !strings.Contains(err.Error(), "declares") {
+		t.Fatalf("%v, want refused", err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "old" {
+		t.Errorf("the file changed: %q", got)
+	}
+	onlyEntry(t, dir)
 }
