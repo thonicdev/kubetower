@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { nodeQuery } from './data';
 import { NodeInspector } from './NodeInspector';
 
 const BASE = '/x/kind/runtime/pod/shop/web-0/app/node';
@@ -128,5 +129,13 @@ describe("the Node.js tab's inspector", () => {
     await waitFor(() => {
       expect(URL.createObjectURL).toHaveBeenCalled();
     });
+  });
+});
+
+describe('the Node.js probe', () => {
+  it('opens its tunnel once, not again when the window regains focus', () => {
+    const options = nodeQuery('kind', 'shop', 'web-0', 'app');
+    expect(options.refetchOnWindowFocus).toBe(false);
+    expect('refetchInterval' in options).toBe(false);
   });
 });

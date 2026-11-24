@@ -33,7 +33,7 @@ export const about: ExtensionAbout = {
     'confirmation that it runs a full GC and pauses the application. A Flight recorder control records the JVM for 30 seconds to 5 minutes, after a ' +
     'confirmation, and downloads the file for JDK Mission Control; the file is removed from the container.',
   reads: [
-    'On a Node.js pod’s tab: whether its inspector answers; once it is open, on a click, a heap snapshot (confirmed), a CPU profile, and the diagnostic report with its secret-looking environment values masked',
+    'On a Node.js pod’s tab: whether its inspector answers, once when the tab opens; once it is open, on a click, a heap snapshot (confirmed), a CPU profile, and the diagnostic report with its secret-looking environment values masked',
     'On a Go pod’s tab: whether net/http/pprof answers, once when the tab opens; on a click, its goroutines and profiles (the port from kubetower.io/pprof-port, a port named pprof, or 6060)',
     'Pods, and their containers’ images, command lines, environment and memory requests and limits',
     'Each Java container’s working set now, from metrics-server, where the cluster runs one',
