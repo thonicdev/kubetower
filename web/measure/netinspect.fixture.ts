@@ -2524,7 +2524,42 @@ const SERVICE: Verdict = {
   "unevaluated": []
 };
 
+// payments' flows, as the enlarged view of ledger-db-0 reads them over each
+// period: the same pairs, more of them the further back the read goes.
+const PAYMENTS_ROWS: ReadonlyArray<[string, string, number, string, number, string[]]> = [
+  ['payments/ledger-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'FORWARDED', 212, []],
+  ['payments/ledger-7d9f8b6c5d-blxrb', 'payments/ledger-db-0', 5432, 'FORWARDED', 187, []],
+  ['monitoring/prometheus-0', 'payments/ledger-db-0', 9187, 'FORWARDED', 20, []],
+  ['shop/checkout-api-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'DROPPED', 6, ['payments/ledger-db-deny']],
+  ['batch/nightly-report-7d9f8b6c5d-akxqb', 'payments/ledger-db-0', 5432, 'DROPPED', 2, ['payments/default-deny']],
+  ['payments/ledger-db-0', 'kube-system/coredns-7d9f8b6c5d-akxqb', 53, 'FORWARDED', 44, []],
+  ['payments/ledger-db-0', 'payments/ledger-db-1', 5432, 'FORWARDED', 96, []],
+  ['payments/gateway-7d9f8b6c5d-akxqb', 'payments/ledger-7d9f8b6c5d-akxqb', 8080, 'FORWARDED', 310, []],
+];
+
+function paymentsFlows(window: number): Flows {
+  const scale = window / 300;
+  const rows = PAYMENTS_ROWS.map(([from, to, port, verdict, count, deniedBy]) => ({
+    from,
+    to,
+    port,
+    protocol: port === 53 ? 'UDP' : 'TCP',
+    verdict,
+    ...(verdict === 'DROPPED' ? { reason: 'POLICY_DENIED' } : {}),
+    deniedBy,
+    count: Math.max(1, Math.round(count * scale)),
+    last: '2026-03-11T09:39:40Z',
+  }));
+  const forwarded = rows.filter((r) => r.verdict === 'FORWARDED').reduce((n, r) => n + r.count, 0);
+  const dropped = rows.filter((r) => r.verdict === 'DROPPED').reduce((n, r) => n + r.count, 0);
+  return { ...FLOWS, window, read: forwarded + dropped, forwarded, dropped, rows, edges: [] };
+}
+
 export const NETINSPECT_ANSWERS: Readonly<Record<string, unknown>> = {
+  '/x/production/netinspect/flows?ns=payments': paymentsFlows(300),
+  '/x/production/netinspect/flows?ns=payments&window=60': paymentsFlows(60),
+  '/x/production/netinspect/flows?ns=payments&window=900': paymentsFlows(900),
+  '/x/production/netinspect/flows?ns=payments&window=3600': paymentsFlows(3600),
   '/x/production/netinspect/': CLUSTER,
   '/x/production/netinspect/?ns=shop': SHOP,
   "/x/production/netinspect/verdict?from=shop%2Fstorefront-7d9f8b6c5d-akxqb&to=payments%2Fgateway-7d9f8b6c5d-akxqb&port=8443": DENIED,
@@ -2600,4 +2635,105 @@ export const NETINSPECT_NEW_ANSWERS: Readonly<Record<string, unknown>> = {
 export const NETINSPECT_NEW_AT = {
   calico: `x/netinspect?from=${CALICO_FROM}&to=${CALICO_TO}&port=5432`,
   admin: `x/netinspect?from=${ANP_FROM}&to=${ANP_TO}&port=8443`,
+};
+
+// --- a cluster of 120 namespaces ---------------------------------------------------
+//
+// The same cluster with 112 tenant namespaces added: each lets the ingress
+// controller and monitoring in, a few talk to one another, a few are denied, and
+// Hubble saw traffic of very different volumes. Invented names, generated, so
+// the matrix's folding (`fold.ts`) is drawn on something the size of a shared
+// cluster. `cap` folds the graph as the server does beyond its bound.
+
+const TENANTS = Array.from({ length: 112 }, (_, i) => `${['tenant', 'team', 'app', 'svc'][i % 4] ?? 'tenant'}-${String(i + 1).padStart(3, '0')}`);
+
+/** A small deterministic spread, so the picture is the same from one run to the next. */
+const spread = (i: number, m: number): number => (i * 7919 + 13) % m;
+
+function manyGraph(cap: number): Overview['graph'] {
+  const nodes: Overview['graph']['nodes'] = [
+    ...CLUSTER.graph.nodes,
+    ...TENANTS.map((name, i) => {
+      const pods = 1 + spread(i, 6);
+      const isolated = i % 5 !== 0;
+      return { id: `ns:${name}`, label: name, kind: 'namespace' as const, namespace: name, pods, isolatedIn: isolated ? pods : 0, isolatedOut: i % 3 === 0 ? pods : 0, internal: i % 4 === 0 ? 1 : 0 };
+    }),
+  ];
+  const edges: Overview['graph']['edges'] = [...CLUSTER.graph.edges];
+  TENANTS.forEach((name, i) => {
+    if (i % 5 === 0) return;
+    edges.push({ kind: 'allow', from: 'ns:ingress-nginx', to: `ns:${name}`, side: 'ingress', ports: ['8080/TCP'], policies: ['allow-ingress'], rules: 1 });
+    if (i % 2 === 0) edges.push({ kind: 'allow', from: 'ns:monitoring', to: `ns:${name}`, side: 'ingress', ports: ['9090/TCP'], policies: ['allow-scrape'], rules: 1 });
+    if (i % 7 === 0) edges.push({ kind: 'allow', from: `ns:${TENANTS[(i + 3) % TENANTS.length] ?? name}`, to: `ns:${name}`, side: 'ingress', ports: ['443/TCP'], policies: ['allow-peer'], rules: 2 });
+    if (i % 11 === 0) edges.push({ kind: 'deny', from: 'ns:batch', to: `ns:${name}`, side: 'ingress', ports: ['every port'], policies: ['deny-batch'], rules: 1 });
+  });
+  if (nodes.length <= cap) return { scope: 'cluster', nodes, edges, folded: 0, edgesTotal: edges.length };
+  // As `view.go` `finish`: the most connected kept, the rest one "others".
+  const degree = new Map<string, number>();
+  for (const e of edges) {
+    degree.set(e.from, (degree.get(e.from) ?? 0) + e.rules);
+    degree.set(e.to, (degree.get(e.to) ?? 0) + e.rules);
+  }
+  const sorted = [...nodes].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0) || b.pods - a.pods || a.id.localeCompare(b.id));
+  const kept = sorted.slice(0, cap - 1);
+  const ids = new Set(kept.map((n) => n.id));
+  const rest = sorted.slice(cap - 1);
+  const others = { id: 'others', label: `${String(rest.length)} others`, kind: 'others' as const, pods: rest.reduce((s, n) => s + n.pods, 0), isolatedIn: 0, isolatedOut: 0, internal: 0 };
+  const home = (id: string) => (ids.has(id) ? id : 'others');
+  const merged = new Map<string, Overview['graph']['edges'][number]>();
+  for (const e of edges) {
+    const from = home(e.from);
+    const to = home(e.to);
+    if (from === to) continue;
+    const key = `${e.kind}>${from}>${to}`;
+    const m = merged.get(key);
+    if (m === undefined) merged.set(key, { ...e, from, to });
+    else m.rules += e.rules;
+  }
+  return { scope: 'cluster', nodes: [...kept, others], edges: [...merged.values()], folded: rest.length, edgesTotal: edges.length };
+}
+
+function manyCluster(cap: number): Overview {
+  const rows = TENANTS.map((name, i) => {
+    const pods = 1 + spread(i, 6);
+    return { name, pods, isolatedIn: i % 5 === 0 ? 0 : pods, isolatedOut: i % 3 === 0 ? pods : 0, policies: i % 5 === 0 ? 0 : 2, defaultDenyIn: false, defaultDenyOut: false };
+  });
+  const pods = CLUSTER.summary.pods + rows.reduce((s, r) => s + r.pods, 0);
+  return {
+    ...CLUSTER,
+    summary: { ...CLUSTER.summary, pods, policies: CLUSTER.summary.policies + rows.reduce((s, r) => s + r.policies, 0) },
+    namespaces: [...CLUSTER.namespaces, ...rows],
+    namespacesTotal: CLUSTER.namespaces.length + rows.length,
+    choices: [...(CLUSTER.choices ?? CLUSTER.namespaces.map((r) => r.name)), ...TENANTS].sort(),
+    graph: manyGraph(cap),
+  };
+}
+
+const MANY_FLOWS: Flows = {
+  ...FLOWS,
+  edges: [
+    ...FLOWS.edges,
+    ...TENANTS.flatMap((name, i) => {
+      if (i % 3 !== 0) return [];
+      const volume = 2 + spread(i, 400);
+      return [
+        { from: 'ns:ingress-nginx', to: `ns:${name}`, forwarded: volume, dropped: 0, ports: ['8080/TCP'], deniedBy: [] },
+        ...(i % 11 === 0 ? [{ from: 'ns:batch', to: `ns:${name}`, forwarded: 0, dropped: 1 + spread(i, 9), ports: ['8080/TCP'], deniedBy: ['deny-batch'] }] : []),
+        ...(i % 9 === 0 ? [{ from: `ns:${name}`, to: 'entity:world', forwarded: spread(i, 60), dropped: 0, ports: ['443/TCP'], deniedBy: [] }] : []),
+      ];
+    }),
+  ],
+};
+
+/** The 120-namespace cluster as this version's server sends it (bounded at 300). */
+export const NETINSPECT_MANY_ANSWERS: Readonly<Record<string, unknown>> = {
+  ...NETINSPECT_ANSWERS,
+  '/x/production/netinspect/': manyCluster(300),
+  '/x/production/netinspect/flows': MANY_FLOWS,
+};
+
+/** The same cluster as the server bounded at 40 sent it before. */
+export const NETINSPECT_MANY_FOLDED_ANSWERS: Readonly<Record<string, unknown>> = {
+  ...NETINSPECT_MANY_ANSWERS,
+  '/x/production/netinspect/': manyCluster(40),
 };

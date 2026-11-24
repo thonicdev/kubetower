@@ -436,10 +436,11 @@ function unusedCount(
  *
  * At the top of the column, where the operator asked for it, and in the jump
  * box's strip rather than a band of its own: the two are the column's two
- * ways of deciding what it lists. A toggle with `aria-pressed`, so its name
- * stays the same in both states and the state is what a reader announces; the
- * count is how many kinds it would add, drawn on the right in the counter's
- * size. Drawn only once the occupancy has answered and the choice has been
+ * ways of deciding what it lists. A toggle with `aria-pressed`, whose label
+ * says what a press does: "Show unused kinds" while they are hidden, "Hide
+ * unused kinds" while they are listed (#60), so the state reads without the
+ * background; the count is how many kinds it adds or hides, drawn on the
+ * right in the counter's size. Drawn only once the occupancy has answered and the choice has been
  * read: before that nothing is hidden, so there is nothing to show.
  */
 function UnusedToggle({
@@ -474,7 +475,7 @@ function UnusedToggle({
       } ${focusRingInside}`}
     >
       {mark ?? <Icon name="filter" />}
-      <span className="min-w-0 truncate">Show unused kinds</span>
+      <span className="min-w-0 truncate">{shown ? 'Hide unused kinds' : 'Show unused kinds'}</span>
       <span className="ml-auto text-2xs tabular-nums text-muted">{count}</span>
     </button>
   );
