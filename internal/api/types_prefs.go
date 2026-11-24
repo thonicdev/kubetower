@@ -68,6 +68,10 @@ type ColumnPreferences struct {
 type Preferences struct {
 	Rail    RailPreferences   `json:"rail"`
 	Columns ColumnPreferences `json:"columns"`
+	// SeenVersion is the last release whose "What's new" was seen on this
+	// desktop (#80). Absent where nothing was seen, and under the server
+	// profile, where each browser keeps its own.
+	SeenVersion string `json:"seenVersion,omitempty"`
 }
 
 // The twelve write bodies. Each is one cell, with `additionalProperties: false`:
@@ -154,6 +158,11 @@ type ColumnShowWrite struct {
 // there is no per-kind density to write.
 type ColumnDensityWrite struct {
 	Density string `json:"density"`
+}
+
+// SeenVersionWrite records that this release's "What's new" was seen (#80).
+type SeenVersionWrite struct {
+	Version string `json:"version"`
 }
 
 // ColumnResetWrite forgets one kind's arrangement. It is not a single cell, but

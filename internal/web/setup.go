@@ -28,6 +28,10 @@ type SetupInfo struct {
 	// the page draws no build section.
 	Version string
 
+	// Release is the bare version stamped into this binary (`0.2.0`), empty on
+	// a development build. What's new (#80) compares it with the last seen.
+	Release string
+
 	// Development says no version was stamped into this binary (a `go build`, `go
 	// run`, or an image built without `KT_VERSION`). A separate flag, not parsed
 	// from Version: `developmentBuild` in internal/launch is the one place that

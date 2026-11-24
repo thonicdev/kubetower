@@ -294,6 +294,7 @@ func (p apiProfile) Capabilities(_ *http.Request) api.Capabilities {
 		// (apikindprefs.go).
 		KindPreferences: s.kindPrefsOffered(),
 		Version:         s.setup.Version,
+		Release:         s.setup.Release,
 	}
 	if s.inCluster {
 		// The server profile, and what it reports is what it registered.
@@ -1505,6 +1506,7 @@ func (p apiPrefs) Preferences() api.Preferences {
 		}
 		out.Columns.Kinds[kind] = api.KindColumns{Cells: cells}
 	}
+	out.SeenVersion = s.seen.Version()
 	return out
 }
 
@@ -1741,6 +1743,14 @@ func (p apiPrefs) SetColumnVisible(kind, column string, visible bool) error {
 // services is two grids.
 func (p apiPrefs) SetColumnDensity(density string) error {
 	if _, err := p.s.columns.SetDensity(density); err != nil {
+		return storeAnswer(err)
+	}
+	return nil
+}
+
+// SetSeenVersion keeps the release whose "What's new" was seen (#80).
+func (p apiPrefs) SetSeenVersion(version string) error {
+	if err := p.s.seen.Set(version); err != nil {
 		return storeAnswer(err)
 	}
 	return nil

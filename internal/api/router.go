@@ -264,6 +264,8 @@ func (a *API) routes() {
 		m.HandleFunc("POST /api/preferences/columns/show", a.guard(a.setColumnShow))
 		m.HandleFunc("POST /api/preferences/columns/density", a.guard(a.setColumnDensity))
 		m.HandleFunc("POST /api/preferences/columns/reset", a.guard(a.resetColumns))
+		// What's new (#80): the release whose highlights this desktop has seen.
+		m.HandleFunc("POST /api/preferences/seen-version", a.guard(a.setSeenVersion))
 	}
 
 	// Dock.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 	"unicode/utf8"
 )
@@ -259,6 +260,23 @@ func (a *API) setColumnDensity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wrote(w, a.deps.Prefs.SetColumnDensity(body.Density))
+}
+
+// release is a bare semver, as the tags and CHANGELOG.md spell it.
+var release = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,32})?$`)
+
+// setSeenVersion records that this release's "What's new" was seen (#80).
+func (a *API) setSeenVersion(w http.ResponseWriter, r *http.Request) {
+	var body SeenVersionWrite
+	if !decode(w, r, maxBody, &body) || !requireAll(w, "version", body.Version) ||
+		!a.prefsOrMissing(w) {
+		return
+	}
+	if !release.MatchString(body.Version) {
+		badRequest(w, "version is a release version, such as 0.2.0")
+		return
+	}
+	wrote(w, a.deps.Prefs.SetSeenVersion(body.Version))
 }
 
 // resetColumns is the one write that is not a single cell, because forgetting

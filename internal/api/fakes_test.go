@@ -440,6 +440,7 @@ func (fakePrefs) SetColumnOrder(string, string, int) error          { return nil
 func (fakePrefs) SetColumnPlace(string, string, string, bool) error { return nil }
 func (fakePrefs) SetColumnVisible(string, string, bool) error       { return nil }
 func (fakePrefs) SetColumnDensity(string) error                     { return nil }
+func (fakePrefs) SetSeenVersion(string) error                       { return nil }
 func (fakePrefs) ResetColumns(string, string) error                 { return nil }
 
 // fakeKindPrefs keeps one person's choices, a favorite on one cluster.

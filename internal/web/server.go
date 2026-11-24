@@ -33,6 +33,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/logs"
 	"github.com/thonicdev/kubetower/internal/metrics"
 	"github.com/thonicdev/kubetower/internal/nameplates"
+	"github.com/thonicdev/kubetower/internal/seen"
 	"github.com/thonicdev/kubetower/internal/sharedstate"
 	"github.com/thonicdev/kubetower/textutil"
 )
@@ -92,6 +93,9 @@ type Options struct {
 	// and a 404 on their routes, which is what a fresh install looks like
 	// before anybody has ticked anything.
 	Extras *extras.Store
+	// Seen is the last release whose "What's new" this desktop has seen (#80).
+	// Nil keeps it in memory: it shows again on the next start.
+	Seen *seen.Store
 	// KindPrefs is each person's choices about the kinds column.
 	// Nil keeps none: the API answers
 	// not_available_in_this_profile and the browser keeps them. Kept only
@@ -413,6 +417,8 @@ type Server struct {
 	// for the same reason as bars: every list page reads it, and a nil check per
 	// table is a nil check somebody will forget on the nineteenth kind.
 	columns *columns.Store
+	// seen is the last release whose "What's new" was seen. Never nil.
+	seen *seen.Store
 	// plates is what a person calls each cluster and what color they gave
 	// it. Never nil, for the same reason as bars and columns: the rail reads it
 	// on every page, and a nil check per tile is one somebody will forget.
@@ -600,6 +606,7 @@ func New(opts Options) (*Server, error) {
 		plates:     plates,
 		extras:     xtras,
 		kindPrefs:  opts.KindPrefs,
+		seen:       seenOrMemory(opts.Seen),
 		archive:    opts.Archive,
 		forwards:   opts.Forwards,
 		health:     opts.Health,
@@ -878,3 +885,11 @@ func firstLine(s string) string { return textutil.FirstLineN(s, detailLine) }
 // internal/edit cap at 300, because the actionable half of an API server's
 // rejection runs past 200 and this cell is not where that is read.
 const detailLine = 200
+
+// seenOrMemory is the store handed in, or one in memory.
+func seenOrMemory(store *seen.Store) *seen.Store {
+	if store == nil {
+		return seen.New("", nil)
+	}
+	return store
+}

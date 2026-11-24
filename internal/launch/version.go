@@ -62,6 +62,15 @@ func versionLine() string {
 // rather than draw `dev` beside `built unknown` as if a field failed to render.
 func developmentBuild() bool { return version == devVersion }
 
+// releaseOf is the bare version stamped into this binary, or "" on a
+// development build: the version What's new (#80) compares.
+func releaseOf() string {
+	if developmentBuild() {
+		return ""
+	}
+	return version
+}
+
 func short(revision string) string {
 	if len(revision) > 12 {
 		return revision[:12]

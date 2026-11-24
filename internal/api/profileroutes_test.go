@@ -120,7 +120,8 @@ func TestTheDesktopTerminalIsNotDecidedByLocalShell(t *testing.T) {
 	}
 }
 
-// thePreferenceWrites are the seven rail writes and the five column writes.
+// thePreferenceWrites are the seven rail writes, the five column writes and
+// the version seen (#80).
 var thePreferenceWrites = []string{
 	"/api/preferences/rail/bar",
 	"/api/preferences/rail/assign",
@@ -134,6 +135,7 @@ var thePreferenceWrites = []string{
 	"/api/preferences/columns/show",
 	"/api/preferences/columns/density",
 	"/api/preferences/columns/reset",
+	"/api/preferences/seen-version",
 }
 
 // TestTheServerProfileRegistersNoPreferenceWrite: the preference writes are the
