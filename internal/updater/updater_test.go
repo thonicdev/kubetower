@@ -92,6 +92,7 @@ func TestDetectReadsHowItWasInstalled(t *testing.T) {
 		{"an app bundle", "darwin", "/Applications/KubeTower.app/Contents/MacOS/kubetower", Probe{},
 			Installation{MacApp, "/Applications/KubeTower.app"}},
 		{"a macOS binary", "darwin", "/usr/local/bin/kubetower", Probe{}, Installation{MacTar, "/usr/local/bin/kubetower"}},
+		{"another app's executable", "darwin", "/Applications/Other.app/Contents/MacOS/other", Probe{}, Installation{}},
 		{"an AppImage", "linux", "/tmp/.mount_x/usr/bin/kubetower",
 			Probe{Getenv: envs("APPIMAGE", "/home/a/KubeTower.AppImage", "APPDIR", "/tmp/.mount_x")},
 			Installation{LinuxAppImage, "/home/a/KubeTower.AppImage"}},
