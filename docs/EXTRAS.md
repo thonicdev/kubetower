@@ -13,7 +13,7 @@ this repository and under the same license as every other page.
 | `kubecron` | KubeCron | Whether each CronJob runs when it should, and what its past runs did | Nothing for the verdicts; a KubeCron collector for run history, found by itself (the Service labeled `kubecron.io/collector=true`, its token in `kubecron-api` beside it) or set per cluster in Settings › Extra |
 | `kubeadjust` | KubeAdjust | Whether each workload's requests and limits are the right size, and the `kubectl set resources` commands that would fix them | metrics-server; a Prometheus for a seven-day window; the `nodes/proxy` permission for disk figures |
 | `redis` | Redis viewer | The keys, values and memory of the Redis and Valkey instances the cluster runs, found from their Services. **It never writes**: every command it can send is a read on a fixed list, refused before it leaves otherwise. Each look opens one port-forward, reviewed for you, and closes it. An instance with a password is opened with the one its own pod is started with, read through the console's reveal - so you need `get` on that Secret - and never shown, stored or put in an address | A Redis or Valkey Service |
-| `runtime` (formerly `jvm`, still accepted) | — (Runtime Inspector, from the panel) | Which pods probably run Java, recognized from their spec alone - the image (a Java runtime image, a `-jre` or `-jdk` tag, a known Java product such as Kafka or Keycloak), a command line that starts `java` or carries JVM options, or `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or `JAVA_HOME` in the environment - and, for each Java container, its estimated maximum heap and how close that comes to its memory limit: a warning above 75 % of the limit, an error when an explicit `-Xmx` reaches it. The 75 % line is a heuristic, not a JDK rule. The page counts the Java pods by risk in tiles that filter, draws each container's heap, the room outside it, its limit and the 75 % line on one bar, with the working set from metrics-server as a mark where it is measured, and groups by namespace or by workload; a "Java" column on the Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets and Jobs lists carries the worst grade. It reads the spec only: an image whose entrypoint starts Java with nothing in the spec is not recognized. On a Java pod, a tile on its Details and a **JVM tab** ask the JVM itself, on a click: see [below](#the-runtime-inspectors-jvm-tab) | Pods running a JVM |
+| `runtime` (formerly `jvm`, still accepted) | — (Runtime Inspector, from the panel) | Which pods probably run Java, recognized from their spec alone - the image (a Java runtime image, a `-jre` or `-jdk` tag, a known Java product such as Kafka or Keycloak), a command line that starts `java` or carries JVM options, or `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or `JAVA_HOME` in the environment - and, for each Java container, its estimated maximum heap and how close that comes to its memory limit: a warning above 75 % of the limit, an error when an explicit `-Xmx` reaches it. The 75 % line is a heuristic, not a JDK rule. The page counts the Java pods by risk in tiles that filter, draws each container's heap, the room outside it, its limit and the 75 % line on one bar, with the working set from metrics-server as a mark where it is measured, and groups by namespace or by workload; a "Runtime" column on the Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets and Jobs lists carries the worst grade. It reads the spec only: an image whose entrypoint starts Java with nothing in the spec is not recognized. On a Java pod, a tile on its Details and a **JVM tab** ask the JVM itself, on a click: see [below](#the-runtime-inspectors-jvm-tab) | Pods running a JVM |
 | `events` | Event Intelligence | Kubernetes Events made readable: repeats counted once per object (`BackOff × 214`), grouped by cause across objects and unfolded per object, set on a timeline under what changed just before - a rollout with its revision, a ConfigMap edit, scaling, a new or failing node - with tiles that filter (warnings, crash loops, OOM kills, scheduling failures, objects touched), a 15 min, 1 h or 3 h window, and filters by namespace, type and kind. **It reads only, and says "since", never "because"**: a change is shown ahead of the groups that began after it. On a Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet or Job, the **Activity tab** draws the same timeline and causes narrowed to the object and its pods, in place of the core's plain list of events (its changes and rollouts stay below). A ConfigMap's data and Secrets are never read | Nothing; `list replicasets`, `configmaps`, `pods` and `nodes` for the changes (a refused read is said, and the rest still shows) |
 | `netinspect` | Network Inspector | Which NetworkPolicies select each pod, which peers and ports their rules allow, and whether one pod would reach another, with the policy and rule that decide on each side. **It reads the rules, never traffic**: every edge it draws is dashed and says so | NetworkPolicies, and a network plugin that applies them (flannel alone does not, and the page says so) |
 | `pending` | — (Pod Debugging, from the panel) | Why each Pending pod waits - resources, taints, node selector, pod affinity, topology spread, volumes, a quota that refused its creation - which node comes closest on what can be computed from the specs, and what it would take to start it. It never writes; pod affinity and spread are the scheduler's word, never recomputed | Nothing; `list nodes` for the node checks (without it, the scheduler's reasons alone) |
@@ -141,10 +141,15 @@ whatever failed spelled out - and they are what makes an empty page readable:
 Each container is read from its pod's spec alone; nothing runs in it. The
 strongest hint decides: a command line (`java`, `node`, `npm`, `python3`,
 `gunicorn`, `uvicorn`…) over an environment variable (`JAVA_TOOL_OPTIONS`,
-`NODE_OPTIONS`, `PYTHONUNBUFFERED`, `GOMEMLIMIT`…) over the image's name. A
-mesh proxy (`istio-proxy`, `linkerd-proxy`, envoy) and a container named
-`*-exporter` are not read. An init container that runs to completion is not
-read; a native sidecar is.
+`NODE_OPTIONS`, `PYTHONUNBUFFERED`, `GOMEMLIMIT`…) over the image's name. For
+Node.js, Python and Go the command line counts by the program it starts - its
+first word, or the one after `sh -c`, `exec` or `env` - never by a word among
+its arguments. A container with a Java hint stays Java unless its command line
+starts `node` or `python` itself. A mesh proxy (`istio-proxy`, `linkerd-proxy`,
+envoy) and a container named `*-exporter` are not read. An init container that
+runs to completion is not read; a native sidecar is. The banner that offers the
+inspector leaves out a container read as Go from its image's name alone
+(coredns, etcd, Prometheus).
 
 The pod's annotation wins over every hint:
 
@@ -154,6 +159,9 @@ metadata:
     kubetower.io/runtime: python                 # every container
     kubetower.io/runtime: app=go,metrics=none    # per container; none takes one out
 ```
+
+A bare runtime leaves the mesh proxies out; one named per container reaches
+it (`istio-proxy=java`).
 
 The Runtime column names each runtime a pod or workload runs (`Java · Go`),
 toned by the worst Java container's heap risk where there is one. A pod gets a

@@ -319,11 +319,11 @@ export function matches(pod: Pod, search: string): boolean {
   return words.some((w) => w.toLowerCase().includes(q));
 }
 
-/** The kinds whose lists draw the Java column: pods, and the workloads a pod
+/** The kinds whose lists draw the Runtime column: pods, and the workloads a pod
  *  names as its owner (`column.go`'s `columnKinds`). */
 export const COLUMN_KINDS = ['pods', 'deployments', 'statefulsets', 'daemonsets', 'replicasets', 'jobs'] as const;
 
-/** The Java column of a list: one pod list for the whole list, from the spec
+/** The Runtime column of a list: one pod list for the whole list, from the spec
  *  alone. A refusal rejects, and the list then draws no column. */
 export async function javaColumn(
   list: { cluster: string; kind: string },
