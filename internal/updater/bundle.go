@@ -21,7 +21,9 @@ func translocated(bundle string) bool {
 
 // swapBundle puts the bundle next at dst, where next sits beside dst on one
 // volume: dst is renamed aside, next is renamed into its place, and the old
-// one is removed. A failure in between puts the old bundle back.
+// one is removed, at best: the update is in place whether or not the old
+// files can go (another admin's), and the next start sweeps them. A failure
+// in between puts the old bundle back.
 func swapBundle(dst, next string) error {
 	if filepath.Dir(dst) != filepath.Dir(next) {
 		return fmt.Errorf("%s is not beside %s", next, dst)
@@ -36,7 +38,8 @@ func swapBundle(dst, next string) error {
 		}
 		return err
 	}
-	return os.RemoveAll(aside)
+	_ = os.RemoveAll(aside)
+	return nil
 }
 
 // writableBeside says whether a new bundle can be written beside bundle.
