@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -73,19 +74,45 @@ func (c *countedTunnels) Open(ctx context.Context, cluster, namespace, service s
 	give := func() { c.give(key, share) }
 
 	tunnel, err := c.next.Open(ctx, cluster, namespace, service, port)
+	return counted(tunnel, err, give)
+}
+
+// OpenPod is Open to a port of one pod: the same slot, the same ceiling and
+// share. A tunneller that cannot open one to a pod costs no slot.
+func (c *countedTunnels) OpenPod(ctx context.Context, cluster, namespace, pod string, port int) (metrics.Tunnel, error) {
+	pods, ok := c.next.(metrics.PodTunneller)
+	if !ok {
+		return nil, errNoPodTunnels
+	}
+	who, _ := identity.From(ctx)
+	key, share := who.Key(), !who.Shared()
+	if err := c.take(key, share); err != nil {
+		return nil, err
+	}
+	give := func() { c.give(key, share) }
+	tunnel, err := pods.OpenPod(ctx, cluster, namespace, pod, port)
+	return counted(tunnel, err, give)
+}
+
+// errNoPodTunnels is a tunneller that opens tunnels to Services only.
+var errNoPodTunnels = errors.New("this build's forwarder opens no tunnel to a pod's port")
+
+// counted is what a tunneller answered, holding its slot until the tunnel is
+// closed or stops on its own; a tunnel that did not open gives it back now.
+func counted(tunnel metrics.Tunnel, err error, give func()) (metrics.Tunnel, error) {
 	if err != nil {
 		give()
 		return nil, err
 	}
-	counted := &countedTunnel{Tunnel: tunnel, give: give}
+	held := &countedTunnel{Tunnel: tunnel, give: give}
 	// A stopped tunnel's Done is closed (terminal.Forward).
 	if stops, ok := tunnel.(interface{ Done() <-chan struct{} }); ok {
 		go func() {
 			<-stops.Done()
-			counted.release()
+			held.release()
 		}()
 	}
-	return counted, nil
+	return held, nil
 }
 
 // take claims a slot for one person. The process ceiling is said first: a full

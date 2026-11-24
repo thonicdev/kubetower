@@ -38,6 +38,13 @@ type Tunneller interface {
 	Open(ctx context.Context, cluster, namespace, service string, port int) (Tunnel, error)
 }
 
+// PodTunneller opens tunnels to a port of one pod. The forwarder's tunneller
+// implements it; a caller asks with a type assertion, so a fake that only
+// opens Services still satisfies Tunneller.
+type PodTunneller interface {
+	OpenPod(ctx context.Context, cluster, namespace, pod string, port int) (Tunnel, error)
+}
+
 // managerTunnels wires the real forwarder to the real cluster manager.
 func managerTunnels(manager *cluster.Manager, gate *access.Gate, logf func(string, ...any)) Tunneller {
 	forwarder := terminal.NewForwarder(manager, gate)
@@ -66,6 +73,22 @@ func (t forwarderTunnels) Open(ctx context.Context, name, namespace, service str
 		// Zero asks the kernel for a free port, so two clusters' tunnels never
 		// collide.
 		LocalPort: 0,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return serviceTunnel{forward: forward}, nil
+}
+
+// OpenPod is Open to a container port of one pod, reviewed by the forwarder
+// as `create pods/portforward` on it.
+func (t forwarderTunnels) OpenPod(ctx context.Context, name, namespace, pod string, port int) (Tunnel, error) {
+	forward, err := t.forwarder.Forward(ctx, terminal.ForwardRequest{
+		Cluster:    name,
+		Namespace:  namespace,
+		Pod:        pod,
+		RemotePort: port,
+		LocalPort:  0,
 	})
 	if err != nil {
 		return nil, err

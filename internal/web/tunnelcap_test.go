@@ -20,14 +20,28 @@ type fakeTunnels struct {
 	mu   sync.Mutex
 	dug  int
 	last *fakeTunnel
+	pods []string
+	// fail, when set, is what every Open answers: a tunnel the cluster refused.
+	fail error
 }
 
 func (f *fakeTunnels) Open(context.Context, string, string, string, int) (metrics.Tunnel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
 	f.dug++
 	f.last = &fakeTunnel{addr: fmt.Sprintf("127.0.0.1:%d", 40000+f.dug), done: make(chan struct{})}
 	return f.last, nil
+}
+
+// OpenPod is Open to a pod's port, recorded as the pod it was asked for.
+func (f *fakeTunnels) OpenPod(ctx context.Context, cluster, namespace, pod string, port int) (metrics.Tunnel, error) {
+	f.mu.Lock()
+	f.pods = append(f.pods, fmt.Sprintf("%s/%s/%s:%d", cluster, namespace, pod, port))
+	f.mu.Unlock()
+	return f.Open(ctx, cluster, namespace, pod, port)
 }
 
 type fakeTunnel struct {
@@ -235,4 +249,39 @@ func TestAnUnknownClusterIsUnknownEvenWithEveryTunnelTaken(t *testing.T) {
 	if dig.dug != perPersonExtensionTunnels {
 		t.Errorf("a tunnel was dug for an unknown cluster: %d dug", dig.dug)
 	}
+}
+
+// A tunnel that did not open gives its slot back at once, Forward's and
+// ForwardPod's alike. Kept, four refused tunnels would use up a person's share
+// and the next one that would open is refused for it.
+func TestATunnelThatDidNotOpenHoldsNoSlot(t *testing.T) {
+	h, counted, dig := tunnelServer(t, true)
+	pods := h.(extension.PodForwarder)
+	alice := identity.Who{Name: "alice", Method: identity.SSO}
+	asAlice := identity.With(context.Background(), alice)
+	refused := errors.New("the API server refused the upgrade")
+	dig.mu.Lock()
+	dig.fail = refused
+	dig.mu.Unlock()
+
+	for i := 0; i <= perPersonExtensionTunnels; i++ {
+		if _, err := h.Forward(asAlice, "prod", "cache", "redis", 6379); err == nil || !strings.Contains(err.Error(), refused.Error()) {
+			t.Fatalf("failed tunnel %d answered %v, want the cluster's refusal", i+1, err)
+		}
+		if _, err := pods.ForwardPod(podRequest(asAlice), "prod", "shop", "api-0", 6060); err == nil || !strings.Contains(err.Error(), refused.Error()) {
+			t.Fatalf("failed pod tunnel %d answered %v, want the cluster's refusal", i+1, err)
+		}
+	}
+	if counted.live() != 0 || counted.heldBy(alice) != 0 {
+		t.Fatalf("%d slots held, %d of them alice's, after tunnels that never opened", counted.live(), counted.heldBy(alice))
+	}
+
+	dig.mu.Lock()
+	dig.fail = nil
+	dig.mu.Unlock()
+	tunnel, err := pods.ForwardPod(podRequest(asAlice), "prod", "shop", "api-0", 6060)
+	if err != nil {
+		t.Fatalf("alice's first tunnel that opens was refused: %v", err)
+	}
+	tunnel.Stop()
 }
