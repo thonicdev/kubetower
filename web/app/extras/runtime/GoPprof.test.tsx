@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { pprofQuery } from './data';
 import { GoPprof } from './GoPprof';
 
 const BASE = '/x/kind/runtime/pod/shop/api-0/app/pprof';
@@ -113,5 +114,13 @@ describe("the Go tab's pprof", () => {
     stub({ [`GET ${BASE}`]: { status: 403, body: { code: 'tunnel_forbidden', message: 'The cluster says you may not port-forward to this pod, so pprof is not reached.' } } });
     mount(pane);
     expect(await screen.findByText(/may not port-forward/)).toBeDefined();
+  });
+});
+
+describe('the pprof probe', () => {
+  it('opens its tunnel once, not again when the window regains focus', () => {
+    const options = pprofQuery('kind', 'shop', 'api-0', 'app');
+    expect(options.refetchOnWindowFocus).toBe(false);
+    expect('refetchInterval' in options).toBe(false);
   });
 });
