@@ -24,7 +24,9 @@ func packageCommand(kind Kind, file string, look func(string) (string, error)) (
 	case LinuxRPM:
 		ways = []way{
 			{"dnf", []string{"install", "-y", file}},
-			{"zypper", []string{"--non-interactive", "install", file}},
+			// The .rpm is not signed; its hash was checked against the signed
+			// checksums.txt, and zypper otherwise aborts on it (exit 8).
+			{"zypper", []string{"--non-interactive", "install", "--allow-unsigned-rpm", file}},
 			{"rpm", []string{"-U", file}},
 		}
 	default:

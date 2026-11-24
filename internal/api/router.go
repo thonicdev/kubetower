@@ -190,6 +190,7 @@ func (a *API) routes() {
 		m.HandleFunc("PUT /api/settings/update", a.guard(a.saveUpdateInstall))
 		m.HandleFunc("POST /api/settings/update/download", a.guard(a.downloadUpdate))
 		m.HandleFunc("POST /api/settings/update/install", a.guard(a.installUpdate))
+		m.HandleFunc("POST /api/settings/update/open-folder", a.guard(a.openUpdateFolder))
 	}
 	m.HandleFunc("GET /api/health", a.getHealth)
 

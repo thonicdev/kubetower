@@ -2,7 +2,10 @@ package updater
 
 import (
 	"archive/zip"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -20,16 +23,23 @@ func writeFromZip(dst, archive, name string) (string, error) {
 		if path.Clean(f.Name) != name || !f.Mode().IsRegular() {
 			continue
 		}
+		if f.UncompressedSize64 > MaxAsset {
+			return "", fmt.Errorf("%s in the archive declares %d bytes", name, f.UncompressedSize64)
+		}
 		in, err := f.Open()
 		if err != nil {
 			return "", err
 		}
 		defer in.Close()
 		out, err := os.CreateTemp(filepath.Dir(dst), ".kubetower-update-*.exe")
+		if errors.Is(err, fs.ErrPermission) {
+			// C:\Program Files: the update is installed by hand (Open folder).
+			return "", fmt.Errorf("%w: %s", ErrNotWritable, filepath.Dir(dst))
+		}
 		if err != nil {
 			return "", err
 		}
-		if _, err := io.Copy(out, io.LimitReader(in, MaxAsset)); err != nil {
+		if _, err := io.Copy(out, in); err != nil {
 			_ = out.Close()
 			_ = os.Remove(out.Name())
 			return "", err

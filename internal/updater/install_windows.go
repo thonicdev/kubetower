@@ -2,7 +2,6 @@ package updater
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -18,7 +17,10 @@ const createNoWindow = 0x08000000
 
 // helper starts the hidden PowerShell that finishes the update after exit,
 // then stops this process.
-var helper = func(script string) error {
+var helper = func(script string) error { return finish(script, startPowerShell, stopper) }
+
+// startPowerShell starts the script in a hidden PowerShell and lets it go.
+func startPowerShell(script string) error {
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-WindowStyle", "Hidden", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP}
@@ -26,10 +28,6 @@ var helper = func(script string) error {
 		return err
 	}
 	_ = cmd.Process.Release()
-	if stopper == nil {
-		return errors.New("this console cannot stop itself to finish the update")
-	}
-	stopper()
 	return nil
 }
 

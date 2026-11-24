@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,6 +20,9 @@ func replaceWith(dst string, src io.Reader) error {
 	dir := filepath.Dir(dst)
 	tmp, err := os.CreateTemp(dir, ".kubetower-update-*")
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("%w: %s", ErrNotWritable, dir)
+		}
 		return fmt.Errorf("%s is not writable: %w", dir, err)
 	}
 	keep := false
@@ -31,7 +35,7 @@ func replaceWith(dst string, src io.Reader) error {
 		_ = tmp.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := syncFile(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -47,6 +51,9 @@ func replaceWith(dst string, src io.Reader) error {
 	keep = true
 	return nil
 }
+
+// syncFile is the fsync before the rename, held in a variable for the tests.
+var syncFile = (*os.File).Sync
 
 // replaceFile is replaceWith from a file.
 func replaceFile(dst, src string) error {
@@ -86,6 +93,9 @@ func replaceFromTarGz(dst, archive, name string) error {
 		if h.Typeflag != tar.TypeReg || path.Clean(h.Name) != name {
 			continue
 		}
-		return replaceWith(dst, io.LimitReader(tr, MaxAsset))
+		if h.Size > MaxAsset {
+			return fmt.Errorf("%s in the archive declares %d bytes", name, h.Size)
+		}
+		return replaceWith(dst, tr)
 	}
 }
