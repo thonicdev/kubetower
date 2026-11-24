@@ -55,18 +55,21 @@ const (
 	CodeInspectorRefused  = "inspector_refused"
 	CodeInspectorFailed   = "inspector_failed"
 	CodeChooseProcess     = "choose_process"
+	CodeNoNodeProcess     = "no_node_process"
 	CodeBadInspectorQuery = "bad_inspector_query"
 )
 
 // nodeOpenScript opens the inspector of the one Node.js process of the
 // container, or of the pid its first argument names among them, and says
-// what it did as one JSON line. It reads /proc and calls
-// process._debugProcess; it sends nothing else.
+// what it did as one JSON line. A process is Node.js by its name (comm) or,
+// when it set process.title (Next.js's next-server), by its executable. It
+// reads /proc and calls process._debugProcess; it sends nothing else.
 const nodeOpenScript = `const fs=require('fs');` +
 	`const self=process.pid,parent=process.ppid,want=Number(process.argv[1]||0);` +
 	`const pids=fs.readdirSync('/proc').filter(d=>/^[0-9]+$/.test(d)).map(Number)` +
-	`.filter(p=>p!==self&&p!==parent).filter(p=>{try{const c=fs.readFileSync('/proc/'+p+'/comm','utf8').trim();` +
-	`return c==='node'||c==='nodejs'}catch(e){return false}});` +
+	`.filter(p=>p!==self&&p!==parent).filter(p=>{const n=x=>x==='node'||x==='nodejs';` +
+	`try{if(n(fs.readFileSync('/proc/'+p+'/comm','utf8').trim()))return true}catch(e){}` +
+	`try{return n(require('path').basename(fs.readlinkSync('/proc/'+p+'/exe')))}catch(e){return false}});` +
 	`const pick=want?(pids.includes(want)?want:0):(pids.length===1?pids[0]:0);` +
 	`if(!pick){console.log(JSON.stringify({state:'choose',pids}));process.exit(0)}` +
 	`process._debugProcess(pick);console.log(JSON.stringify({state:'signalled',pid:pick}));`
@@ -216,7 +219,7 @@ func inspectorList(ctx context.Context, tunnel extension.Tunnel) ([]inspectorTar
 		return nil, fmt.Errorf("/json/list answered %s", resp.Status)
 	}
 	var targets []inspectorTarget
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&targets); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, inspectorListLimit)).Decode(&targets); err != nil {
 		return nil, fmt.Errorf("/json/list is not the inspector's: %w", err)
 	}
 	if len(targets) == 0 {
@@ -281,6 +284,11 @@ func (JVM) nodeOpen(h extension.Host) http.Handler {
 		for _, launcher := range nodeLaunchers {
 			res, err = h.Exec(r, n.cluster, extension.ExecQuery{Namespace: n.namespace, Pod: n.name, Container: n.container,
 				Command: nodeOpenArgv(launcher, pid)})
+			// env present with no node on its PATH exits 127 rather than
+			// failing to start: the next launcher is tried as well.
+			if err == nil && res.ExitCode == 127 {
+				err = extension.ErrNoSuchCommand
+			}
 			if !errors.Is(err, extension.ErrNoSuchCommand) {
 				break
 			}
@@ -290,7 +298,7 @@ func (JVM) nodeOpen(h extension.Host) http.Handler {
 			return
 		}
 		if err != nil {
-			writeExecFailure(w, n.cluster, err)
+			writeNodeExecFailure(w, n.cluster, err)
 			return
 		}
 		var said struct {
@@ -301,6 +309,11 @@ func (JVM) nodeOpen(h extension.Host) http.Handler {
 		if res.ExitCode != 0 || json.Unmarshal([]byte(strings.TrimSpace(string(res.Stdout))), &said) != nil {
 			writeProblem(w, http.StatusBadGateway, CodeInspectorFailed, "The inspector could not be opened.",
 				errors.New(firstLine(strings.TrimSpace(string(res.Stderr)+" "+string(res.Stdout)))))
+			return
+		}
+		if said.State == "choose" && len(said.Pids) == 0 && pid == 0 {
+			writeProblem(w, http.StatusUnprocessableEntity, CodeNoNodeProcess,
+				"No Node.js process was found in this container.", nil)
 			return
 		}
 		if said.State == "choose" {
@@ -357,8 +370,12 @@ type cdpMessage struct {
 	} `json:"error"`
 }
 
-// cdpReadLimit bounds one message: a CPU profile or a report.
-const cdpReadLimit = 256 << 20
+// cdpReadLimit bounds one message: a CPU profile or a report. A variable
+// for the tests, as are the limits below.
+var cdpReadLimit int64 = 256 << 20
+
+// inspectorListLimit bounds the inspector's /json/list.
+var inspectorListLimit int64 = 1 << 20
 
 // dialInspector opens a session with the first Node.js target the inspector
 // lists, through tunnel.
@@ -396,9 +413,9 @@ func (c *cdp) call(ctx context.Context, method string, params any, onEvent func(
 	id := c.next
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.conn.SetWriteDeadline(deadline)
-		_ = c.conn.SetReadDeadline(deadline)
 	}
-	// Through safego: context.AfterFunc runs this on a goroutine of its own.
+	// The read ends when ctx does, deadline or cancel. Through safego:
+	// context.AfterFunc runs this on a goroutine of its own.
 	stop := context.AfterFunc(ctx, func() {
 		_ = safego.Call("node inspector: ending a read as its request ends", func() error {
 			return c.conn.SetReadDeadline(time.Now())
@@ -433,9 +450,9 @@ var nodeReads = map[string]bool{"heapsnapshot": true, "profile": true, "report":
 // nodeProfileSeconds are the CPU profile's durations.
 var nodeProfileSeconds = []int{10, 30, 60}
 
-const (
+var (
 	// nodeSnapshotLimit is the most bytes a heap snapshot download carries.
-	nodeSnapshotLimit = 1 << 30
+	nodeSnapshotLimit int64 = 1 << 30
 	// nodeSnapshotBudget bounds a heap snapshot.
 	nodeSnapshotBudget = 5 * time.Minute
 )
@@ -508,7 +525,9 @@ func attachment(w http.ResponseWriter, filename string) {
 }
 
 // nodeSnapshot streams the snapshot's chunks as they arrive. A failure
-// before the first chunk is a problem; past it the download is broken.
+// before the first chunk is a problem; past it the response is ended broken,
+// so the browser fails the download rather than save a cut snapshot that
+// DevTools cannot load.
 func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, filename string) {
 	written := int64(0)
 	_, err := session.call(ctx, "HeapProfiler.takeHeapSnapshot", map[string]any{"reportProgress": false},
@@ -523,7 +542,7 @@ func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, file
 				return err
 			}
 			if written+int64(len(p.Chunk)) > nodeSnapshotLimit {
-				return fmt.Errorf("the heap snapshot is larger than %d bytes", int64(nodeSnapshotLimit))
+				return fmt.Errorf("the heap snapshot is larger than %d bytes", nodeSnapshotLimit)
 			}
 			if written == 0 {
 				attachment(w, filename)
@@ -532,8 +551,12 @@ func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, file
 			written += int64(n)
 			return err
 		})
-	if err != nil && written == 0 {
+	switch {
+	case err == nil:
+	case written == 0:
 		writeProblem(w, http.StatusBadGateway, CodeInspectorFailed, "The heap snapshot could not be taken.", err)
+	default:
+		panic(http.ErrAbortHandler)
 	}
 }
 
@@ -568,7 +591,8 @@ func nodeProfile(ctx context.Context, w http.ResponseWriter, session *cdp, secon
 // nodeReportAnswer is the diagnostic report, its environment masked.
 type nodeReportAnswer struct {
 	Report map[string]any `json:"report"`
-	// Masked is how many environment values were hidden.
+	// Masked is how many environment values and command-line values were
+	// hidden.
 	Masked int `json:"masked"`
 }
 
@@ -602,8 +626,52 @@ func nodeReport(ctx context.Context, w http.ResponseWriter, session *cdp) {
 			}
 		}
 	}
+	// The command line's secret-looking options, by the JVM tab's rule.
+	if header, ok := report["header"].(map[string]any); ok {
+		if line, ok := header["commandLine"].([]any); ok {
+			tokens := make([]string, 0, len(line))
+			for _, t := range line {
+				s, _ := t.(string)
+				tokens = append(tokens, s)
+			}
+			out := make([]any, 0, len(line))
+			for _, a := range maskArgs(tokens) {
+				if a.Secret != "" {
+					out = append(out, a.Text+maskedValue)
+					masked++
+					continue
+				}
+				out = append(out, a.Text)
+			}
+			header["commandLine"] = out
+		}
+	}
 	writeJSON(w, http.StatusOK, nodeReportAnswer{Report: report, Masked: masked})
 }
 
 // maskedValue stands for a hidden value in the report.
 const maskedValue = "••••••"
+
+// writeNodeExecFailure answers an exec of the inspector's opening script
+// that gave no result, in the inspector's words rather than jcmd's.
+func writeNodeExecFailure(w http.ResponseWriter, cluster string, err error) {
+	switch {
+	case errors.Is(err, extension.ErrUnknownCluster):
+		writeProblem(w, http.StatusNotFound, CodeUnknownCluster, extension.UnknownClusterText(cluster), err)
+	case errors.Is(err, context.Canceled):
+	case errors.Is(err, extension.ErrDenied):
+		writeProblem(w, http.StatusForbidden, CodeExecForbidden,
+			"The cluster says you may not run commands in this pod (create pods/exec), so the inspector was not opened.", err)
+	case errors.Is(err, extension.ErrUnreviewable):
+		writeProblem(w, http.StatusServiceUnavailable, CodeExecUnreviewed,
+			"The console could not ask the cluster whether you may run commands in this pod, so the inspector was not opened. Try again.", err)
+	case errors.Is(err, extension.ErrExecBusy):
+		writeProblem(w, http.StatusTooManyRequests, CodeExecBusy,
+			"Too many commands run by extensions are already running; try again in a moment.", err)
+	case errors.Is(err, extension.ErrExecTimedOut):
+		writeProblem(w, http.StatusGatewayTimeout, CodeExecTimedOut,
+			"Opening the inspector did not finish within its deadline and was stopped.", err)
+	default:
+		writeProblem(w, http.StatusBadGateway, CodeExecFailed, "The inspector's opening script could not be run in the container.", err)
+	}
+}

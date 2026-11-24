@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
@@ -26,19 +27,25 @@ type inspector struct {
 	open    bool
 	methods []string
 	srv     *httptest.Server
+	// target is the address /json/list gives; chunks the snapshot's; drop
+	// ends the session after the first chunk; stall answers no snapshot.
+	target string
+	chunks []string
+	drop   bool
+	stall  bool
 }
 
 func newInspector(t *testing.T, open bool) *inspector {
 	t.Helper()
-	in := &inspector{open: open}
+	in := &inspector{open: open, target: "ws://127.0.0.1:9229/0f2c-uuid", chunks: []string{`{"snapshot":`, `{"node_count":2}}`}}
 	upgrader := websocket.Upgrader{}
 	in.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		in.mu.Lock()
-		open := in.open
+		open, target := in.open, in.target
 		in.mu.Unlock()
 		switch {
 		case r.URL.Path == "/json/list" && open:
-			_ = json.NewEncoder(w).Encode([]inspectorTarget{{Type: "node", URL: "ws://127.0.0.1:9229/0f2c-uuid"}})
+			_ = json.NewEncoder(w).Encode([]inspectorTarget{{Type: "node", URL: target}})
 		case r.URL.Path == "/0f2c-uuid" && open:
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err != nil {
@@ -59,15 +66,34 @@ func newInspector(t *testing.T, open bool) *inspector {
 				in.mu.Unlock()
 				switch m.Method {
 				case "HeapProfiler.takeHeapSnapshot":
-					for _, chunk := range []string{`{"snapshot":`, `{"node_count":2}}`} {
+					in.mu.Lock()
+					stall, drop, chunks := in.stall, in.drop, in.chunks
+					in.mu.Unlock()
+					if stall {
+						continue
+					}
+					for _, chunk := range chunks {
 						_ = conn.WriteJSON(map[string]any{"method": "HeapProfiler.addHeapSnapshotChunk", "params": map[string]any{"chunk": chunk}})
+						if drop {
+							return
+						}
 					}
 					_ = conn.WriteJSON(map[string]any{"id": m.ID, "result": map[string]any{}})
 				case "Profiler.stop":
 					_ = conn.WriteJSON(map[string]any{"id": m.ID, "result": map[string]any{"profile": map[string]any{"nodes": []any{}, "startTime": 1}}})
 				case "Runtime.evaluate":
+					// Only the one fixed expression, by value, is answered.
+					var p struct {
+						Expression    string `json:"expression"`
+						ReturnByValue bool   `json:"returnByValue"`
+					}
+					if json.Unmarshal(m.Params, &p) != nil || p.Expression != "JSON.stringify(process.report.getReport())" || !p.ReturnByValue {
+						_ = conn.WriteJSON(map[string]any{"id": m.ID, "error": map[string]any{"message": "unexpected expression"}})
+						continue
+					}
 					report, _ := json.Marshal(map[string]any{
-						"header":               map[string]any{"nodejsVersion": "v22.11.0"},
+						"header": map[string]any{"nodejsVersion": "v22.11.0",
+							"commandLine": []string{"node", "--db-password=hunter3", "server.js"}},
 						"environmentVariables": map[string]any{"NODE_ENV": "production", "DB_PASSWORD": "hunter2", "API_TOKEN": "t"},
 					})
 					_ = conn.WriteJSON(map[string]any{"id": m.ID, "result": map[string]any{"result": map[string]any{"type": "string", "value": string(report)}}})
@@ -81,6 +107,13 @@ func newInspector(t *testing.T, open bool) *inspector {
 	}))
 	t.Cleanup(in.srv.Close)
 	return in
+}
+
+// set changes the inspector's behaviour under its lock.
+func (in *inspector) set(change func(*inspector)) {
+	in.mu.Lock()
+	change(in)
+	in.mu.Unlock()
 }
 
 func (in *inspector) setOpen() {
@@ -238,10 +271,14 @@ func TestTheInspectorReads(t *testing.T) {
 		t.Fatalf("report: %d %s", rec.Code, rec.Body)
 	}
 	env := report.Report["environmentVariables"].(map[string]any)
-	if report.Masked != 2 || env["DB_PASSWORD"] != maskedValue || env["API_TOKEN"] != maskedValue || env["NODE_ENV"] != "production" {
+	if report.Masked != 3 || env["DB_PASSWORD"] != maskedValue || env["API_TOKEN"] != maskedValue || env["NODE_ENV"] != "production" {
 		t.Errorf("report env = %v, masked %d", env, report.Masked)
 	}
-	if strings.Contains(rec.Body.String(), "hunter2") {
+	line := report.Report["header"].(map[string]any)["commandLine"].([]any)
+	if len(line) != 3 || line[1] != "--db-password="+maskedValue || line[2] != "server.js" {
+		t.Errorf("report command line = %v", line)
+	}
+	if strings.Contains(rec.Body.String(), "hunter2") || strings.Contains(rec.Body.String(), "hunter3") {
 		t.Error("a secret left in the report")
 	}
 
@@ -271,5 +308,122 @@ func TestTheInspectorReadsNeedItOpen(t *testing.T) {
 	if rec := serve(t, h, "/x/kind/runtime/pod/shop/web-0/proxy/node"); rec.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(rec.Body.String(), CodeNotNode) {
 		t.Errorf("not node: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// aborted is whether serving ended the response broken
+// (http.ErrAbortHandler), as a cut download must.
+func aborted(t *testing.T, h extension.Host, path string) (rec *httptest.ResponseRecorder, broke bool) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			if r != http.ErrAbortHandler {
+				panic(r)
+			}
+			broke = true
+		}
+	}()
+	return post(t, h, path, ""), false
+}
+
+// A heap snapshot cut after its first chunk - the session dropped, the size
+// limit or the budget reached - ends the response broken, never as a whole
+// file; one that fails before any chunk is a problem.
+func TestACutHeapSnapshotIsNotSavedAsWhole(t *testing.T) {
+	const path = nodeBase + "/heapsnapshot?confirm=confirm"
+	in := newInspector(t, true)
+	h := newNodeHost(t, in, nodeContainer())
+
+	in.set(func(in *inspector) { in.drop = true })
+	if _, broke := aborted(t, h, path); !broke {
+		t.Error("a snapshot whose session dropped was saved as whole")
+	}
+
+	in.set(func(in *inspector) { in.drop = false })
+	setFor(t, &nodeSnapshotLimit, 15)
+	if _, broke := aborted(t, h, path); !broke {
+		t.Error("a snapshot past its limit was saved as whole")
+	}
+	setFor(t, &nodeSnapshotLimit, 5)
+	if rec, broke := aborted(t, h, path); broke || rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodeInspectorFailed) {
+		t.Errorf("a first chunk past the limit: broke %v, %d %s", broke, rec.Code, rec.Body)
+	}
+
+	setFor(t, &nodeSnapshotLimit, 1<<30)
+	setFor(t, &nodeSnapshotBudget, 100*time.Millisecond)
+	in.set(func(in *inspector) { in.stall = true })
+	start := time.Now()
+	rec, broke := aborted(t, h, path)
+	if took := time.Since(start); broke || rec.Code != http.StatusBadGateway || took > 3*time.Second {
+		t.Errorf("a stalled snapshot: broke %v, %d after %v", broke, rec.Code, took)
+	}
+}
+
+// A message past the session's read limit and a /json/list past its own
+// fail; a target that is not a WebSocket address is not dialled.
+func TestTheInspectorSessionIsBounded(t *testing.T) {
+	in := newInspector(t, true)
+	h := newNodeHost(t, in, nodeContainer())
+
+	setFor(t, &cdpReadLimit, 64)
+	if rec := post(t, h, nodeBase+"/report", ""); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodeInspectorFailed) {
+		t.Errorf("a report past the read limit: %d %s", rec.Code, rec.Body)
+	}
+	setFor(t, &cdpReadLimit, 256<<20)
+
+	setFor(t, &inspectorListLimit, 8)
+	if rec := post(t, h, nodeBase+"/report", ""); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeInspectorClosed) {
+		t.Errorf("a /json/list past its limit: %d %s", rec.Code, rec.Body)
+	}
+	setFor(t, &inspectorListLimit, 1<<20)
+
+	in.set(func(in *inspector) { in.target = "http://127.0.0.1:9229/0f2c-uuid" })
+	before := len(in.asked())
+	if rec := post(t, h, nodeBase+"/report", ""); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeInspectorClosed) {
+		t.Errorf("an http target: %d %s", rec.Code, rec.Body)
+	}
+	for _, m := range in.asked()[before:] {
+		t.Errorf("the inspector was sent %s through a refused session", m)
+	}
+}
+
+// Opening finds no Node.js process: said in one line, not an empty choice.
+// env without node on its PATH (exit 127) falls back to the next launcher; a
+// pid of 0 is refused; a refused exec speaks of the inspector, not jcmd.
+func TestOpeningTheInspectorEdges(t *testing.T) {
+	in := newInspector(t, true)
+	h := newNodeHost(t, in, nodeContainer())
+	first := strings.Join(nodeOpenArgv(nodeLaunchers[0], 0), " ")
+	second := strings.Join(nodeOpenArgv(nodeLaunchers[1], 0), " ")
+
+	h.execs = map[string]execAnswer{first: {res: extension.ExecResult{Stdout: []byte(`{"state":"choose","pids":[]}`)}}}
+	if rec := post(t, h, nodeBase+"/inspector?confirm=confirm", ""); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), CodeNoNodeProcess) {
+		t.Errorf("no process: %d %s", rec.Code, rec.Body)
+	}
+
+	h.ran = nil
+	h.execs = map[string]execAnswer{
+		first:  {res: extension.ExecResult{ExitCode: 127, Stderr: []byte("env: 'node': No such file or directory")}},
+		second: {res: extension.ExecResult{Stdout: []byte(`{"state":"signalled","pid":7}`)}},
+	}
+	if rec := post(t, h, nodeBase+"/inspector?confirm=confirm", ""); rec.Code != http.StatusOK || len(h.ran) != 2 {
+		t.Errorf("env without node: %d %s, ran %d", rec.Code, rec.Body, len(h.ran))
+	}
+
+	before := len(h.ran)
+	for _, pid := range []string{"0", "-3"} {
+		if rec := post(t, h, nodeBase+"/inspector?confirm=confirm&pid="+pid, ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("pid %s: %d", pid, rec.Code)
+		}
+	}
+	if len(h.ran) != before {
+		t.Error("a pid of 0 or less ran something")
+	}
+
+	h.execs = map[string]execAnswer{first: {err: extension.ErrDenied}}
+	rec := post(t, h, nodeBase+"/inspector?confirm=confirm", "")
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "jcmd") || !strings.Contains(rec.Body.String(), "inspector") {
+		t.Errorf("denied: %d %s", rec.Code, rec.Body)
 	}
 }
