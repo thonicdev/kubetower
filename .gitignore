@@ -25,6 +25,9 @@ credentials.json
 *.key
 !**/testdata/**/*.pem
 !**/testdata/**/*.key
+# The release signing key's PUBLIC half, built into the binary (#46). The
+# private half is never in the tree: it is the RELEASE_SIGNING_KEY secret.
+!internal/releasesig/release-key.pem
 
 # ---------------------------------------------------------------------------
 # Build output

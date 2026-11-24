@@ -105,7 +105,13 @@ export type IconName =
   // own `fill` on the shape wins over the sheet's `fill-none`.
   | 'star' | 'starred'
   // A triangle with a mark: something could not be read in full.
-  | 'warning';
+  | 'warning'
+  // One per shipped extra, drawn on its card and in its About window
+  // (`Extension.icon`). An extra that names none draws `extra`.
+  | 'certificate' | 'delivery' | 'database' | 'globe' | 'pulse' | 'coffee'
+  | 'sliders' | 'clock' | 'topology' | 'hourglass' | 'layers' | 'shield'
+  // About an extra: a circled i.
+  | 'info';
 
 /**
  * The sheet itself. Mounted **once**, by the Shell, above everything that draws
@@ -550,6 +556,95 @@ export function IconSprite(): ReactNode {
         <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
         <line x1="12" y1="9" x2="12" y2="13"/>
         <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </symbol>
+      <symbol id="i-certificate" viewBox="0 0 24 24">
+        <path d="M13 17H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4"/>
+        <line x1="7" y1="8.5" x2="15" y2="8.5"/>
+        <line x1="7" y1="12" x2="11" y2="12"/>
+        <circle cx="17.5" cy="14" r="2.8"/>
+        <polyline points="16,16.5 15.5,21 17.5,19.8 19.5,21 19,16.5"/>
+      </symbol>
+
+      <symbol id="i-delivery" viewBox="0 0 24 24">
+        <path d="M20 11a8 8 0 0 0-14.3-4.9"/>
+        <polyline points="5,2.5 5.5,6.5 9.5,6"/>
+        <path d="M4 13a8 8 0 0 0 14.3 4.9"/>
+        <polyline points="19,21.5 18.5,17.5 14.5,18"/>
+      </symbol>
+
+      <symbol id="i-database" viewBox="0 0 24 24">
+        <ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/>
+        <path d="M4.5 5.5v13c0 1.38 3.36 2.5 7.5 2.5s7.5-1.12 7.5-2.5v-13"/>
+        <path d="M4.5 9.8c0 1.38 3.36 2.5 7.5 2.5s7.5-1.12 7.5-2.5"/>
+        <path d="M4.5 14.2c0 1.38 3.36 2.5 7.5 2.5s7.5-1.12 7.5-2.5"/>
+      </symbol>
+
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <path d="M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/>
+      </symbol>
+
+      <symbol id="i-pulse" viewBox="0 0 24 24">
+        <polyline points="2,12 6.5,12 9.5,5 14,19 17,12 22,12"/>
+      </symbol>
+
+      <symbol id="i-coffee" viewBox="0 0 24 24">
+        <path d="M4 9h12v4.5a5.5 5.5 0 0 1-5.5 5.5h-1A5.5 5.5 0 0 1 4 13.5z"/>
+        <path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"/>
+        <path d="M8.5 3c-.9 1 .9 2.2 0 3.5"/>
+        <path d="M12 3c-.9 1 .9 2.2 0 3.5"/>
+        <line x1="3" y1="21.5" x2="18" y2="21.5"/>
+      </symbol>
+
+      <symbol id="i-sliders" viewBox="0 0 24 24">
+        <line x1="6" y1="3" x2="6" y2="12.5"/>
+        <line x1="6" y1="16.5" x2="6" y2="21"/>
+        <circle cx="6" cy="14.5" r="2"/>
+        <line x1="12" y1="3" x2="12" y2="6.5"/>
+        <line x1="12" y1="10.5" x2="12" y2="21"/>
+        <circle cx="12" cy="8.5" r="2"/>
+        <line x1="18" y1="3" x2="18" y2="14.5"/>
+        <line x1="18" y1="18.5" x2="18" y2="21"/>
+        <circle cx="18" cy="16.5" r="2"/>
+      </symbol>
+
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <polyline points="12,7 12,12 15.5,14.2"/>
+      </symbol>
+
+      <symbol id="i-topology" viewBox="0 0 24 24">
+        <circle cx="5.5" cy="6" r="2.3"/>
+        <circle cx="18.5" cy="6" r="2.3"/>
+        <circle cx="12" cy="18" r="2.3"/>
+        <line x1="7.8" y1="6" x2="16.2" y2="6"/>
+        <line x1="6.6" y1="8" x2="10.9" y2="16"/>
+        <line x1="17.4" y1="8" x2="13.1" y2="16"/>
+      </symbol>
+
+      <symbol id="i-hourglass" viewBox="0 0 24 24">
+        <line x1="5.5" y1="3" x2="18.5" y2="3"/>
+        <line x1="5.5" y1="21" x2="18.5" y2="21"/>
+        <path d="M7 3v3.5l5 5.5 5-5.5V3"/>
+        <path d="M7 21v-3.5l5-5.5 5 5.5V21"/>
+      </symbol>
+
+      <symbol id="i-layers" viewBox="0 0 24 24">
+        <path d="M12 3l9 4.5-9 4.5-9-4.5z"/>
+        <polyline points="3,12 12,16.5 21,12"/>
+        <polyline points="3,16.5 12,21 21,16.5"/>
+      </symbol>
+
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 2.8l7.5 2.7v6c0 4.6-3.2 8.2-7.5 9.7-4.3-1.5-7.5-5.1-7.5-9.7v-6z"/>
+        <polyline points="8.8,12 11.2,14.4 15.4,9.8"/>
+      </symbol>
+
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="12" y1="11" x2="12" y2="16.5"/>
+        <line x1="12" y1="7.5" x2="12.01" y2="7.5"/>
       </symbol>
       </defs>
     </svg>

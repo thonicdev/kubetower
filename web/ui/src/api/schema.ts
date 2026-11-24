@@ -505,6 +505,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the desktop's update download and install stands.
+         * @description Read while a download runs, for its progress. **Desktop only**: not registered under the server profile, in a container, or where nothing installs, so the address answers the contract's 404 and the page draws no control.
+         */
+        get: operations["getUpdateInstall"];
+        /**
+         * Turn "Install updates" on or off.
+         * @description Off, the check and its line in Settings › Infos stay, and nothing is downloaded or installed. Kept in the state directory. A write that took effect and could not be saved answers `not_saved`.
+         */
+        put: operations["setUpdateInstall"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/update/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The first click - download and verify the newer release.
+         * @description Starts fetching the latest release's asset for this installation and
+         *     answers at once; `GET /api/settings/update` follows it. **Nothing is
+         *     kept that the release's signed `checksums.txt` does not vouch for**: the
+         *     Ed25519 signature is checked first, then the asset's sha256, and a file
+         *     failing either is deleted. Never a downgrade, never a development
+         *     build. Refused (409) when "Install updates" is off, when this
+         *     installation cannot be updated, or while a download or install runs.
+         */
+        post: operations["downloadUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/update/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The second click - install the verified download and restart.
+         * @description Checks the downloaded file's hash and the version again, then hands it to
+         *     this platform's installer, which replaces KubeTower and restarts it: the
+         *     terminals and port-forwards counted in `ends` close. Refused (409)
+         *     before a verified download, or when "Install updates" is off.
+         */
+        post: operations["installUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/update/open-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show the verified file where the installation cannot be written.
+         * @description In the `manual` phase - the installer found the installation's folder
+         *     not writable - opens the folder holding the verified file in this
+         *     machine's file manager. Refused (409) in any other phase.
+         */
+        post: operations["openUpdateFolder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -2208,9 +2303,9 @@ export interface components {
             };
         };
         /**
-         * @description Whether a newer release exists. **The console offers; it does not
-         *     update** - there is no downloader behind this, and `releaseUrl` is
-         *     where the operator goes.
+         * @description Whether a newer release exists. The check itself only offers:
+         *     `releaseUrl` is where the operator can go. On the desktop, `install`
+         *     carries the two clicks that download, verify and install it (#47).
          *
          *     Present and on the `off` or `notApplicable` arm when the check did
          *     not run, which is a different thing from not having been told.
@@ -2238,7 +2333,7 @@ export interface components {
             state: "off" | "notApplicable" | "current" | "newer" | "failed";
             /** @description The release GitHub named, without the git tag's leading `v`. Present on `current` and `newer`. */
             latest?: string;
-            /** @description That release's own page - the offer, and the whole of it. */
+            /** @description That release's own page. */
             releaseUrl?: string;
             /**
              * Format: date-time
@@ -2249,6 +2344,52 @@ export interface components {
             note?: string;
             /** @description A request to GitHub is in flight right now - at startup, on the schedule that re-checks a console left open, or after **Check now**. The page draws it as a running check; the other members are the previous answer until it lands. */
             checking: boolean;
+            install?: components["schemas"]["UpdateInstall"];
+        };
+        /**
+         * @description Where the desktop's update download and install stands (#47), and what
+         *     a restart would end. Present in `info.update.install` only where this
+         *     console can install; absent on the server profile and in a container.
+         */
+        UpdateInstall: {
+            /**
+             * @description `manual`: the installation's folder is not writable; the verified file waits in `folder`.
+             * @enum {string}
+             */
+            phase: "idle" | "downloading" | "verifying" | "ready" | "installing" | "failed" | "manual";
+            /** @description The "Install updates" setting. */
+            enabled: boolean;
+            /** @description This installation has an asset in a release and an installer in this build. False draws no Download. */
+            supported: boolean;
+            /** @description How this KubeTower was installed: `windows-setup`, `windows-zip`, `macos-app`, `macos-tar`, `linux-appimage`, `linux-deb`, `linux-rpm`, `linux-tar`, or empty when unknown. */
+            installation: string;
+            /** @description The release being downloaded or ready. */
+            version?: string;
+            /** @description The release asset's file name. */
+            asset?: string;
+            /**
+             * Format: int64
+             * @description Bytes received, while downloading.
+             */
+            done?: number;
+            /**
+             * Format: int64
+             * @description The asset's size, as the release declares it.
+             */
+            total?: number;
+            /** @description The one line of a failure. */
+            reason?: string;
+            /** @description The folder that holds the verified file, in the manual phase. */
+            folder?: string;
+            /** @description What the restart closes for good. */
+            ends: {
+                terminals: number;
+                forwards: number;
+            };
+        };
+        UpdateInstallWrite: {
+            /** @description The "Install updates" setting. */
+            enabled: boolean;
         };
         /**
          * @description What the General tab writes is the archive: whether cluster events
@@ -4536,6 +4677,15 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The request cannot be taken in the state things are in now, and the detail says which: for an update, "Install updates" is off, this installation cannot be updated, one is already running, or nothing is verified yet. Code `conflict`. */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The plan no longer describes what would happen: the token expired, the object changed since the preview, or the selection resolved to a different set. The body carries the fresh plan so the front end can show the operator what changed rather than simply failing. */
         PlanStale: {
             headers: {
@@ -5328,6 +5478,135 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Refused"];
+        };
+    };
+    getUpdateInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The update's state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    setUpdateInstall: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateInstallWrite"];
+            };
+        };
+        responses: {
+            /** @description The update's state with the setting applied. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Refused"];
+        };
+    };
+    downloadUpdate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The download has started. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Refused"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    installUpdate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The install has started. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Refused"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    openUpdateFolder: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The folder was opened. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Refused"];
+            409: components["responses"]["Conflict"];
         };
     };
     getHealth: {

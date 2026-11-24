@@ -3,6 +3,7 @@ package web
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/thonicdev/kubetower/extension"
 	"github.com/thonicdev/kubetower/internal/api"
@@ -49,6 +50,33 @@ func (s *Server) mountExtensions(mux *http.ServeMux) {
 					key, route.Method, route.Pattern, err)
 			}
 		}
+		mountLegacy(mux, key, e.Legacy())
+	}
+}
+
+// mountLegacy answers every address under a key the extension was published
+// under with a 308 to the same address under its key. A 308 keeps the method
+// and the body, so a script written against `/x/{cluster}/jvm/…` keeps working
+// after the rename, as a bookmark does in the browser. The redirect reveals
+// nothing; the address it points to is gated as any other.
+func mountLegacy(mux *http.ServeMux, key string, legacy []string) {
+	for _, old := range legacy {
+		if old == "" || old == key {
+			continue
+		}
+		mux.HandleFunc(registry.Prefix+old+"/", func(w http.ResponseWriter, r *http.Request) {
+			// "", "x", the cluster as sent, the old key, the rest.
+			parts := strings.SplitN(r.URL.EscapedPath(), "/", 5)
+			if len(parts) != 5 || parts[3] != old {
+				http.NotFound(w, r)
+				return
+			}
+			target := "/" + parts[1] + "/" + parts[2] + "/" + key + "/" + parts[4]
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
+		})
 	}
 }
 

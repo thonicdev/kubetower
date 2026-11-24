@@ -104,21 +104,68 @@ func TestTheGraphDrawsTheRules(t *testing.T) {
 	}
 }
 
-// The graph is bounded however many namespaces the rules join.
+// The graph is bounded however many namespaces the rules join, and never by
+// leaving out an edge between what it keeps: a missing edge reads as a pair
+// no rule allows. Sparse namespaces are sent whole up to maxNodes; dense ones
+// (each letting every namespace in) are folded until every edge fits.
 func TestTheGraphIsBounded(t *testing.T) {
+	sparse := overviewOf(t, teams(t, 120, false), "").Graph
+	if len(sparse.Nodes) != 120 || sparse.Folded != 0 || sparse.Truncated {
+		t.Errorf("120 sparse namespaces: %d nodes (%d folded, truncated %v), want 120, none, false", len(sparse.Nodes), sparse.Folded, sparse.Truncated)
+	}
+	capped := overviewOf(t, teams(t, maxNodes+20, false), "").Graph
+	if len(capped.Nodes) != maxNodes || capped.Folded != 21 || capped.Truncated {
+		t.Errorf("%d sparse namespaces: %d nodes (%d folded)", maxNodes+20, len(capped.Nodes), capped.Folded)
+	}
+	if last := capped.Nodes[len(capped.Nodes)-1]; last.ID != "others" || last.Label != "21 others" {
+		t.Errorf("last node %+v, want the 21 others", last)
+	}
+	for _, n := range []int{60, 120, 300} {
+		g := overviewOf(t, teams(t, n, true), "").Graph
+		if g.Truncated || len(g.Edges) > maxEdges || g.Folded == 0 {
+			t.Errorf("%d dense namespaces: %d nodes, %d folded, %d edges, truncated %v", n, len(g.Nodes), g.Folded, len(g.Edges), g.Truncated)
+		}
+		// A namespace letting every namespace in lets its own pods in too.
+		for _, node := range g.Nodes {
+			if node.Kind == nodeNamespace && node.Internal == 0 {
+				t.Fatalf("%d dense namespaces: %s has no internal rule", n, node.ID)
+			}
+		}
+		// Every pair of nodes kept, "others" included, still carries its allow.
+		allowed := map[string]bool{}
+		for _, e := range g.Edges {
+			if e.Kind == "allow" {
+				allowed[e.From+">"+e.To] = true
+			}
+		}
+		for _, a := range g.Nodes {
+			for _, b := range g.Nodes {
+				if a.ID != b.ID && !allowed[a.ID+">"+b.ID] {
+					t.Fatalf("%d dense namespaces: %s → %s lost its allow (%d nodes, %d edges)", n, a.ID, b.ID, len(g.Nodes), len(g.Edges))
+				}
+			}
+		}
+	}
+}
+
+// teams is n namespaces, each with a pod and a policy letting in every
+// namespace (dense) or only its own pods (sparse).
+func teams(t *testing.T, n int, dense bool) *fakeHost {
+	t.Helper()
 	h := newHost()
-	for i := range 120 {
+	for i := range n {
 		ns := fmt.Sprintf("team-%03d", i)
 		h.namespace(t, ns, nil)
-		h.pod(t, ns, "app", fmt.Sprintf("10.1.%d.1", i), map[string]string{"app": "app"})
+		h.pod(t, ns, "app", fmt.Sprintf("10.%d.%d.1", 1+i/250, i%250), map[string]string{"app": "app"})
 		p := np(ns, "from-all", nil)
-		p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{nsPeer(nil)}}}
+		peer := podPeer(nil)
+		if dense {
+			peer = nsPeer(nil)
+		}
+		p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{peer}}}
 		h.policy(t, p)
 	}
-	g := overviewOf(t, h, "").Graph
-	if len(g.Nodes) > maxNodes || g.Folded == 0 || len(g.Edges) > maxEdges {
-		t.Errorf("%d nodes (%d folded), %d edges", len(g.Nodes), g.Folded, len(g.Edges))
-	}
+	return h
 }
 
 func TestPodsArePaged(t *testing.T) {
@@ -275,5 +322,52 @@ func TestSuggestCountsThePolicies(t *testing.T) {
 	h.listErr["networkpolicies"] = fmt.Errorf("list: %w", extension.ErrDenied)
 	if _, err := New().Suggest(r, h, "kind"); err == nil {
 		t.Error("a refused listing is an error, never nothing found")
+	}
+}
+
+// A peer naming everyone is never folded into "others", however little it is
+// connected: the page spreads its rules over every pair it covers.
+func TestAnyoneIsNeverFolded(t *testing.T) {
+	// Dense namespaces, each far more connected than the one Anyone edge.
+	h := teams(t, 120, true)
+	h.namespace(t, "zz-open", nil)
+	h.pod(t, "zz-open", "app", "10.9.9.1", map[string]string{"app": "app"})
+	p := np("zz-open", "open-to-all", nil)
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
+	h.policy(t, p)
+	g := overviewOf(t, h, "").Graph
+	if g.Folded == 0 {
+		t.Fatalf("nothing folded: %d nodes", len(g.Nodes))
+	}
+	found := false
+	for _, n := range g.Nodes {
+		found = found || n.ID == "anyone"
+	}
+	if !found {
+		t.Errorf("anyone was folded into others (%d nodes, %d folded)", len(g.Nodes), g.Folded)
+	}
+}
+
+// "others" says how many of what it holds are not namespaces: an address
+// block never refuses, so the page must not take such an "others" as
+// isolated.
+func TestOthersCountsTheEndsItHolds(t *testing.T) {
+	h := teams(t, 120, true)
+	p := np("team-000", "out-to-a-block", nil)
+	p.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+	p.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.0/24"}}}}}
+	h.policy(t, p)
+	g := overviewOf(t, h, "").Graph
+	var others *Node
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == "others" {
+			others = &g.Nodes[i]
+		}
+		if strings.HasPrefix(g.Nodes[i].ID, "cidr:") {
+			t.Fatalf("the block was kept (%d nodes): pick a denser cluster", len(g.Nodes))
+		}
+	}
+	if others == nil || others.Ends != 1 {
+		t.Errorf("others %+v, want one end", others)
 	}
 }

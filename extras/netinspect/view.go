@@ -12,9 +12,12 @@ const (
 	// podsPerPage is the pod rows in one answer; the page asks for the next
 	// ones with offset.
 	podsPerPage = 300
-	// maxNodes is the graph's nodes; the least connected beyond it are
-	// folded into one "others" node.
-	maxNodes = 40
+	// maxNodes is the cluster graph's nodes; the least connected beyond it
+	// are folded into one "others" node, and more of them when the edges
+	// between the rest would not fit in maxEdges (finish). The page draws
+	// only the busiest of them and folds the rest itself, so this bounds the
+	// answer, not the picture: a namespace kept here can be found and drawn.
+	maxNodes = 300
 	// maxEdges is the graph's edges, the busiest kept.
 	maxEdges = 2_000
 	// maxRows caps the namespace and policy tables.
@@ -128,9 +131,17 @@ type Graph struct {
 	Edges []Edge `json:"edges"`
 	// Folded is how many nodes went into "others".
 	Folded int `json:"folded"`
-	// EdgesTotal is every edge before the cap.
+	// EdgesTotal is every edge before the nodes were folded.
 	EdgesTotal int `json:"edgesTotal"`
+	// Truncated says the edges between the nodes kept did not all fit and
+	// some were left out: the page then draws no verdict on a pair with no
+	// edge. Folding normally makes them fit, so this is the last resort.
+	Truncated bool `json:"truncated"`
 }
+
+// everyone are the nodes that name every pod: a rule's empty peer, and
+// Cilium's all and cluster entities.
+var everyone = map[string]bool{"anyone": true, "entity:all": true, "entity:cluster": true}
 
 // Node kinds.
 const (
@@ -157,6 +168,10 @@ type Node struct {
 	// Internal is rules whose both ends fall inside this node (a namespace
 	// allowing its own pods), drawn as a count rather than a loop.
 	Internal int `json:"internal"`
+	// Ends is, on "others", how many of the nodes it holds are not
+	// namespaces (a CIDR, world, an entity): such an end never refuses, so
+	// "others" cannot be called isolated when it holds one.
+	Ends int `json:"ends,omitempty"`
 }
 
 // Edge is "a rule lets From reach To". Side says which end's policy says so:
@@ -559,11 +574,14 @@ func (m *model) clusterGraph(rows map[string]*NSRow) Graph {
 	return g.finish("cluster", "")
 }
 
-// finish caps the graph: the busiest edges, the most connected nodes, the
-// rest folded into "others". Sorted, so the same cluster draws the same
-// picture.
+// finish caps the graph: the most connected nodes, the rest folded into
+// "others", and **every edge between what is kept**. Where the edges of the
+// first maxNodes nodes would not fit in maxEdges, fewer nodes are kept until
+// they do: an edge left out would read, on the page, as a pair no rule
+// allows. Only if even two nodes and "others" carried more than maxEdges is
+// the list cut, and Truncated says so. Sorted, so the same cluster draws the
+// same picture.
 func (g *graphBuilder) finish(scope, focus string) Graph {
-	out := Graph{Scope: scope, Nodes: []Node{}, Edges: []Edge{}, EdgesTotal: len(g.edges)}
 	degree := map[string]int{}
 	for _, e := range g.edges {
 		degree[e.from] += e.rules
@@ -575,6 +593,12 @@ func (g *graphBuilder) finish(scope, focus string) Graph {
 	}
 	sort.Slice(ids, func(i, j int) bool {
 		a, b := g.nodes[ids[i]], g.nodes[ids[j]]
+		// A peer naming everyone is never folded: its rules speak for every
+		// pair it covers, which the page can only draw if it can tell them
+		// from the rules of the namespaces folded beside it.
+		if ei, ej := everyone[ids[i]], everyone[ids[j]]; ei != ej {
+			return ei
+		}
 		if degree[ids[i]] != degree[ids[j]] {
 			return degree[ids[i]] > degree[ids[j]]
 		}
@@ -583,16 +607,82 @@ func (g *graphBuilder) finish(scope, focus string) Graph {
 		}
 		return ids[i] < ids[j]
 	})
+	// The most nodes whose merged edges fit, found by halving: folding one
+	// more node into "others" never adds an edge, so the count only falls
+	// as fewer are kept.
+	keep := min(len(ids), maxNodes)
+	if !g.fits(ids, keep) {
+		lo, hi := 2, keep // fits(lo) is assumed; hi does not fit
+		for lo+1 < hi {
+			mid := (lo + hi) / 2
+			if g.fits(ids, mid) {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+		keep = lo
+	}
+	out := g.foldAt(scope, ids, keep)
+	if len(out.Edges) > maxEdges {
+		out.Edges = out.Edges[:maxEdges]
+		out.Truncated = true
+	}
+	return out
+}
+
+// fits says whether keeping the first keep of ids leaves at most maxEdges
+// merged edges. It only counts, and stops as soon as the count is over.
+func (g *graphBuilder) fits(ids []string, keep int) bool {
+	if len(ids) <= keep {
+		keep = len(ids) + 1 // nothing folded
+	}
+	rank := make(map[string]int, len(ids))
+	for i, id := range ids {
+		if i < keep-1 {
+			rank[id] = i
+		} else {
+			rank[id] = len(ids) // "others"
+		}
+	}
+	kinds := map[string]uint64{}
+	seen := make(map[uint64]struct{}, maxEdges+1)
+	for _, e := range g.edges {
+		from, to := rank[e.from], rank[e.to]
+		if from == to {
+			continue
+		}
+		k, ok := kinds[e.kind]
+		if !ok {
+			k = uint64(len(kinds))
+			kinds[e.kind] = k
+		}
+		seen[k<<42|uint64(from)<<21|uint64(to)] = struct{}{}
+		if len(seen) > maxEdges {
+			return false
+		}
+	}
+	return true
+}
+
+// foldAt is the graph keeping the first keep of ids (already in order) and
+// folding the rest into "others", with every edge between what is left,
+// merged, busiest first.
+func (g *graphBuilder) foldAt(scope string, ids []string, keep int) Graph {
+	out := Graph{Scope: scope, Nodes: []Node{}, Edges: []Edge{}, EdgesTotal: len(g.edges)}
 	kept := map[string]string{}
 	others := &Node{ID: "others", Kind: nodeOthers}
 	for i, id := range ids {
-		if i < maxNodes-1 || len(ids) <= maxNodes {
+		if i < keep-1 || len(ids) <= keep {
 			kept[id] = id
 			out.Nodes = append(out.Nodes, *g.nodes[id])
 			continue
 		}
 		kept[id] = others.ID
 		n := g.nodes[id]
+		if n.Kind != nodeNamespace {
+			others.Ends++
+		}
 		others.Pods += n.Pods
 		others.IsolatedIn += n.IsolatedIn
 		others.IsolatedOut += n.IsolatedOut
@@ -649,9 +739,6 @@ func (g *graphBuilder) finish(scope, focus string) Graph {
 		}
 		return a.To < b.To
 	})
-	if len(out.Edges) > maxEdges {
-		out.Edges = out.Edges[:maxEdges]
-	}
 	return out
 }
 

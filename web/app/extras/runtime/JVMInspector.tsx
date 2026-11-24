@@ -39,7 +39,7 @@ import {
 import JVMTab from './JVMTab';
 
 /**
- * The JVM Inspector, at `/c/:cluster/x/jvm`: the pods that probably run Java,
+ * The Runtime Inspector's page, at `/c/:cluster/x/runtime` (`x/jvm` before 0.2.0, redirected): the pods that probably run Java,
  * recognized from their spec, and for each Java container how close its
  * maximum heap comes to its memory limit.
  *
@@ -60,7 +60,7 @@ import JVMTab from './JVMTab';
  */
 export function JVMInspector(): ReactNode {
   const { cluster = '' } = useParams<{ cluster: string }>();
-  useDeclarePageFacts({ title: 'JVM Inspector' });
+  useDeclarePageFacts({ title: 'Runtime Inspector' });
   const [ns, setNs] = useUrlParameter('ns');
   const [risk, setRisk] = useUrlParameter('risk');
   const [group, setGroup] = useUrlParameter('group');
@@ -85,7 +85,7 @@ export function JVMInspector(): ReactNode {
           className="text-lg font-semibold"
           title="Probable Java pods, read from their spec. The risk compares the estimated maximum heap with the memory limit; the 75 % line is a heuristic, not a JDK rule."
         >
-          JVM Inspector
+          Runtime Inspector
         </h1>
         <button
           type="button"

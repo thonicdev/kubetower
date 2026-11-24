@@ -651,6 +651,12 @@ const (
 // release.yml and the three it calls. ci.yml's full tier calls the same three,
 // which is why they take RUNS_ON_RELEASE for every caller: their steps need gh
 // and hfsprogs, which not every runner carries.
+// offPool is the one job allowed off the pool, and the one runner it must
+// use: release.yml's sign job writes the release's private key to disk, and a
+// self-hosted VM keeps its disk (#46). It may not read RUNS_ON_RELEASE, so a
+// variable can never send the key to the pool.
+var offPool = map[[2]string]string{{"release.yml", "sign"}: "ubuntu-latest"}
+
 var releaseFiles = map[string]bool{
 	"release.yml": true, "dmg.yml": true, "appimage.yml": true, "linux-packages.yml": true,
 }
@@ -752,6 +758,13 @@ func runsOnProblems(name string, raw []byte, local map[string]bool) ([]string, i
 		job := workflow.Jobs[id]
 		where := fmt.Sprintf("%s job %q", name, id)
 		got, hasRunsOn := job["runs-on"]
+		if hosted, ok := offPool[[2]string{name, id}]; ok {
+			if got != hosted {
+				problems = append(problems, fmt.Sprintf("%s runs on %v: it holds the release's private key, "+
+					"so it runs on %s and nowhere else - write `runs-on: %s`", where, got, hosted, hosted))
+			}
+			continue
+		}
 		if uses, ok := job["uses"]; ok {
 			// A reusable workflow's jobs choose their own runners, in a file
 			// this test reads only when it is one of ours, here.
@@ -850,6 +863,12 @@ func TestTheRunsOnRuleRefusesEachWayRoundIt(t *testing.T) {
 		{"dmg with the ordinary expression", "dmg.yml", job(runsOn), true},
 		{"release's image on ubuntu-latest", "release.yml", job("ubuntu-latest"), true},
 		{"release's draft on a self-hosted label list", "release.yml", job("[self-hosted, linux, release]"), true},
+		// The one job off the pool: release.yml's sign, on ubuntu-latest only.
+		{"release's sign on ubuntu-latest", "release.yml", "jobs:\n  sign:\n    runs-on: ubuntu-latest\n", false},
+		{"release's sign on the release's expression", "release.yml", "jobs:\n  sign:\n    runs-on: \"" + releaseRunsOn + "\"\n", true},
+		{"release's sign on a self-hosted label list", "release.yml", "jobs:\n  sign:\n    runs-on: [self-hosted, linux]\n", true},
+		{"release's sign on another hosted image", "release.yml", "jobs:\n  sign:\n    runs-on: ubuntu-24.04\n", true},
+		{"a job named sign in another file on ubuntu-latest", "ci.yml", "jobs:\n  sign:\n    runs-on: ubuntu-latest\n", true},
 		{"the release's expression in ci.yml", "ci.yml", job(releaseRunsOn), true},
 		{"the release's expression in smoke.yml", "smoke.yml", job(releaseRunsOn), true},
 	} {
@@ -2212,5 +2231,86 @@ func TestTheFreshCacheRuleRefusesEachWayRoundIt(t *testing.T) {
 		if len(freshCacheProblems(j)) == 0 {
 			t.Errorf("%s: the rule let it through", name)
 		}
+	}
+}
+
+// TestTheReleaseSignsChecksumsOffThePool (#46). The private key reaches one
+// step of one job, on a GitHub-hosted runner; the draft publishes the
+// signature only beside the exact bytes signed; nothing on the pool sees it.
+func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("..", "..", ".github", "workflows", "release.yml")); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("release.yml is not in this tree, so the signing is UNCHECKED here: %v", err)
+	}
+	jobs := workflowJobs(t, "release.yml")
+	sign, ok := jobs["sign"]
+	if !ok {
+		t.Fatal("release.yml has no sign job")
+	}
+	if got := sign["runs-on"]; got != "ubuntu-latest" {
+		t.Errorf("the sign job runs on %v, not ubuntu-latest", got)
+	}
+	perms, _ := sign["permissions"].(map[string]any)
+	for scope, level := range perms {
+		if level == "write" {
+			t.Errorf("the sign job holds %s: write; it needs none", scope)
+		}
+	}
+	// The secret appears in exactly one step, of this job only.
+	for name, job := range jobs {
+		for _, step := range steps(job) {
+			env, _ := step["env"].(map[string]any)
+			text := jobText(map[string]any{"steps": []any{step}})
+			has := strings.Contains(text, "secrets.RELEASE_SIGNING_KEY")
+			if has && (name != "sign" || step["id"] != "sign") {
+				t.Errorf("release.yml's %s job step %q reads RELEASE_SIGNING_KEY; only sign's signing step may", name, step["name"])
+			}
+			if name == "sign" && step["id"] == "sign" && env["RELEASE_SIGNING_KEY"] != "${{ secrets.RELEASE_SIGNING_KEY }}" {
+				t.Errorf("the signing step does not take the key from its env (%v)", env["RELEASE_SIGNING_KEY"])
+			}
+		}
+	}
+	signStep := stepWhere(sign, func(s map[string]any) bool { return s["id"] == "sign" })
+	if signStep < 0 {
+		t.Fatal("the sign job has no step with id sign")
+	}
+	run, _ := steps(sign)[signStep]["run"].(string)
+	for _, want := range []string{
+		`if [ -z "$RELEASE_SIGNING_KEY" ]; then`,
+		"umask 077",
+		`printf '%s\n' "$RELEASE_SIGNING_KEY" > "$KEY_DIR/key.pem"`,
+		`openssl pkeyutl -sign -rawin -inkey "$KEY_DIR/key.pem"`,
+		`rm -f "$KEY_DIR/key.pem"`,
+		"openssl pkeyutl -verify -rawin -pubin -inkey internal/releasesig/release-key.pem",
+		`echo "$SUMS  $WORK/checksums.txt" | sha256sum --check --strict`,
+	} {
+		if !strings.Contains(run, want) {
+			t.Errorf("the signing step does not carry %q", want)
+		}
+	}
+	for _, refused := range []string{"set -x", "set -eux", `echo "$RELEASE_SIGNING_KEY`, "cat \"$KEY_DIR"} {
+		if strings.Contains(run, refused) {
+			t.Errorf("the signing step carries %q, which can print the key", refused)
+		}
+	}
+	all := steps(sign)
+	last := all[len(all)-1]
+	clean, _ := last["run"].(string)
+	if fmt.Sprint(last["if"]) != "always()" || !strings.Contains(clean, `for d in "$KEY_DIR" "$WORK"; do`) || !strings.Contains(clean, "exit $rc") {
+		t.Error("the sign job does not end on an always() step removing the key directory")
+	}
+
+	// The draft waits for sign, and attaches the signature only to the bytes signed.
+	draft := jobs["draft"]
+	needs, _ := draft["needs"].([]any)
+	if !slices.Contains(needs, any("sign")) {
+		t.Errorf("the draft job does not need sign (%v)", needs)
+	}
+	attach := stepWhere(draft, runs(`echo "$SIGNED  checksums.txt" | sha256sum --check --strict`))
+	sums := stepWhere(draft, runs(`sha256sum --check --strict checksums.txt`))
+	switch {
+	case attach < 0:
+		t.Error("the draft does not check checksums.txt against the hash the sign job signed")
+	case sums < 0 || attach < sums:
+		t.Error("the draft attaches the signature before it has checked every asset")
 	}
 }
