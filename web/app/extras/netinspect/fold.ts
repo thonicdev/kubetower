@@ -207,9 +207,12 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     // toward an isolated namespace would read refused. It is one side's
     // half only: an ingress one never answers for the source's egress, nor
     // an egress one for the destination's ingress.
-    const covered = (id: string) => nodes.filter((n) => n.id !== id && covers(id, n));
-    if (EVERYONE.has(e.from)) for (const n of covered(from)) add(`${n.id}>${to}`, e);
-    if (EVERYONE.has(e.to)) for (const n of covered(to)) add(`${from}>${n.id}`, e);
+    // Who it covers is read from the rule's own peer, not from where it is
+    // drawn: a cluster entity folded into "others" still covers only the
+    // namespaces.
+    const covered = (drawnAt: string, peer: string) => nodes.filter((n) => n.id !== drawnAt && covers(peer, n));
+    if (EVERYONE.has(e.from)) for (const n of covered(from, e.from)) add(`${n.id}>${to}`, e);
+    if (EVERYONE.has(e.to)) for (const n of covered(to, e.to)) add(`${from}>${n.id}`, e);
   }
   for (const e of seen) {
     const from = drawn(e.from);

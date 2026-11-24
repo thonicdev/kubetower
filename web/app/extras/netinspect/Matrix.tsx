@@ -151,9 +151,11 @@ export function Matrix({
 
 type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
 
-/** Every pod of a namespace is isolated that way: nothing passes unless a rule of its own lets it. */
-const isolatedIn = (n: GraphNode) => n.kind === 'namespace' && n.pods > 0 && n.isolatedIn >= n.pods;
-const isolatedOut = (n: GraphNode) => n.kind === 'namespace' && n.pods > 0 && n.isolatedOut >= n.pods;
+/** Every pod of a namespace, or of every namespace "others" holds, is
+ *  isolated that way: nothing passes unless a rule of its own lets it. */
+const grouped = (n: GraphNode) => n.kind === 'namespace' || n.kind === 'others';
+const isolatedIn = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedIn >= n.pods;
+const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut >= n.pods;
 
 /**
  * What the rules say of one pair. A flow passes only if **each** isolated
@@ -162,17 +164,27 @@ const isolatedOut = (n: GraphNode) => n.kind === 'namespace' && n.pods > 0 && n.
  * deny anywhere wins. A namespace to itself is allowed when a rule speaks
  * between its own pods (`internal`). On a cut answer nothing but a deny is
  * concluded: a rule left out could deny or allow any pair.
+ *
+ * "others" stands for several namespaces, and a rule on the cell may be any
+ * one member's. So a cell touching it is refused only when every member
+ * refuses (all isolated on that side, and no rule of that side on the
+ * cell), and never allowed: what one member allows, another may refuse.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   if (cell !== undefined && cell.deny.length > 0) return 'denied';
   if (cut) return 'unknown';
-  if (from.id === to.id && to.internal > 0) return 'inside';
+  const mixed = from.kind === 'others' || to.kind === 'others';
+  // Rules between two folded namespaces are not sent at all (the server
+  // drops a merged edge from "others" to itself): nothing to conclude.
+  if (from.kind === 'others' && to.kind === 'others') return 'folded';
+  if (!mixed && from.id === to.id && to.internal > 0) return 'inside';
   const inOK = !isolatedIn(to) || cell?.allowIn === true;
   const outOK = !isolatedOut(from) || cell?.allowOut === true;
   if (inOK && outOK) {
+    if (mixed) return 'folded';
     if (cell !== undefined && cell.allow.length > 0) return 'allowed';
     if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
-    return to.kind === 'others' ? 'folded' : 'open';
+    return 'open';
   }
   if (cell !== undefined && cell.unevaluated.length > 0) return 'unevaluated';
   return inOK ? 'refusedOut' : 'refused';
@@ -198,7 +210,7 @@ const WORD: Record<State, string> = {
   refused: 'refused: the destination is isolated and no rule lets this in',
   refusedOut: 'refused: the source is isolated and no rule lets this out',
   open: 'open: no policy isolates the destination',
-  folded: 'no rule toward the folded namespaces',
+  folded: 'folded: the namespaces in others may answer differently',
   unknown: 'unknown: the rules were cut',
 };
 

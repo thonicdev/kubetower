@@ -150,3 +150,23 @@ describe('a rule open to everyone', () => {
     expect(f.cells.get('entity:world>ns:team-001')).toBeUndefined();
   });
 });
+
+describe('a cluster entity folded into others', () => {
+  it('still covers the namespaces only, not an end outside the cluster drawn on its own', () => {
+    const world: GraphNode = { id: 'entity:world', label: 'world', kind: 'entity', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
+    const cluster: GraphNode = { id: 'entity:cluster', label: 'cluster', kind: 'entity', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
+    const spaces = Array.from({ length: 12 }, (_, i) => ns(i, { isolatedIn: 2 }));
+    // Each namespace busier than the one cluster rule, and world busiest by traffic: cluster is the one folded.
+    const ring = spaces.map((n, i) => allow(n.id, spaces[(i + 1) % 12]?.id ?? '', 2, 'ring'));
+    const f = fold(
+      { scope: 'cluster', nodes: [...spaces, world, cluster], edges: [...ring, allow('entity:cluster', 'ns:team-000', 1, 'from-cluster')], folded: 0, edgesTotal: 13 },
+      [flow('entity:world', 'ns:team-005', 50)],
+      true,
+      ask({ top: 12 }),
+    );
+    expect(f.nodes.map((n) => n.id)).toContain('entity:world');
+    expect(f.nodes.map((n) => n.id)).not.toContain('entity:cluster');
+    expect(f.cells.get('ns:team-003>ns:team-000')?.allowIn).toBe(true);
+    expect(f.cells.get('entity:world>ns:team-000')?.allowIn ?? false).toBe(false);
+  });
+});
