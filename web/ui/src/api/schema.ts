@@ -1615,6 +1615,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/preferences/seen-version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the release whose "What's new" was seen.
+         * @description Desktop only, like every preference write (#80): the server profile keeps the last version seen in each browser.
+         */
+        post: operations["setSeenVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/preferences/columns/reset": {
         parameters: {
             query?: never;
@@ -2026,6 +2046,8 @@ export interface components {
             archive?: boolean;
             version?: string;
             revision?: string;
+            /** @description This build's bare version (`0.2.0`), as CHANGELOG.md spells it. Absent on a development build, which shows no "What's new" (#80). */
+            release?: string;
         };
         /**
          * @description A key on the nameplate palette: eight hues, a deep and a pale version of each (`internal/nameplates`). **A key and never a CSS value** - the client maps each key to a theme token (`--color-plate-*`), so no string from a cluster or a request ever reaches a class name or a style attribute. Sixteen and no more because the swatch grid is something a person points at, and the automatic color is drawn from the same sixteen, so a client has one map and no arithmetic.
@@ -4343,6 +4365,8 @@ export interface components {
          *       that is comfortable on one kind and compact on another is two grids.
          */
         Preferences: {
+            /** @description The last release whose "What's new" was seen on this desktop (#80). Absent where nothing was seen. */
+            seenVersion?: string;
             rail: {
                 /** @description How many hotbars this build offers. A server constant, sent because the bar switcher has to draw exactly that many digits and a client that assumed a number would be wrong in the direction that hides a bar's worth of clusters. */
                 barCount?: number;
@@ -4469,6 +4493,10 @@ export interface components {
         ColumnDensityWrite: {
             /** @enum {string} */
             density: "comfortable" | "compact";
+        };
+        /** @description The release whose "What's new" was seen (#80). */
+        SeenVersionWrite: {
+            version: string;
         };
         /**
          * @description Three arrangements, made by three gestures: a width comes off a drag on a grip, an order off a drag on a heading, a hidden column off a tick. Undoing all three to get one of them back would silently lose the other two, so each can be forgotten on its own.
@@ -7004,6 +7032,34 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ColumnDensityWrite"];
+            };
+        };
+        responses: {
+            /** @description Written. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            500: components["responses"]["NotSaved"];
+        };
+    };
+    setSeenVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeenVersionWrite"];
             };
         };
         responses: {

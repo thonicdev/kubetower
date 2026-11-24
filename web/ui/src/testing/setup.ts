@@ -8,6 +8,7 @@ import { resetColumnMemory } from '../pages/resources/columnMemory';
 import { resetDrawerWidth } from '../shell/drawerWidth';
 import { resetFirstIcons } from '../shell/firstIcon';
 import { resetKindsMemory } from '../shell/kindsMemory';
+import { resetSeenMemory } from '../whatsnew/seenMemory';
 import { resetMenuMode, resetOpenGroups } from '../shell/menuMemory';
 import { resetNamespaceMemory } from '../shell/namespaceMemory';
 import { resetNavMemory } from '../shell/navMemory';
@@ -58,6 +59,7 @@ const memory: readonly { readonly prefix: string; readonly forget?: () => void }
   { prefix: 'kubetower.extracolumns', forget: resetExtraColumnMemory },
   { prefix: 'kubetower.drawer.width', forget: resetDrawerWidth },
   { prefix: 'kubetower.kinds', forget: resetKindsMemory },
+  { prefix: 'kubetower.seenVersion', forget: resetSeenMemory },
 ];
 
 // **Every rendered tree is unmounted after its test, here rather than in each

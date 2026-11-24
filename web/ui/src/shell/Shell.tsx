@@ -18,6 +18,7 @@ import { Suggestions } from './Suggestions';
 import { Topbar } from './Topbar';
 import { forgetOtherClusters } from './navMemory';
 import { useRailDrawn } from './railDrawn';
+import { WhatsNewBanner } from '../whatsnew/WhatsNew';
 
 /**
  * The application shell.
@@ -135,6 +136,8 @@ export function Shell(): ReactNode {
               indicator from what the page declared through `pageFacts`, never
               from being rendered - see `Topbar.tsx`. */}
           <Topbar />
+          {/* Welcome and What's new (#80), on the first visit of a release. */}
+          <WhatsNewBanner />
           {/* An extension the cluster gives a reason to turn on,
               above the page and outside it, like the
               breadcrumb: it stays while one navigates the cluster. */}

@@ -4,6 +4,11 @@ Every release of KubeTower, newest first. Versions are bare semver tags
 (`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
 built from its tag.
 
+This file is built into the console, whose What's new banner shows each
+release's highlights: every entry under `### Added`, and an entry under
+`### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
+per release. Keep the bold lead short: it is all the banner draws.
+
 ## 0.1.1 — AWS sign-in fixes
 
 ### Fixed

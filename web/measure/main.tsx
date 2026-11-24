@@ -36,6 +36,8 @@ import { redis } from '../app/extras/redis';
 
 import { ACTIVITY_EXTRA, activityAnswers, activityPath } from './events.fixture';
 import { UPDATE_STEPS, updateSettings } from './update.fixture';
+import { replaceReleases } from '../ui/src/whatsnew/changelog';
+import { WHATS_NEW_RELEASES, whatsNewAnswers } from './whatsnew.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
 import { EXTRA_CLUSTER, EXTRA_SCENES, ExtraProblem, type ExtraAnswer } from './extras.fixture';
 import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
@@ -116,6 +118,8 @@ import { ExtraTab } from '../ui/src/pages/settings/ExtraTab';
 
 const parameters = new URLSearchParams(window.location.search);
 const scene = parameters.get('scene') ?? '';
+// The What's new scenes draw from fake releases; no other scene states a release.
+if (scene.startsWith('console-whats-new-')) replaceReleases(WHATS_NEW_RELEASES);
 
 /**
  * The panel the list scenes are drawn in, in pixels; 1290 by default.
@@ -1299,6 +1303,13 @@ const CONSOLES: Readonly<
       `console-update-${phase}`,
       { at: '/settings/infos', answers: { ...OVERVIEW_ANSWERS, ...updateSettings(install) } },
     ]),
+  ),
+  // Welcome and What's new (#80): a first visit, an upgrade across two
+  // releases with highlights, and a release with nothing notable.
+  ...Object.fromEntries(
+    Object.entries(whatsNewAnswers(OVERVIEW_ANSWERS['/api/capabilities'] as Readonly<Record<string, unknown>>)).map(
+      ([state, answers]) => [`console-whats-new-${state}`, { at: `/c/${OVERVIEW_CLUSTER}`, answers: { ...OVERVIEW_ANSWERS, ...answers } }],
+    ),
   ),
   'console-update-badge': {
     at: `/c/${OVERVIEW_CLUSTER}`,

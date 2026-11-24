@@ -44,6 +44,8 @@ docs
 *.md
 !LICENSE
 !LICENSING.md
+# Embedded in the console's bundle: What's new (#80).
+!CHANGELOG.md
 
 # Development-only, and named rather than swept up by a pattern so that removing
 # one is a decision. `compose.dev.yaml` ships nowhere and

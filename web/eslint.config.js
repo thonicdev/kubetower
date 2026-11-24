@@ -241,6 +241,8 @@ export default tseslint.config(
     //   shell/kindsMemory.ts    whether the kinds column shows the kinds holding
     //                           nothing, and the favorite kinds per cluster,
     //                           where the server keeps none
+    //   whatsnew/seenMemory.ts  the last release whose What's new was seen,
+    //                           where the server keeps none
     //
     // Apart from the dock's tab list, each holds names or numbers the address
     // or the menu already carry. None of them holds the session.
@@ -257,6 +259,7 @@ export default tseslint.config(
       'ui/src/shell/namespaceMemory.ts',
       'ui/src/shell/suggestionMemory.ts',
       'ui/src/shell/kindsMemory.ts',
+      'ui/src/whatsnew/seenMemory.ts',
     ],
     rules: {
       // Off here: the bare storage globals, and nothing else. The network half
