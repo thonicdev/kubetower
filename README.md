@@ -44,7 +44,9 @@ Download from the [Releases](https://github.com/thonicdev/kubetower/releases) pa
 | Linux | `.deb`, `.rpm`, `.AppImage` or `.tar.gz` |
 | Kubernetes | image `ghcr.io/thonicdev/kubetower:<version>` through the [Helm chart](https://github.com/thonicdev/kubetower-helm-charts) |
 
-Every file is listed in `checksums.txt`; see [`docs/INSTALL.md`](docs/INSTALL.md) for details and how to [check a download](docs/INSTALL.md#check-a-download).
+Every file is listed in `checksums.txt`, signed with the project's Ed25519 key (`checksums.txt.sig`); see [`docs/INSTALL.md`](docs/INSTALL.md) for details and how to [check a download](docs/INSTALL.md#check-a-download) with OpenSSL.
+
+The desktop then updates itself from **Settings**: Download, verified against that signature, then Restart to update ([Updating](docs/INSTALL.md#updating)).
 
 ### Unsigned builds
 
