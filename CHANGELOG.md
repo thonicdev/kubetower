@@ -4,6 +4,64 @@ Every release of KubeTower, newest first. Versions are bare semver tags
 (`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
 built from its tag.
 
+## 0.1.2 — signed updates, Redis viewer and Network Inspector fixes
+
+### Added
+
+- **Releases are signed.** `checksums.txt` is published with an Ed25519
+  signature, `checksums.txt.sig`, and the desktop verifies it against a key
+  built into the binary before it trusts any hash (#46, #52).
+- **The desktop can download a newer release and verify it.** Behind an
+  **Install updates** setting, on by default and desktop only: the asset for
+  this installation is fetched from GitHub over HTTPS and kept only when its
+  sha256 matches the signed `checksums.txt`. Nothing installs yet without an
+  installer for the platform (#47, #53).
+- **Settings has a Back control** to the page it was opened from, its
+  filters and open object included (#13, #30).
+- **Settings › Extra reads at a glance.** Each extra has its icon, Edit and
+  About sit side by side, and About only informs (#14, #29). An extra the
+  cluster gives a reason to turn on carries a **Suggested** badge, the reason
+  in its tooltip, and comes first (#62, #63).
+- **Network Inspector: the namespace matrix stays readable on large
+  clusters.** It draws the busiest namespaces and folds the rest into
+  "others", with Find, an order and an Active filter kept in the address
+  (#15, #25).
+- **Network Inspector: a pod's network picture opens enlarged**, in the same
+  dialog as its metrics (#16, #32).
+- **Redis viewer: an ExternalName Service to a managed Redis is listed** as
+  outside the cluster, and never connected to: a host that names Redis or
+  Valkey, Amazon ElastiCache and MemoryDB, Azure Cache for Redis Enterprise,
+  Redis Cloud, and Aiven when its name or port also says Redis (#43, #74,
+  #75, #76).
+
+### Fixed
+
+- **Redis viewer: more Redis and Valkey are recognised.**
+  - an image a private registry renamed (`infra-valkey`, `redis-cluster`)
+    (#39, #40);
+  - an `app` or `app.kubernetes.io/name` label that contains `redis` or
+    `valkey`, on the Service or its pods (#42, #54);
+  - a container that runs `redis-server` or `valkey-server` from an image of
+    any name (#71, #72).
+
+  A pod's label counts only for a port that reaches it, and more tools
+  (dashboards, exporters, GUIs) are left out (#66, #68).
+- **Redis viewer: a tile that could not be checked says so**, with a
+  `not checked` badge and the reason in its tooltip, when the namespace cannot
+  be read (#41, #44).
+- **Redis viewer: its menu entry is back** once it is turned on (#23, #24).
+- **Network Inspector: Hubble UI and Whisker open from the desktop window**,
+  in the default browser, instead of failing (#26, #28).
+- **Network Inspector: a rule open to everyone** no longer draws its
+  namespace as refused in the matrix (#67, #69).
+- **Event Intelligence: long names stay readable.** They are cut in the
+  middle, keeping the part that tells pods apart, and the page keeps its
+  width (#34, #37).
+- **The unused kinds toggle says Show or Hide** by its state (#60, #61).
+- **Credential plugins other than the AWS CLI keep their own state.** Only
+  the AWS CLI runs under the private home; every other credential plugin
+  sees the real one again (#10, #73).
+
 ## 0.1.1 — AWS sign-in fixes
 
 ### Fixed
