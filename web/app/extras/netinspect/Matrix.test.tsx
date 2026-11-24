@@ -120,3 +120,133 @@ describe('a cluster where every namespace lets every namespace in', () => {
     expect(document.querySelector('[data-matrix-cut]')).not.toBeNull();
   });
 });
+
+describe('a namespace open to everyone', () => {
+  it('reads refused from no namespace', () => {
+    const isolated = (i: number): GraphNode => ({ ...ns(i), isolatedIn: 2 });
+    const g: Graph = {
+      scope: 'cluster',
+      nodes: [isolated(0), isolated(1), isolated(2), { id: 'anyone', label: 'Anyone', kind: 'anyone', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 }],
+      edges: [{ kind: 'allow', from: 'anyone', to: 'ns:team-001', side: 'ingress', ports: ['every port'], policies: ['open-to-all'], rules: 1 }],
+      folded: 0,
+      edgesTotal: 1,
+    };
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams())} onAsk={() => undefined} onNamespace={() => undefined} />);
+    const column = [...document.querySelectorAll('[data-cell$=">ns:team-001"]')];
+    expect(column).toHaveLength(4);
+    expect(column.map((c) => c.getAttribute('data-state'))).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
+    // A column no rule opens is still refused.
+    expect(document.querySelector('[data-cell="ns:team-000>ns:team-002"]')?.getAttribute('data-state')).toBe('refused');
+  });
+});
+
+describe('each isolated side needs its own allow', () => {
+  const node = (i: number, inIso: boolean, outIso: boolean): GraphNode => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0 });
+  const anyone: GraphNode = { id: 'anyone', label: 'Anyone', kind: 'anyone', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
+  const edge = (from: string, to: string, side: 'ingress' | 'egress', policy: string) => ({ kind: 'allow' as const, from, to, side, ports: ['every port'], policies: [policy], rules: 1 });
+  const show = (g: Graph) => render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams())} onAsk={() => undefined} onNamespace={() => undefined} />);
+  const state = (from: number, to: number) => document.querySelector(`[data-cell="ns:team-${String(from).padStart(3, '0')}>ns:team-${String(to).padStart(3, '0')}"]`)?.getAttribute('data-state');
+
+  it('reads every pair refused under default-deny ingress and allow-all egress in every namespace', () => {
+    const nodes = [0, 1, 2, 3].map((i) => node(i, true, true));
+    const edges = nodes.map((n) => edge(n.id, 'anyone', 'egress', 'allow-all-egress'));
+    show({ scope: 'cluster', nodes: [...nodes, anyone], edges, folded: 0, edgesTotal: edges.length });
+    for (const a of [0, 1, 2, 3]) for (const b of [0, 1, 2, 3]) if (a !== b) expect(state(a, b), `${String(a)}→${String(b)}`).toBe('refused');
+  });
+
+  it('reads an egress allow toward an open destination as allowed', () => {
+    show({ scope: 'cluster', nodes: [node(0, false, true), node(1, false, false), anyone], edges: [edge('ns:team-000', 'anyone', 'egress', 'out')], folded: 0, edgesTotal: 1 });
+    expect(state(0, 1)).toBe('allowed');
+  });
+
+  it('reads an ingress allow from everyone as refused from a source isolated for egress', () => {
+    show({ scope: 'cluster', nodes: [node(0, false, true), node(1, true, false), node(2, false, false), anyone], edges: [edge('anyone', 'ns:team-001', 'ingress', 'in')], folded: 0, edgesTotal: 1 });
+    expect(state(0, 1)).toBe('refusedOut');
+    expect(state(2, 1)).toBe('allowed');
+  });
+
+  it('reads the pair allowed when both halves are there', () => {
+    show({
+      scope: 'cluster',
+      nodes: [node(0, true, true), node(1, true, true), anyone],
+      edges: [edge('ns:team-000', 'anyone', 'egress', 'out'), edge('anyone', 'ns:team-001', 'ingress', 'in')],
+      folded: 0,
+      edgesTotal: 2,
+    });
+    expect(state(0, 1)).toBe('allowed');
+    expect(state(1, 0)).toBe('refused');
+  });
+
+  it('never reads allowed on a cut answer, a rule open to everyone or not', () => {
+    show({ scope: 'cluster', nodes: [node(0, false, false), node(1, true, false), anyone], edges: [edge('anyone', 'ns:team-001', 'ingress', 'in')], folded: 0, edgesTotal: 9, truncated: true });
+    expect(state(0, 1)).toBe('unknown');
+  });
+});
+
+describe('a cell touching others', () => {
+  // Twenty namespaces drawn twelve at a time: eight are in "others".
+  const many = (inIso: boolean, outIso: boolean): GraphNode[] => Array.from({ length: 20 }, (_, i) => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0 }));
+  const anyone: GraphNode = { id: 'anyone', label: 'Anyone', kind: 'anyone', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 };
+  const edge = (from: string, to: string, side: 'ingress' | 'egress') => ({ kind: 'allow' as const, from, to, side, ports: ['every port'], policies: ['p'], rules: 1 });
+  const show = (g: Graph) =>
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams('top=12&sort=name'))} onAsk={() => undefined} onNamespace={() => undefined} />);
+  const states = (selector: string) => [...document.querySelectorAll(selector)].map((c) => c.getAttribute('data-state'));
+
+  it('is never allowed under default-deny ingress and allow-all egress, and refused where every member refuses', () => {
+    const nodes = many(true, true);
+    show({ scope: 'cluster', nodes: [...nodes, anyone], edges: nodes.map((n) => edge(n.id, 'anyone', 'egress')), folded: 0, edgesTotal: 20 });
+    expect(document.querySelector('[data-heading-others]')).not.toBeNull();
+    const toOthers = states('[data-cell$=">others"]');
+    const fromOthers = states('[data-cell^="others>"]');
+    expect([...toOthers, ...fromOthers]).not.toContain('allowed');
+    expect(states('[data-cell="ns:team-000>others"]')).toEqual(['refused']);
+    expect(states('[data-cell="others>ns:team-000"]')).toEqual(['refused']);
+  });
+
+  it('is refused from others into an open-to-all namespace when every member is isolated for egress', () => {
+    const nodes = many(false, true);
+    show({ scope: 'cluster', nodes: [...nodes, anyone], edges: [edge('anyone', 'ns:team-001', 'ingress')], folded: 0, edgesTotal: 1 });
+    expect(states('[data-cell="others>ns:team-001"]')).toEqual(['refusedOut']);
+  });
+
+  it('is folded, not allowed, where a member may allow', () => {
+    const nodes = many(true, false);
+    show({ scope: 'cluster', nodes, edges: [edge('ns:team-000', 'ns:team-015', 'ingress')], folded: 0, edgesTotal: 1 });
+    expect(states('[data-cell="ns:team-000>others"]')).toEqual(['folded']);
+  });
+});
+
+describe('an others holding an end', () => {
+  const many = (inIso: boolean, outIso: boolean): GraphNode[] => Array.from({ length: 20 }, (_, i) => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0 }));
+  const end = (id: string, label: string, kind: GraphNode['kind']): GraphNode => ({ id, label, kind, pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 });
+  const edge = (from: string, to: string, side: 'ingress' | 'egress') => ({ kind: 'allow' as const, from, to, side, ports: ['443/TCP'], policies: ['p'], rules: 1 });
+  // Find keeps twelve namespaces: the other eight and the end are in "others".
+  const show = (g: Graph) =>
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams('top=12&sort=name&mq=team'))} onAsk={() => undefined} onNamespace={() => undefined} />);
+  const state = (key: string) => document.querySelector(`[data-cell="${key}"]`)?.getAttribute('data-state');
+
+  it('is not refused toward it from a source whose egress rule reaches the folded CIDR', () => {
+    const nodes = many(true, true);
+    show({ scope: 'cluster', nodes: [...nodes, end('cidr:203.0.113.0/24', '203.0.113.0/24', 'cidr')], edges: [edge('ns:team-000', 'cidr:203.0.113.0/24', 'egress')], folded: 0, edgesTotal: 1 });
+    expect(state('ns:team-000>others')).toBe('folded');
+  });
+
+  it('is not refused from it toward a namespace that lets world in, world folded with egress-isolated namespaces', () => {
+    const nodes = many(true, true);
+    show({ scope: 'cluster', nodes: [...nodes, end('entity:world', 'world', 'entity')], edges: [edge('entity:world', 'ns:team-000', 'ingress')], folded: 0, edgesTotal: 1 });
+    expect(state('others>ns:team-000')).toBe('folded');
+  });
+
+  it('is still refused when it holds namespaces only, all refusing', () => {
+    show({ scope: 'cluster', nodes: many(true, true), edges: [], folded: 0, edgesTotal: 0 });
+    expect(state('ns:team-000>others')).toBe('refused');
+    expect(document.querySelector('[data-matrix-legend]')?.textContent).toContain('folded');
+  });
+
+  it("takes the server's others as holding an end when it says so", () => {
+    const nodes = many(true, true).slice(0, 5);
+    const serverOthers: GraphNode = { id: 'others', label: '9 others', kind: 'others', pods: 16, isolatedIn: 16, isolatedOut: 16, internal: 0, ends: 1 };
+    show({ scope: 'cluster', nodes: [...nodes, serverOthers], edges: [edge('ns:team-000', 'others', 'egress')], folded: 9, edgesTotal: 1 });
+    expect(state('ns:team-000>others')).toBe('folded');
+  });
+});
