@@ -37,7 +37,7 @@ function stub(replies: Record<string, { status?: number; body: unknown }>): Aske
         body: typeof init?.body === 'string' ? init.body : null,
       });
       // The tab probes for jcmd on display; a JDK container answers it.
-      const reply = replies[`${method} ${url}`] ?? (method === 'GET' && url.endsWith('/tools') ? { body: { jcmd: true } } : undefined);
+      const reply = replies[`${method} ${url}`] ?? (method === 'POST' && url.endsWith('/tools') ? { body: { jcmd: true } } : undefined);
       if (reply === undefined) return Promise.resolve(new Response(`no stub for ${method} ${url}`, { status: 599 }));
       return Promise.resolve(
         new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { 'Content-Type': 'application/json' } }),
@@ -165,11 +165,12 @@ describe('the JVM tab', () => {
     expect(button.getAttribute('title')).toBe('Runs jcmd in container app (pods/exec, recorded in the audit log)');
     // No explanatory sentence is drawn under it.
     expect(document.body.textContent).not.toMatch(/Nothing runs until you click|recorded in the audit log/);
-    expect(asked.filter((a) => a.method !== 'GET')).toEqual([]);
+    // Nothing but the reads and the jcmd probe, a POST since #82.
+    expect(asked.filter((a) => a.method !== 'GET' && !a.url.endsWith('/tools'))).toEqual([]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Inspect' }));
     await screen.findByText('JDK 21.0.13');
-    const post = asked.find((a) => a.method === 'POST');
+    const post = asked.find((a) => a.method === 'POST' && !a.url.endsWith('/tools'));
     expect(post?.url).toBe(INSPECT);
     expect(post?.marked).toBe(true);
 
@@ -301,7 +302,8 @@ describe('the JVM tab holds nothing open', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(asked.length).toBe(before);
-    expect(asked.filter((a) => a.method === 'POST')).toHaveLength(1);
+    expect(asked.filter((a) => a.method === 'POST' && a.url === INSPECT)).toHaveLength(1);
+    expect(asked.filter((a) => a.method === 'POST' && a.url.endsWith('/tools'))).toHaveLength(1);
   });
 
   it('draws a large answer without hanging', async () => {

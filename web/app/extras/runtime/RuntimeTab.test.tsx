@@ -95,8 +95,8 @@ describe('the runtime tabs', () => {
     expect([...(select as HTMLSelectElement).options].map((o) => o.value)).toEqual(['web', 'admin']);
     fireEvent.change(select, { target: { value: 'admin' } });
     expect(document.querySelector('[data-runtime-container="admin"] [data-pill][title="kubetower.io/runtime names node"]')).not.toBeNull();
-    // Nothing but the spec was read.
-    expect(asked.every((a) => a.startsWith('GET '))).toBe(true);
+    // Nothing but the spec and the inspector's probe, a POST since #82.
+    expect(asked.every((a) => a.startsWith('GET ') || /^POST \S+\/node$/.test(a))).toBe(true);
   });
 
   it('draws no picker for a single container', async () => {

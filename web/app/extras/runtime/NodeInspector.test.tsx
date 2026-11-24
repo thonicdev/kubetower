@@ -63,7 +63,7 @@ afterEach(() => {
 describe("the Node.js tab's inspector", () => {
   it('opens the inspector only after a confirmation, with the risk on the button, and posts with the request header', async () => {
     const asked = stub({
-      [`GET ${BASE}`]: { body: closed },
+      [`POST ${BASE}`]: { body: closed },
       [`POST ${BASE}/inspector?confirm=confirm`]: { body: { ...open, pid: 7 } },
     });
     mount(pane);
@@ -73,7 +73,8 @@ describe("the Node.js tab's inspector", () => {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
     }
     fireEvent.click(button);
-    expect(asked.filter((a) => a.call.startsWith('POST'))).toEqual([]);
+    // Nothing but the probe, a POST since #82, before the confirmation.
+    expect(asked.filter((a) => a.call.startsWith('POST') && a.call !== `POST ${BASE}`)).toEqual([]);
     expect(screen.getByText('until restart')).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await waitFor(() => {
@@ -85,7 +86,7 @@ describe("the Node.js tab's inspector", () => {
 
   it('asks which process when there are several', async () => {
     stub({
-      [`GET ${BASE}`]: { body: closed },
+      [`POST ${BASE}`]: { body: closed },
       [`POST ${BASE}/inspector?confirm=confirm`]: { status: 409, body: { code: 'choose_process', pids: [7, 12], message: 'Choose' } },
       [`POST ${BASE}/inspector?confirm=confirm&pid=12`]: { body: { ...open, pid: 12 } },
     });
@@ -100,7 +101,7 @@ describe("the Node.js tab's inspector", () => {
   });
 
   it('cannot open a process started with --disable-sigusr1', async () => {
-    stub({ [`GET ${BASE}`]: { body: { ...closed, sigusr1Disabled: true } } });
+    stub({ [`POST ${BASE}`]: { body: { ...closed, sigusr1Disabled: true } } });
     mount(pane);
     expect(((await screen.findByRole('button', { name: 'Open inspector' })) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('--disable-sigusr1')).toBeDefined();
@@ -108,7 +109,7 @@ describe("the Node.js tab's inspector", () => {
 
   it('reads the report, says how many values were masked, and takes a snapshot only once confirmed', async () => {
     const asked = stub({
-      [`GET ${BASE}`]: { body: open },
+      [`POST ${BASE}`]: { body: open },
       [`POST ${BASE}/report`]: {
         body: {
           masked: 2,

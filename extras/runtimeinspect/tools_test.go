@@ -27,7 +27,7 @@ func TestToolsSaysJcmdIsThereWhetherOrNotItListsAJVM(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := toolsHost(t, map[string]execAnswer{envPrefix + "jcmd -l": {res: res}})
-			rec := serve(t, h, toolsPath)
+			rec := post(t, h, toolsPath, "")
 			if got := decode[toolsAnswer](t, rec); rec.Code != http.StatusOK || !got.JCmd {
 				t.Errorf("answered %d %+v", rec.Code, got)
 			}
@@ -43,7 +43,7 @@ func TestToolsFallsBackWithoutEnv(t *testing.T) {
 		envPrefix + "jcmd -l": {err: fmt.Errorf("%w: \"env\"", extension.ErrNoSuchCommand)},
 		"jcmd -l":             {res: extension.ExecResult{Stdout: []byte("1 app.Main\n")}},
 	})
-	if rec := serve(t, h, toolsPath); rec.Code != http.StatusOK || !decode[toolsAnswer](t, rec).JCmd {
+	if rec := post(t, h, toolsPath, ""); rec.Code != http.StatusOK || !decode[toolsAnswer](t, rec).JCmd {
 		t.Errorf("answered %d %s", rec.Code, rec.Body)
 	}
 }
@@ -67,7 +67,7 @@ func TestToolsNamesItsFailures(t *testing.T) {
 			http.StatusGatewayTimeout, CodeExecTimedOut},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			rec := serve(t, toolsHost(t, c.execs), toolsPath)
+			rec := post(t, toolsHost(t, c.execs), toolsPath, "")
 			if got := decode[problem](t, rec); rec.Code != c.status || got.Code != c.code {
 				t.Errorf("answered %d %+v, want %d %s", rec.Code, got, c.status, c.code)
 			}
@@ -77,7 +77,7 @@ func TestToolsNamesItsFailures(t *testing.T) {
 
 func TestToolsRunsNothingForAPodThatIsNotThere(t *testing.T) {
 	h := toolsHost(t, map[string]execAnswer{})
-	rec := serve(t, h, "/x/kind/runtime/pod/shop/gone-0/app/tools")
+	rec := post(t, h, "/x/kind/runtime/pod/shop/gone-0/app/tools", "")
 	if rec.Code != http.StatusNotFound || len(h.ran) != 0 {
 		t.Errorf("answered %d and ran %q", rec.Code, ran(h))
 	}

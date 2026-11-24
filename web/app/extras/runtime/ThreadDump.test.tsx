@@ -112,7 +112,7 @@ function stub(replies: Record<string, unknown>): { url: string; method: string; 
       const method = init?.method ?? 'GET';
       asked.push({ url, method, marked: new Headers(init?.headers).get('X-KubeTower-Request') === '1' });
       // The tab probes for jcmd on display; a JDK container answers it.
-      const reply = replies[`${method} ${url}`] ?? (method === 'GET' && url.endsWith('/tools') ? { jcmd: true } : undefined);
+      const reply = replies[`${method} ${url}`] ?? (method === 'POST' && url.endsWith('/tools') ? { jcmd: true } : undefined);
       if (reply === undefined) return Promise.resolve(new Response(`no stub for ${method} ${url}`, { status: 599 }));
       return Promise.resolve(new Response(JSON.stringify(reply), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }),
@@ -168,16 +168,18 @@ describe('the thread dump', () => {
     expect(said).toContain('The JVM pauses while it writes the dump');
     // No sentence is drawn under it.
     expect(document.querySelector('[data-jvm-threads]')?.textContent).not.toMatch(/pauses|audit log/);
-    expect(asked.filter((a) => a.method !== 'GET')).toEqual([]);
+    // Nothing but the reads and the jcmd probe, a POST since #82.
+    expect(asked.filter((a) => a.method !== 'GET' && !a.url.endsWith('/tools'))).toEqual([]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Thread dump' }));
     await screen.findByText('Deadlock · 2 threads');
-    const post = asked.filter((a) => a.method === 'POST');
+    const post = asked.filter((a) => a.method === 'POST' && !a.url.endsWith('/tools'));
     expect(post.map((p) => p.url)).toEqual([THREADS]);
     expect(post[0]?.marked).toBe(true);
     // Nothing is polled.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(asked.filter((a) => a.method === 'POST')).toHaveLength(1);
+    expect(asked.filter((a) => a.method === 'POST' && a.url === THREADS)).toHaveLength(1);
+    expect(asked.filter((a) => a.method === 'POST' && a.url.endsWith('/tools'))).toHaveLength(1);
   });
 
   it('shows the deadlock first, with its cycle, and the blocked threads open with who holds their lock', () => {

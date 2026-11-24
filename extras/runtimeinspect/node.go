@@ -140,7 +140,7 @@ func (f *nodeFlags) setPort(value, source string) {
 	}
 }
 
-// nodeAnswer is `GET …/node`.
+// nodeAnswer is `POST …/node`.
 type nodeAnswer struct {
 	Port int `json:"port"`
 	// Source is what set the port: `command`, `env` or `default`.

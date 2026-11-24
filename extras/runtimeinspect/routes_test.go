@@ -16,7 +16,7 @@ import (
 )
 
 // The extension as the console knows it: its key, its label, off by default
-// like every extra (nothing here says otherwise), three GETs and four POSTs.
+// like every extra (nothing here says otherwise), four GETs and thirteen POSTs.
 func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 	x := New()
 	if x.Key() != "runtime" || x.Label() != "Runtime Inspector" || !slices.Equal(x.Legacy(), []string{"jvm"}) {
@@ -29,14 +29,15 @@ func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 	if len(routes) != 17 {
 		t.Fatalf("%d routes, want the inventory, the column, one pod, inspect, reveal, threads, history, histogram, the heap dump, the recording, the jcmd probe, the three pprof routes and the three Node.js routes", len(routes))
 	}
-	// The reads are GETs; the three that run jcmd are POSTs, so the console's
-	// request header and origin check hold them.
+	// The reads of the spec and of metrics are GETs. Every route under a
+	// container runs jcmd, opens a tunnel or both: a POST, so the console's
+	// request header and origin check hold it and a cross-site link cannot
+	// reach it (#82).
 	for _, r := range routes {
-		want := http.MethodGet
-		if strings.HasSuffix(r.Pattern, "/inspect") || strings.HasSuffix(r.Pattern, "/reveal") ||
-			strings.HasSuffix(r.Pattern, "/threads") || strings.HasSuffix(r.Pattern, "/histogram") || strings.HasSuffix(r.Pattern, "/heapdump") ||
-			strings.HasSuffix(r.Pattern, "/recording") || strings.Contains(r.Pattern, "/pprof/") || strings.Contains(r.Pattern, "/node/") {
-			want = http.MethodPost
+		want := http.MethodPost
+		switch r.Pattern {
+		case "/{$}", "/column", "/pod/{namespace}/{name}", "/pod/{namespace}/{name}/history":
+			want = http.MethodGet
 		}
 		if r.Method != want {
 			t.Errorf("route %s answers %q, want %q", r.Pattern, r.Method, want)
@@ -209,4 +210,31 @@ func withPath(r *http.Request) *http.Request {
 	r.SetPathValue("namespace", "shop")
 	r.SetPathValue("name", "billing-0")
 	return r
+}
+
+// A plain GET - what a link on another site sends, with the Lax session
+// cookie and no Origin header - reaches none of the routes under a container:
+// each runs jcmd, opens a tunnel or both. It opens no tunnel and runs nothing,
+// so the console writes no audit record (#82).
+func TestACrossSiteGetOpensNothing(t *testing.T) {
+	srv, asked := pprofServer(t, true)
+	h := newPodHost(t, srv, goPod(nil, goContainer()))
+	fill := strings.NewReplacer("{namespace}", "shop", "{name}", "api-0", "{container}", "app", "{profile}", "heap", "{read}", "report")
+	n := 0
+	for _, r := range New().Routes(h) {
+		if !strings.Contains(r.Pattern, "{container}") {
+			continue
+		}
+		n++
+		path := "/x/kind/runtime" + fill.Replace(r.Pattern)
+		if rec := serve(t, h, path); rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s answered %d, want 405", path, rec.Code)
+		}
+	}
+	if n != 13 {
+		t.Errorf("%d routes under a container, want 13", n)
+	}
+	if len(h.opened) != 0 || len(h.ran) != 0 || len(*asked) != 0 {
+		t.Errorf("a GET opened %v, ran %v, asked pprof %v", h.opened, h.ran, *asked)
+	}
 }

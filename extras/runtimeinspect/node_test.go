@@ -127,12 +127,12 @@ func TestTheInspectorFlagsAreReadFromTheSpec(t *testing.T) {
 func TestTheNodeStateSaysWhetherTheInspectorIsOpen(t *testing.T) {
 	in := newInspector(t, false)
 	h := newNodeHost(t, in, nodeContainer())
-	got := decode[nodeAnswer](t, serve(t, h, nodeBase))
+	got := decode[nodeAnswer](t, post(t, h, nodeBase, ""))
 	if got.Open || got.Port != 9229 || !strings.Contains(got.Detail, "404") || len(h.ran) != 0 {
 		t.Errorf("closed = %+v, ran %v", got, h.ran)
 	}
 	in.setOpen()
-	got = decode[nodeAnswer](t, serve(t, h, nodeBase))
+	got = decode[nodeAnswer](t, post(t, h, nodeBase, ""))
 	if !got.Open || h.opened[len(h.opened)-1] != "kind/shop/web-0:9229" || h.stopped != 2 {
 		t.Errorf("open = %+v, opened %v, stopped %d", got, h.opened, h.stopped)
 	}
@@ -268,7 +268,7 @@ func TestTheInspectorReadsNeedItOpen(t *testing.T) {
 		!strings.Contains(rec.Body.String(), CodeInspectorClosed) {
 		t.Errorf("closed: %d %s", rec.Code, rec.Body)
 	}
-	if rec := serve(t, h, "/x/kind/runtime/pod/shop/web-0/proxy/node"); rec.Code != http.StatusUnprocessableEntity ||
+	if rec := post(t, h, "/x/kind/runtime/pod/shop/web-0/proxy/node", ""); rec.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(rec.Body.String(), CodeNotNode) {
 		t.Errorf("not node: %d %s", rec.Code, rec.Body)
 	}

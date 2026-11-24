@@ -552,7 +552,7 @@ function problemOf(error: unknown): unknown {
 /** The tooltip of a button that runs jcmd in a container that has none. */
 export const NO_JDK_TITLE = 'No JDK tools in this container';
 
-/** `GET .../{container}/tools`: whether jcmd is in the container. A container
+/** `POST .../{container}/tools`: whether jcmd is in the container. A container
  *  without it answers the `no_jcmd` problem instead. */
 export interface Tools {
   jcmd: boolean;
@@ -568,13 +568,17 @@ export function toolsQuery(cluster: string, namespace: string, name: string, con
     queryKey: toolsKey(cluster, namespace, name, container),
     queryFn: async ({ signal }): Promise<Tools> => {
       try {
-        return await request<Tools>(`${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/tools`, { signal });
+        // A POST: it runs jcmd in the container, which a link from another
+        // site must not reach (#82).
+        return await request<Tools>(`${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/tools`, { method: 'POST', signal });
       } catch (error) {
         throw problemOf(error);
       }
     },
     staleTime: 5 * 60_000,
     retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -1000,7 +1004,9 @@ export function pprofQuery(cluster: string, namespace: string, name: string, con
     queryKey: [KEY, 'pprof', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
       try {
-        return await request<PprofState>(pprofPath(cluster, namespace, name, container), { signal });
+        // A POST: it opens an audited tunnel, which a link from another site
+        // must not reach (#82).
+        return await request<PprofState>(pprofPath(cluster, namespace, name, container), { method: 'POST', signal });
       } catch (error) {
         throw problemOf(error);
       }
@@ -1009,8 +1015,9 @@ export function pprofQuery(cluster: string, namespace: string, name: string, con
     gcTime: 60_000,
     retry: false,
     // Each probe opens an audited tunnel: once when the tab opens, never
-    // again because the window came back into focus.
+    // again because the window came back into focus or online.
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -1075,7 +1082,9 @@ export function nodeQuery(cluster: string, namespace: string, name: string, cont
     queryKey: [KEY, 'node', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
       try {
-        return await request<NodeState>(nodePath(cluster, namespace, name, container), { signal });
+        // A POST: it opens an audited tunnel, which a link from another site
+        // must not reach (#82).
+        return await request<NodeState>(nodePath(cluster, namespace, name, container), { method: 'POST', signal });
       } catch (error) {
         throw problemOf(error);
       }

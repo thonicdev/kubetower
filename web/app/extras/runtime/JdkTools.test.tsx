@@ -98,7 +98,7 @@ describe('a container with no JDK tools', () => {
     await waitFor(() => expect(jcmdButtons().every((b) => b?.disabled === true)).toBe(true));
     for (const b of jcmdButtons()) expect(b?.getAttribute('title')).toBe(TITLE);
     expect(document.body.textContent).not.toMatch(/No JDK tools/);
-    expect(asked.filter((a) => a === `GET ${TOOLS}`)).toHaveLength(1);
+    expect(asked.filter((a) => a === `POST ${TOOLS}`)).toHaveLength(1);
     // The memory history reads Prometheus, not jcmd: it is not drawn disabled.
     expect(document.querySelector('[data-jvm-history] button:disabled')).toBeNull();
   });
@@ -122,7 +122,7 @@ describe('a container with no JDK tools', () => {
     const asked = stub(() => Promise.resolve(json(status, body)));
     mount();
     await screen.findByRole('button', { name: 'Inspect' });
-    await waitFor(() => expect(asked).toContain(`GET ${TOOLS}`));
+    await waitFor(() => expect(asked).toContain(`POST ${TOOLS}`));
     await new Promise((r) => setTimeout(r, 20));
     for (const b of jcmdButtons()) expect(b?.disabled).toBe(false);
   });

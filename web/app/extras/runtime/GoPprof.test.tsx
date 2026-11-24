@@ -66,13 +66,13 @@ afterEach(() => {
 describe("the Go tab's pprof", () => {
   it('reads the goroutines on a click, grouped, filterable, and posts with the request header', async () => {
     const asked = stub({
-      [`GET ${BASE}`]: { body: { port: 6060, source: 'default', reachable: true } },
+      [`POST ${BASE}`]: { body: { port: 6060, source: 'default', reachable: true } },
       [`POST ${BASE}/goroutines`]: { body: dump },
     });
     mount(pane);
     const button = await screen.findByRole('button', { name: 'Goroutines' });
     expect(screen.getByText('pprof :6060').getAttribute('title')).toMatch(/convention/);
-    expect(asked.map((a) => a.call)).toEqual([`GET ${BASE}`]);
+    expect(asked.map((a) => a.call)).toEqual([`POST ${BASE}`]);
     fireEvent.click(button);
     await screen.findByText('4 goroutines');
     expect(document.querySelectorAll('[data-goroutine-group]')).toHaveLength(3);
@@ -84,7 +84,7 @@ describe("the Go tab's pprof", () => {
 
   it('downloads a CPU profile for the seconds picked', async () => {
     const asked = stub({
-      [`GET ${BASE}`]: { body: { port: 6061, source: 'port', reachable: true } },
+      [`POST ${BASE}`]: { body: { port: 6061, source: 'port', reachable: true } },
       [`POST ${BASE}/profile?seconds=60`]: { body: 'PROFILE', raw: true },
     });
     mount(pane);
@@ -100,7 +100,7 @@ describe("the Go tab's pprof", () => {
   });
 
   it('greys every action where pprof does not answer, with why on hover', async () => {
-    stub({ [`GET ${BASE}`]: { body: { port: 6060, source: 'default', reachable: false, detail: '/debug/pprof/ answered 404 Not Found' } } });
+    stub({ [`POST ${BASE}`]: { body: { port: 6060, source: 'default', reachable: false, detail: '/debug/pprof/ answered 404 Not Found' } } });
     mount(pane);
     const goroutinesButton = await screen.findByRole('button', { name: 'Goroutines' });
     for (const name of ['Goroutines', 'Heap profile', 'CPU profile', 'Trace']) {
@@ -111,16 +111,18 @@ describe("the Go tab's pprof", () => {
   });
 
   it('says why the state could not be read', async () => {
-    stub({ [`GET ${BASE}`]: { status: 403, body: { code: 'tunnel_forbidden', message: 'The cluster says you may not port-forward to this pod, so pprof is not reached.' } } });
+    stub({ [`POST ${BASE}`]: { status: 403, body: { code: 'tunnel_forbidden', message: 'The cluster says you may not port-forward to this pod, so pprof is not reached.' } } });
     mount(pane);
     expect(await screen.findByText(/may not port-forward/)).toBeDefined();
   });
 });
 
 describe('the pprof probe', () => {
-  it('opens its tunnel once, not again when the window regains focus', () => {
+  it('opens its tunnel once, not again on focus, on reconnect or on failure', () => {
     const options = pprofQuery('kind', 'shop', 'api-0', 'app');
     expect(options.refetchOnWindowFocus).toBe(false);
+    expect(options.refetchOnReconnect).toBe(false);
+    expect(options.retry).toBe(false);
     expect('refetchInterval' in options).toBe(false);
   });
 });
