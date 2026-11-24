@@ -128,7 +128,7 @@ func TestThePprofPortIsReadFromTheSpec(t *testing.T) {
 func TestThePprofStateSaysWhetherItAnswers(t *testing.T) {
 	srv, asked := pprofServer(t, true)
 	h := newPodHost(t, srv, goPod(nil, goContainer()))
-	rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof")
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof", "")
 	got := decode[pprofAnswer](t, rec)
 	if rec.Code != http.StatusOK || !got.Reachable || got.Port != 6060 || got.Source != "default" {
 		t.Fatalf("%d %+v", rec.Code, got)
@@ -139,7 +139,7 @@ func TestThePprofStateSaysWhetherItAnswers(t *testing.T) {
 
 	off, _ := pprofServer(t, false)
 	h = newPodHost(t, off, goPod(nil, goContainer()))
-	got = decode[pprofAnswer](t, serve(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof"))
+	got = decode[pprofAnswer](t, post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof", ""))
 	if got.Reachable || !strings.Contains(got.Detail, "404") {
 		t.Errorf("unreachable = %+v", got)
 	}
@@ -210,25 +210,25 @@ func TestAProfileIsDownloadedWithADurationFromItsList(t *testing.T) {
 func TestPprofRefusals(t *testing.T) {
 	srv, _ := pprofServer(t, true)
 	h := newPodHost(t, srv, goPod(nil, goContainer()))
-	rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/web/pprof")
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/web/pprof", "")
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeNotGo) || len(h.opened) != 0 {
 		t.Errorf("not go: %d %s, opened %v", rec.Code, rec.Body, h.opened)
 	}
 	// The annotation makes it Go.
 	h = newPodHost(t, srv, goPod(map[string]string{AnnotationRuntime: "web=go"}, goContainer()))
-	if rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/web/pprof"); rec.Code != http.StatusOK {
+	if rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/web/pprof", ""); rec.Code != http.StatusOK {
 		t.Errorf("annotated: %d %s", rec.Code, rec.Body)
 	}
 
 	plain := newHost(t, goPod(nil, goContainer()))
-	if rec := serve(t, plain, "/x/kind/runtime/pod/shop/api-0/app/pprof"); rec.Code != http.StatusNotImplemented ||
+	if rec := post(t, plain, "/x/kind/runtime/pod/shop/api-0/app/pprof", ""); rec.Code != http.StatusNotImplemented ||
 		!strings.Contains(rec.Body.String(), CodeNoTunnel) {
 		t.Errorf("no tunnel: %d %s", rec.Code, rec.Body)
 	}
 
 	h = newPodHost(t, srv, goPod(nil, goContainer()))
 	h.err = extension.ErrDenied
-	if rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof"); rec.Code != http.StatusForbidden ||
+	if rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof", ""); rec.Code != http.StatusForbidden ||
 		!strings.Contains(rec.Body.String(), CodeTunnelForbidden) {
 		t.Errorf("denied: %d %s", rec.Code, rec.Body)
 	}
@@ -305,7 +305,7 @@ func TestPprofReadsAreBoundedInTime(t *testing.T) {
 		}
 	}
 	start := time.Now()
-	rec := serve(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof")
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof", "")
 	if took := time.Since(start); took > 2*time.Second || decode[pprofAnswer](t, rec).Reachable {
 		t.Errorf("the probe took %v: %d %s", took, rec.Code, rec.Body)
 	}
@@ -389,5 +389,64 @@ func TestAProfilePastItsLimitFails(t *testing.T) {
 	}
 	if rec, aborted := downloadAt(t, "0123456789", true); aborted || rec.Code != http.StatusOK || rec.Body.String() != "0123456789" {
 		t.Errorf("a profile of exactly the limit: aborted %v, %d %q", aborted, rec.Code, rec.Body)
+	}
+}
+
+// A timed profile is given its seconds on top of the budget: a CPU profile
+// of 10 s outlives the probe's budget.
+func TestATimedProfileIsGivenItsSeconds(t *testing.T) {
+	setFor(t, &pprofProbeBudget, 50*time.Millisecond)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write([]byte("PROFILE"))
+	}))
+	t.Cleanup(slow.Close)
+	h := newPodHost(t, slow, goPod(nil, goContainer()))
+	rec := post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/profile?seconds=10", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "PROFILE" {
+		t.Errorf("%d %q", rec.Code, rec.Body)
+	}
+}
+
+// A profile whose stream breaks after the headers fails rather than end as
+// a whole file.
+func TestABrokenProfileStreamFails(t *testing.T) {
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("PROF"))
+		w.(http.Flusher).Flush()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(broken.Close)
+	h := newPodHost(t, broken, goPod(nil, goContainer()))
+	aborted := func() (aborted bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				if r != http.ErrAbortHandler {
+					panic(r)
+				}
+				aborted = true
+			}
+		}()
+		post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/heap", "")
+		return false
+	}()
+	if !aborted {
+		t.Error("a broken stream ended as a whole file")
+	}
+}
+
+// The goroutines route says a dump with a line over 1 MiB is cut.
+func TestTheGoroutinesRouteSaysALongLineCutTheDump(t *testing.T) {
+	long := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(goroutineDump + "\ngoroutine 30 [select]:\n" + strings.Repeat("x", 1<<20+1) + "\n"))
+	}))
+	t.Cleanup(long.Close)
+	h := newPodHost(t, long, goPod(nil, goContainer()))
+	got := decode[goroutinesAnswer](t, post(t, h, "/x/kind/runtime/pod/shop/api-0/app/pprof/goroutines", ""))
+	if !got.Truncated {
+		t.Errorf("a dump cut by a long line is not said to be: %+v", got.Total)
 	}
 }
