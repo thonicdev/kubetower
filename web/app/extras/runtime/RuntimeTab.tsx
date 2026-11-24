@@ -23,6 +23,9 @@ function OnPod({ runtime, cluster, namespace, name }: { runtime: Runtime; cluste
   }
   const offered = pod.data.containers.filter((c) => c.runtime === runtime);
   const container = offered.find((c) => c.name === picked) ?? offered[0];
+  if (container === undefined) {
+    return null;
+  }
   return (
     <div data-runtime-tab={runtime} className="flex flex-col gap-3 text-sm">
       {offered.length > 1 ? (
@@ -41,7 +44,7 @@ function OnPod({ runtime, cluster, namespace, name }: { runtime: Runtime; cluste
           </select>
         </label>
       ) : null}
-      {container === undefined ? null : <ContainerFacts runtime={runtime} container={container} />}
+      <ContainerFacts runtime={runtime} container={container} />
     </div>
   );
 }
