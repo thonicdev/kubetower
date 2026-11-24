@@ -144,7 +144,7 @@ export function Matrix({
           </table>
         </div>
       )}
-      <Legend cut={truncated} />
+      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} />
     </div>
   );
 }
@@ -152,8 +152,10 @@ export function Matrix({
 type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
 
 /** Every pod of a namespace, or of every namespace "others" holds, is
- *  isolated that way: nothing passes unless a rule of its own lets it. */
-const grouped = (n: GraphNode) => n.kind === 'namespace' || n.kind === 'others';
+ *  isolated that way: nothing passes unless a rule of its own lets it. An
+ *  "others" holding an end (a CIDR, world) is never isolated: an end never
+ *  refuses. */
+const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && (n.ends ?? 0) === 0);
 const isolatedIn = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedIn >= n.pods;
 const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut >= n.pods;
 
@@ -309,11 +311,12 @@ function Heading({
   );
 }
 
-function Legend({ cut }: { cut: boolean }): ReactNode {
+function Legend({ cut, others }: { cut: boolean; others: boolean }): ReactNode {
   const items: { state: State; label: string }[] = [
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
     ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
+    ...(others ? [{ state: 'folded' as const, label: 'folded' }] : []),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">

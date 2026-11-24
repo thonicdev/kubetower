@@ -215,3 +215,38 @@ describe('a cell touching others', () => {
     expect(states('[data-cell="ns:team-000>others"]')).toEqual(['folded']);
   });
 });
+
+describe('an others holding an end', () => {
+  const many = (inIso: boolean, outIso: boolean): GraphNode[] => Array.from({ length: 20 }, (_, i) => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0 }));
+  const end = (id: string, label: string, kind: GraphNode['kind']): GraphNode => ({ id, label, kind, pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 });
+  const edge = (from: string, to: string, side: 'ingress' | 'egress') => ({ kind: 'allow' as const, from, to, side, ports: ['443/TCP'], policies: ['p'], rules: 1 });
+  // Find keeps twelve namespaces: the other eight and the end are in "others".
+  const show = (g: Graph) =>
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams('top=12&sort=name&mq=team'))} onAsk={() => undefined} onNamespace={() => undefined} />);
+  const state = (key: string) => document.querySelector(`[data-cell="${key}"]`)?.getAttribute('data-state');
+
+  it('is not refused toward it from a source whose egress rule reaches the folded CIDR', () => {
+    const nodes = many(true, true);
+    show({ scope: 'cluster', nodes: [...nodes, end('cidr:203.0.113.0/24', '203.0.113.0/24', 'cidr')], edges: [edge('ns:team-000', 'cidr:203.0.113.0/24', 'egress')], folded: 0, edgesTotal: 1 });
+    expect(state('ns:team-000>others')).toBe('folded');
+  });
+
+  it('is not refused from it toward a namespace that lets world in, world folded with egress-isolated namespaces', () => {
+    const nodes = many(true, true);
+    show({ scope: 'cluster', nodes: [...nodes, end('entity:world', 'world', 'entity')], edges: [edge('entity:world', 'ns:team-000', 'ingress')], folded: 0, edgesTotal: 1 });
+    expect(state('others>ns:team-000')).toBe('folded');
+  });
+
+  it('is still refused when it holds namespaces only, all refusing', () => {
+    show({ scope: 'cluster', nodes: many(true, true), edges: [], folded: 0, edgesTotal: 0 });
+    expect(state('ns:team-000>others')).toBe('refused');
+    expect(document.querySelector('[data-matrix-legend]')?.textContent).toContain('folded');
+  });
+
+  it("takes the server's others as holding an end when it says so", () => {
+    const nodes = many(true, true).slice(0, 5);
+    const serverOthers: GraphNode = { id: 'others', label: '9 others', kind: 'others', pods: 16, isolatedIn: 16, isolatedOut: 16, internal: 0, ends: 1 };
+    show({ scope: 'cluster', nodes: [...nodes, serverOthers], edges: [edge('ns:team-000', 'others', 'egress')], folded: 9, edgesTotal: 1 });
+    expect(state('ns:team-000>others')).toBe('folded');
+  });
+});

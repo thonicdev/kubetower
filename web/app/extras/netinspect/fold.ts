@@ -165,6 +165,9 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
     others.isolatedOut += n.isolatedOut;
   }
   others.label = `${String(folded > 0 ? folded : foldedEnds)} others`;
+  // The ends it holds, the server's included: an end never refuses, so an
+  // "others" holding one is never taken as isolated (Matrix).
+  others.ends = foldedEnds + (serverOthers?.ends ?? 0);
   const any = folded + foldedEnds > 0;
   const nodes = any ? [...kept, others] : kept;
   const drawn = (id: string): string | undefined => {

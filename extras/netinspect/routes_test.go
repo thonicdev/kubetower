@@ -347,3 +347,27 @@ func TestAnyoneIsNeverFolded(t *testing.T) {
 		t.Errorf("anyone was folded into others (%d nodes, %d folded)", len(g.Nodes), g.Folded)
 	}
 }
+
+// "others" says how many of what it holds are not namespaces: an address
+// block never refuses, so the page must not take such an "others" as
+// isolated.
+func TestOthersCountsTheEndsItHolds(t *testing.T) {
+	h := teams(t, 120, true)
+	p := np("team-000", "out-to-a-block", nil)
+	p.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+	p.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "203.0.113.0/24"}}}}}
+	h.policy(t, p)
+	g := overviewOf(t, h, "").Graph
+	var others *Node
+	for i := range g.Nodes {
+		if g.Nodes[i].ID == "others" {
+			others = &g.Nodes[i]
+		}
+		if strings.HasPrefix(g.Nodes[i].ID, "cidr:") {
+			t.Fatalf("the block was kept (%d nodes): pick a denser cluster", len(g.Nodes))
+		}
+	}
+	if others == nil || others.Ends != 1 {
+		t.Errorf("others %+v, want one end", others)
+	}
+}

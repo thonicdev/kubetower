@@ -119,6 +119,8 @@ export interface GraphNode {
   isolatedIn: number;
   isolatedOut: number;
   internal: number;
+  /** On "others": how many of the nodes it holds are not namespaces. */
+  ends?: number;
 }
 
 export interface GraphEdge {

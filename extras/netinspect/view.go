@@ -168,6 +168,10 @@ type Node struct {
 	// Internal is rules whose both ends fall inside this node (a namespace
 	// allowing its own pods), drawn as a count rather than a loop.
 	Internal int `json:"internal"`
+	// Ends is, on "others", how many of the nodes it holds are not
+	// namespaces (a CIDR, world, an entity): such an end never refuses, so
+	// "others" cannot be called isolated when it holds one.
+	Ends int `json:"ends,omitempty"`
 }
 
 // Edge is "a rule lets From reach To". Side says which end's policy says so:
@@ -676,6 +680,9 @@ func (g *graphBuilder) foldAt(scope string, ids []string, keep int) Graph {
 		}
 		kept[id] = others.ID
 		n := g.nodes[id]
+		if n.Kind != nodeNamespace {
+			others.Ends++
+		}
 		others.Pods += n.Pods
 		others.IsolatedIn += n.IsolatedIn
 		others.IsolatedOut += n.IsolatedOut
