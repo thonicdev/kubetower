@@ -157,11 +157,16 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_, _ = w.Write(append(data, '\n'))
 }
 
-// flowsHandler is `POST /flows?ns=`: what Hubble saw. The person's own
-// listing is read first (readOrFail), so the flows are filtered by what they
-// may see before the tunnel to Relay is opened.
+// flowsHandler is `POST /flows?ns=&window=`: what Hubble saw, over the last
+// `window` seconds (one of flowWindows, five minutes when absent). The
+// person's own listing is read first (readOrFail), so the flows are filtered
+// by what they may see before the tunnel to Relay is opened.
 func flowsHandler(h extension.Host) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := windowOf(r); !ok {
+			writeProblem(w, http.StatusBadRequest, CodeBadRequest, "window is one of 60, 300, 900 and 3600 seconds.", nil)
+			return
+		}
 		rd := readOrFail(w, r, h)
 		if rd == nil {
 			return

@@ -593,7 +593,7 @@ func TestCancellingTheRequestClosesTheCall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := listGoldmane(ctx, fg.addr(), cfg, flowCap, flowWindow)
+		_, _, err := listGoldmane(ctx, fg.addr(), cfg, flowCap, flowWindow, "")
 		done <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -632,7 +632,7 @@ func TestAGoldmaneAnswerOverTheCeilingIsNotRead(t *testing.T) {
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	cfg := &tls.Config{RootCAs: pool, ServerName: goldmaneServerName, Certificates: []tls.Certificate{pair}, NextProtos: []string{"h2"}}
-	_, _, err := listGoldmane(context.Background(), strings.TrimPrefix(srv.URL, "https://"), cfg, flowCap, flowWindow)
+	_, _, err := listGoldmane(context.Background(), strings.TrimPrefix(srv.URL, "https://"), cfg, flowCap, flowWindow, "")
 	if err == nil || !strings.Contains(err.Error(), "over") {
 		t.Errorf("err = %v", err)
 	}
@@ -756,5 +756,49 @@ func TestReportersAreFoldedOnce(t *testing.T) {
 	// A Pass or an unknown action is not a decision.
 	if _, ok := decodeFlowResult(gmFlow{srcNS: "a", srcName: "x-*", dstNS: "b", dstName: "y-*", port: 80, proto: "tcp", reporter: 1, action: 3}.encode()); ok {
 		t.Errorf("a pass was read as a decision")
+	}
+}
+
+// Goldmane is asked for the window the page names, and one namespace's read
+// for that namespace at either end; a cluster's read names no namespace.
+func TestGoldmaneIsAskedTheWindowAndTheNamespace(t *testing.T) {
+	s, fg := calicoScene(t, goldmaneOf(t,
+		gmFlow{srcNS: "shop", srcName: "web-5cd4b6b569-*", dstNS: "shop", dstName: "api-6b4696b557-*", port: 80, proto: "tcp", reporter: 1, action: 1, conns: 1, end: recent}))
+	asked := func(i int) (since int64, namespace string) {
+		t.Helper()
+		fg.mu.Lock()
+		body := fg.asked[i][5:] // past the gRPC frame header
+		fg.mu.Unlock()
+		each(body, func(num protowire.Number, _ protowire.Type, v []byte, n uint64) {
+			switch num {
+			case 1:
+				since = int64(n)
+			case 6: // filter { endpoints (11) { either (3) { namespace (1) { value (1) } } } }
+				each(v, func(n11 protowire.Number, _ protowire.Type, ep []byte, _ uint64) {
+					each(ep, func(n3 protowire.Number, _ protowire.Type, either []byte, _ uint64) {
+						each(either, func(n1 protowire.Number, _ protowire.Type, match []byte, _ uint64) {
+							each(match, func(nv protowire.Number, _ protowire.Type, value []byte, _ uint64) {
+								if n11 == 11 && n3 == 3 && n1 == 1 && nv == 1 {
+									namespace = string(value)
+								}
+							})
+						})
+					})
+				})
+			}
+		})
+		return since, namespace
+	}
+	if got := flowsOf(t, s.fakeHost, ""); got.Window != 300 || got.State != flowsRead {
+		t.Fatalf("cluster read: %d (%s)", got.Window, got.State)
+	}
+	if since, ns := asked(0); since != -300 || ns != "" {
+		t.Errorf("cluster read asked from %d, namespace %q; want -300 and none", since, ns)
+	}
+	if got := flowsOf(t, s.fakeHost, "?ns=shop&window=900"); got.Window != 900 || got.State != flowsRead {
+		t.Fatalf("shop read: %d (%s)", got.Window, got.State)
+	}
+	if since, ns := asked(1); since != -900 || ns != "shop" {
+		t.Errorf("shop read asked from %d, namespace %q; want -900 and shop", since, ns)
 	}
 }
