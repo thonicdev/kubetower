@@ -578,6 +578,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/update/open-folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show the verified file where the installation cannot be written.
+         * @description In the `manual` phase - the installer found the installation's folder
+         *     not writable - opens the folder holding the verified file in this
+         *     machine's file manager. Refused (409) in any other phase.
+         */
+        post: operations["openUpdateFolder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -2330,8 +2352,11 @@ export interface components {
          *     console can install; absent on the server profile and in a container.
          */
         UpdateInstall: {
-            /** @enum {string} */
-            phase: "idle" | "downloading" | "verifying" | "ready" | "installing" | "failed";
+            /**
+             * @description `manual`: the installation's folder is not writable; the verified file waits in `folder`.
+             * @enum {string}
+             */
+            phase: "idle" | "downloading" | "verifying" | "ready" | "installing" | "failed" | "manual";
             /** @description The "Install updates" setting. */
             enabled: boolean;
             /** @description This installation has an asset in a release and an installer in this build. False draws no Download. */
@@ -2354,6 +2379,8 @@ export interface components {
             total?: number;
             /** @description The one line of a failure. */
             reason?: string;
+            /** @description The folder that holds the verified file, in the manual phase. */
+            folder?: string;
             /** @description What the restart closes for good. */
             ends: {
                 terminals: number;
@@ -5543,6 +5570,32 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description The install has started. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateInstall"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Refused"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    openUpdateFolder: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The folder was opened. */
             200: {
                 headers: {
                     [name: string]: unknown;

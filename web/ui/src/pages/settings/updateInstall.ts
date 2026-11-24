@@ -26,6 +26,10 @@ export function installUpdate(): Promise<UpdateInstall> {
   return request<UpdateInstall>(path('/api/settings/update/install'), { method: 'POST' });
 }
 
+export function openUpdateFolder(): Promise<UpdateInstall> {
+  return request<UpdateInstall>(path('/api/settings/update/open-folder'), { method: 'POST' });
+}
+
 export function setInstallUpdates(enabled: boolean): Promise<UpdateInstall> {
   return request<UpdateInstall>(path('/api/settings/update'), { method: 'PUT', body: { enabled } });
 }
@@ -38,7 +42,15 @@ export function getUpdateInstall(signal?: AbortSignal): Promise<UpdateInstall> {
 const MOVING: ReadonlySet<string> = new Set(['downloading', 'verifying', 'installing']);
 
 /** The phases a page knows how to draw; any other is drawn as nothing. */
-export const PHASES: ReadonlySet<string> = new Set(['idle', 'downloading', 'verifying', 'ready', 'installing', 'failed']);
+export const PHASES: ReadonlySet<string> = new Set([
+  'idle',
+  'downloading',
+  'verifying',
+  'ready',
+  'installing',
+  'failed',
+  'manual',
+]);
 
 /** How often a running download or install is read. */
 export const INSTALL_POLL_MS = 500;
@@ -56,6 +68,7 @@ export const INSTALL_TIMEOUT_MS = 3 * 60_000;
  */
 const DOWNLOAD_KEY = ['update', 'download'] as const;
 const RESTART_KEY = ['update', 'restart'] as const;
+const OPEN_FOLDER_KEY = ['update', 'open-folder'] as const;
 
 /** How long a refused download or restart stays drawn. */
 export const REFUSED_MS = 10_000;
@@ -166,6 +179,8 @@ export function useUpdateInstall(): {
   refused: Error | null;
   download: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   restart: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
+  /** Show the verified file, where the installation's folder is not writable. */
+  openFolder: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   allow: ReturnType<typeof useMutation<UpdateInstall, Error, boolean>>;
 } {
   const settings = useSettings();
@@ -204,6 +219,12 @@ export function useUpdateInstall(): {
     // Refused, the console may have moved on: read what it says.
     onError: reread,
   });
+  const openFolder = useMutation<UpdateInstall, Error, void>({
+    mutationKey: OPEN_FOLDER_KEY,
+    mutationFn: openUpdateFolder,
+    onSuccess: keep,
+    onError: reread,
+  });
   // The server applies the setting even when it cannot save it (500
   // not_saved): read it back rather than keep the box where it was.
   const allow = useMutation<UpdateInstall, Error, boolean>({
@@ -233,6 +254,7 @@ export function useUpdateInstall(): {
     refused,
     download,
     restart,
+    openFolder,
     allow,
   };
 }

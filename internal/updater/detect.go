@@ -24,8 +24,12 @@ type Probe struct {
 //     (packaging/windows/kubetower.nsi writes exactly one); anything else, the zip.
 //   - macOS: an executable at `<X>.app/Contents/MacOS/<name>` is the
 //     application bundle `<X>.app`; anything else, the tar.gz.
-//   - Linux: `$APPIMAGE` is the AppImage the runtime mounted us from; a binary
-//     dpkg or rpm owns is that package's; anything else, the tar.gz.
+//   - Linux: `$APPIMAGE` is the AppImage the runtime mounted us from, but only
+//     when exe lies under `$APPDIR`, its mount: a tar.gz or a package started
+//     from a terminal or an IDE that is itself an AppImage inherits both
+//     variables, and replacing `$APPIMAGE` would overwrite that other
+//     application. A binary dpkg or rpm owns is that package's; anything else,
+//     the tar.gz.
 func Detect(goos, exe string, probe Probe) Installation {
 	if exe == "" {
 		return Installation{}
@@ -46,7 +50,7 @@ func Detect(goos, exe string, probe Probe) Installation {
 		return Installation{Kind: MacTar, Path: exe}
 	case "linux":
 		if probe.Getenv != nil {
-			if image := probe.Getenv("APPIMAGE"); image != "" && filepath.IsAbs(image) {
+			if image := probe.Getenv("APPIMAGE"); filepath.IsAbs(image) && inside(exe, probe.Getenv("APPDIR")) {
 				return Installation{Kind: LinuxAppImage, Path: image}
 			}
 		}
@@ -63,6 +67,15 @@ func Detect(goos, exe string, probe Probe) Installation {
 	return Installation{}
 }
 
+// inside says whether path lies strictly under dir, an absolute directory.
+func inside(path, dir string) bool {
+	if !filepath.IsAbs(dir) || !filepath.IsAbs(path) {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // DetectRunning is Detect for this process.
 func DetectRunning() Installation {
 	exe, err := os.Executable()
@@ -73,7 +86,16 @@ func DetectRunning() Installation {
 		exe = resolved
 	}
 	return Detect(runtime.GOOS, exe, Probe{
-		Getenv: os.Getenv,
+		// exe is resolved, so $APPDIR is too, or a symlinked mount would never hold it.
+		Getenv: func(key string) string {
+			value := os.Getenv(key)
+			if key == "APPDIR" && value != "" {
+				if resolved, err := filepath.EvalSymlinks(value); err == nil {
+					return resolved
+				}
+			}
+			return value
+		},
 		Exists: func(p string) bool { _, err := os.Stat(p); return err == nil },
 		Owner:  owner,
 	})

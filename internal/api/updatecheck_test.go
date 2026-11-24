@@ -93,6 +93,7 @@ func TestTheInstallRoutesAreRegisteredOnlyWhereSomethingInstalls(t *testing.T) {
 		{http.MethodPut, "/api/settings/update"},
 		{http.MethodPost, "/api/settings/update/download"},
 		{http.MethodPost, "/api/settings/update/install"},
+		{http.MethodPost, "/api/settings/update/open-folder"},
 	}
 	for _, c := range []struct {
 		name      string
@@ -137,6 +138,11 @@ func (c countingInstaller) InstallUpdate(ctx context.Context) (UpdateInstall, er
 	return c.fakeInstaller.InstallUpdate(ctx)
 }
 
+func (c countingInstaller) OpenUpdateFolder() (UpdateInstall, error) {
+	*c.calls++
+	return c.fakeInstaller.OpenUpdateFolder()
+}
+
 func TestTheInstallWritesAreGuarded(t *testing.T) {
 	calls := 0
 	a := New(Deps{
@@ -146,7 +152,7 @@ func TestTheInstallWritesAreGuarded(t *testing.T) {
 		Installer:   countingInstaller{calls: &calls},
 		AllowOrigin: func(*http.Request, string) bool { return true },
 	})
-	for _, path := range []string{"/api/settings/update/download", "/api/settings/update/install"} {
+	for _, path := range []string{"/api/settings/update/download", "/api/settings/update/install", "/api/settings/update/open-folder"} {
 		bare := httptest.NewRecorder()
 		a.mux.ServeHTTP(bare, httptest.NewRequest(http.MethodPost, path, nil))
 		if bare.Code != http.StatusForbidden {

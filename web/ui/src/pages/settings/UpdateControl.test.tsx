@@ -207,6 +207,34 @@ describe('the banner and its two clicks', () => {
     }
   });
 
+  it('offers Open folder on the verified file where the installation cannot be written, with no raw error', async () => {
+    const manual: UpdateInstall = {
+      ...idle,
+      phase: 'manual',
+      installation: 'linux-tar',
+      version: '0.1.3',
+      asset: 'kubetower_0.1.3_linux_amd64.tar.gz',
+      folder: '/home/alice/.local/state/kubetower/update/install-1',
+    };
+    const c = console(manual);
+    mountApp('/settings/general');
+    let open: HTMLButtonElement | null = null;
+    await waitFor(() => {
+      open = document.querySelector<HTMLButtonElement>('[data-update-banner] [data-update-open-folder]');
+      expect(open).not.toBeNull();
+      expect(open?.disabled).toBe(false);
+    });
+    const button = open as unknown as HTMLButtonElement;
+    expect(button.textContent).toBe('Open folder');
+    expect(button.title).toBe(manual.folder);
+    expect(banner()?.querySelector('[data-update-step="manual"]')?.textContent).toBe('Not writable');
+    expect(banner()?.querySelector('[data-update-restart], [data-update-download], [data-update-retry]')).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(c.sent).toEqual([{ method: 'POST', path: '/api/settings/update/open-folder', body: undefined }]);
+    });
+  });
+
   it("says a refused download in the server's words", async () => {
     console(idle, () => ({
       status: 409,
