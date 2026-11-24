@@ -108,12 +108,14 @@ func newSessionAWSHome(workdir string) sessionAWSHome {
 	return h
 }
 
-// separate gives every exec block in a session kubeconfig its own AWS CLI
-// credential cache, by giving it this session's HOME. It reports whether
+// separate gives every AWS CLI exec block in a session kubeconfig its own AWS
+// CLI credential cache, by giving it this session's HOME. It reports whether
 // anything changed, so the caller can log it.
 //
-// A kubeconfig with no exec block is untouched and no directory is created. An
-// exec block that sets HOME itself is left alone: the operator meant it.
+// A kubeconfig with no such exec block is untouched and no directory is
+// created. An exec block that sets HOME itself is left alone: the operator
+// meant it. So is any other plugin (`gke-gcloud-auth-plugin`, `kubelogin`):
+// it reads its own state from HOME and keeps the process's, as kubectl gives it.
 func (h sessionAWSHome) separate(cfg *clientcmdapi.Config) (bool, error) {
 	if cfg == nil || h.Dir == "" {
 		return false, nil
@@ -121,7 +123,7 @@ func (h sessionAWSHome) separate(cfg *clientcmdapi.Config) (bool, error) {
 
 	targets := make([]*clientcmdapi.ExecConfig, 0, len(cfg.AuthInfos))
 	for _, user := range cfg.AuthInfos {
-		if user == nil || user.Exec == nil {
+		if user == nil || !ekstoken.UsesAWSCLI(user.Exec) {
 			continue
 		}
 		if hasExecEnv(user.Exec.Env, "HOME") {
@@ -142,11 +144,7 @@ func (h sessionAWSHome) separate(cfg *clientcmdapi.Config) (bool, error) {
 		// Before any environment is written: without its SSO token cache the home
 		// authenticates nothing on an SSO profile, so if this fails the redirect must
 		// not happen.
-		aws := false
-		for _, exec := range targets {
-			aws = aws || ekstoken.UsesAWSCLI(exec)
-		}
-		if err := linkSessionSSO(h.SSODir, filepath.Join(h.Dir, ".aws", "sso"), aws); err != nil {
+		if err := linkSessionSSO(h.SSODir, filepath.Join(h.Dir, ".aws", "sso")); err != nil {
 			return false, fmt.Errorf("sharing the SSO token cache into the session AWS home: %w", err)
 		}
 	}
@@ -189,15 +187,11 @@ func addExecEnv(env []clientcmdapi.ExecEnvVar, name, value string) []clientcmdap
 }
 
 // linkSessionSSO is internal/cluster's linkSSO for a session's home: created
-// for an `aws` plugin when missing, taken back out with no link where the link
-// cannot be made on a directory created here, linked only where it exists for
-// any other plugin.
-func linkSessionSSO(ssoDir, link string, aws bool) error {
+// when missing, taken back out with no link where the link cannot be made on a
+// directory created here.
+func linkSessionSSO(ssoDir, link string) error {
 	if isAWSDir(ssoDir) {
 		return shareAWSDirectory(ssoDir, link)
-	}
-	if !aws {
-		return nil
 	}
 	parent := filepath.Dir(ssoDir)
 	hadParent := isAWSDir(parent)

@@ -406,3 +406,77 @@ func TestTwoRedisLikePortsAreLeftAlone(t *testing.T) {
 		t.Fatalf("doors = %v", got)
 	}
 }
+
+// A container runs the server when redis-server or valkey-server is its
+// program, never when a command names it as a host or runs a Sentinel.
+func TestServerCommand(t *testing.T) {
+	for _, c := range []struct {
+		command, args []string
+		want          string
+	}{
+		{[]string{"redis-server"}, []string{"/etc/redis/redis.conf"}, "redis-server"},
+		{[]string{"/usr/local/bin/valkey-server"}, nil, "valkey-server"},
+		{nil, []string{"valkey-server", "--port", "6390"}, "valkey-server"},
+		{[]string{"tini", "--", "redis-server"}, nil, "redis-server"},
+		{[]string{"sh", "-c"}, []string{`exec redis-server /etc/redis.conf --port "6380"`}, "redis-server"},
+		{[]string{"/bin/bash", "-ec", "cp /tmp/a /data/a && MAXMEM=1g /opt/bin/valkey-server /data/valkey.conf"}, nil, "valkey-server"},
+		{[]string{"sh", "-c", "until nc -z cache 6379; do sleep 1; done\nexec redis-server"}, nil, "redis-server"},
+		{[]string{"redis-server", "/etc/sentinel.conf", "--sentinel"}, nil, ""},
+		{[]string{"redis-cli", "-h", "redis-server", "ping"}, nil, ""},
+		{[]string{"/bin/redis_exporter"}, []string{"--redis.addr", "redis://redis-server:6379"}, ""},
+		{[]string{"sh", "-c", "nc -z redis-server 6379"}, nil, ""},
+		{[]string{"echo", "sh", "-c", "redis-server"}, nil, ""},
+		{[]string{"sh"}, []string{"/scripts/start.sh"}, ""},
+		{nil, nil, ""},
+	} {
+		got, ok := serverCommand(corev1.Container{Command: c.command, Args: c.args})
+		if ok != (c.want != "") || got != c.want {
+			t.Errorf("serverCommand(%q, %q) = %q, %v; want %q", c.command, c.args, got, ok, c.want)
+		}
+	}
+}
+
+// A Service on `client` 6380 in front of a pod whose image says nothing and
+// whose container runs redis-server on that port.
+func TestAContainerRunningRedisServerIsFound(t *testing.T) {
+	h := newHost()
+	h.add(t, "services", &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "rv", Name: "kv"},
+		Spec: corev1.ServiceSpec{Selector: cacheSelector, Ports: []corev1.ServicePort{
+			{Name: "web", Port: 8080, TargetPort: intstr.FromInt32(8080)},
+			{Name: "client", Port: 6380, TargetPort: intstr.FromInt32(6380)},
+		}},
+	})
+	h.add(t, "pods", &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "rv", Name: "kv-0", Labels: cacheSelector},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "ui", Image: "registry.example.com/base/web:2", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}},
+			{Name: "kv", Image: "registry.example.com/base/cache:7", Command: []string{"sh", "-c"},
+				Args: []string{"exec redis-server /etc/kv.conf --port 6380"}, Ports: []corev1.ContainerPort{{ContainerPort: 6380}}},
+		}},
+	})
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, []string{"rv/kv:6380 its pod runs redis-server"}) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// The same pod started as a Sentinel is not a Redis.
+func TestAContainerRunningASentinelIsNotARedis(t *testing.T) {
+	h := newHost()
+	h.add(t, "services", &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "rv", Name: "kv"},
+		Spec: corev1.ServiceSpec{Selector: cacheSelector, Ports: []corev1.ServicePort{
+			{Name: "client", Port: 26380, TargetPort: intstr.FromInt32(26380)},
+		}},
+	})
+	h.add(t, "pods", &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "rv", Name: "kv-0", Labels: cacheSelector},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "kv", Image: "registry.example.com/base/cache:7", Command: []string{"redis-server", "/etc/s.conf", "--sentinel"},
+				Ports: []corev1.ContainerPort{{ContainerPort: 26380}}},
+		}},
+	})
+	if got := doors(t, h, "rv"); len(got) != 0 {
+		t.Fatalf("doors = %v", got)
+	}
+}
