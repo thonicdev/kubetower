@@ -14,7 +14,7 @@ import {
 } from '@kubetower/ui';
 
 import { STATES, RedisProblem, getProbe, inventoryQuery, type Backend, type Deployment, type Inventory, type ProbeState } from './data';
-import { ProblemNotice, instanceHref, inventoryHref, plural } from './parts';
+import { ExternalTile, ProblemNotice, instanceHref, inventoryHref, plural, serviceHref } from './parts';
 import {
   AXES,
   FILTER_PARAMETER,
@@ -93,6 +93,7 @@ export function RedisViewer(): ReactNode {
               · {plural(data.redises, 'deployment')}, {plural(data.services, 'Service')}
             </>
           )}
+          {data === undefined || (data.external ?? []).length === 0 ? null : <> · {(data.external ?? []).length} external</>}
         </p>
         <span className="flex-1" />
         {scope === '' ? null : (
@@ -219,7 +220,8 @@ function Listed({
   filters: Filters;
   pick: (f: Filters) => void;
 }): ReactNode {
-  if (data.services === 0 && data.complete) {
+  const external = data.external ?? [];
+  if (data.services === 0 && data.complete && external.length === 0) {
     // A fact about the search, not about the cluster: discovery is a guess over
     // Service ports, so "none matched" is this page's claim and "there is none"
     // is not.
@@ -279,6 +281,13 @@ function Listed({
               probes={probes}
               onProbe={probe}
             />
+          ))}
+        </TileGrid>
+      )}
+      {external.length === 0 || filtered ? null : (
+        <TileGrid label="Outside the cluster">
+          {external.map((door) => (
+            <ExternalTile key={`${door.namespace}/${door.service}`} door={door} to={serviceHref(cluster, door.namespace, door.service)} />
           ))}
         </TileGrid>
       )}

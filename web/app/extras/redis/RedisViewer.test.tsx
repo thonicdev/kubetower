@@ -329,6 +329,21 @@ describe('the inventory: one tile per deployment', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 
+  it('lists an ExternalName Service to a managed Redis apart, opening its Service, with no probe', async () => {
+    const asked = stub({
+      [INVENTORY]: { body: inventory({ services: 0, members: 0, redises: 0, namespaces: [], external: [{ namespace: 'apps', service: 'sessions', host: 'demo.abc123.cache.amazonaws.com', port: 6379, why: 'it is on 6379' }] }) },
+    });
+    mount('x/redis');
+    await waitFor(() => expect(document.querySelector('[data-external="apps/sessions"]')).not.toBeNull());
+    const tile = document.querySelector('[data-external="apps/sessions"]');
+    expect(tile?.querySelector('a')?.getAttribute('href')).toBe('/c/docker-desktop/services/apps/sessions');
+    expect(tile?.querySelector('[data-tile-detail]')?.textContent).toBe('apps · demo.abc123.cache.amazonaws.com:6379');
+    expect(tile?.querySelector('[data-probe]')).toBeNull();
+    expect(document.querySelector('[data-state="empty"]')).toBeNull();
+    expect(document.querySelector('[data-counts]')?.textContent).toContain('1 external');
+    expect(asked).toEqual([INVENTORY]);
+  });
+
   it('draws a tile with nothing behind it as not serving, with no probe and no link', async () => {
     stub({
       [INVENTORY]: {

@@ -79,6 +79,19 @@ describe("the Redis viewer's shortcut", () => {
     expect(asked).toEqual(['/x/kind/redis/services/cache/rsent-redis']);
   });
 
+  it('marks an ExternalName Service to a managed Redis as external, with its address and no probe', async () => {
+    const asked = stub({
+      '/x/kind/redis/services/apps/sessions': { body: { namespace: 'apps', service: 'sessions', deployments: [], external: { namespace: 'apps', service: 'sessions', host: 'demo.abc123.cache.amazonaws.com', port: 6379, why: 'it is on 6379' } } },
+    });
+    expect(await serviceShortcut({ cluster: 'kind', kind: 'services', namespace: 'apps', name: 'sessions' }, signal)).toEqual({
+      title: 'sessions',
+      badges: ['external'],
+      detail: 'demo.abc123.cache.amazonaws.com:6379',
+      to: '/c/kind/services/apps/sessions?tab=x.redis.backend',
+    });
+    expect(asked).toEqual(['/x/kind/redis/services/apps/sessions']);
+  });
+
   it('names the deployment a Pod is behind, and nothing for a pod that is not', async () => {
     stub({ '/x/kind/redis/?ns=cache': { body: inventory([sentinel]) } });
     const target = await podShortcut({ cluster: 'kind', kind: 'pods', namespace: 'cache', name: 'rsent-redis-node-1' }, signal);
