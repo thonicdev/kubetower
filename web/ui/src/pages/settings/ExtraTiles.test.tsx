@@ -408,12 +408,34 @@ describe('the sentence of a suggested extra', () => {
         '2 Redis Services in 1 namespace on this cluster.',
       );
     });
-    expect(tile('b').querySelector('[data-extra-suggested] [title]')?.getAttribute('title')).toBe(
+    expect(tile('b').querySelector('[data-extra-suggested]')?.getAttribute('title')).toBe(
       '2 Redis Services in 1 namespace on this cluster.',
     );
-    expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('detected');
+    expect(tile('b').querySelector('[data-extra-suggested]')?.textContent).toBe('Suggested');
     expect(tile('kubecron').querySelector('[data-extra-suggested]')).toBeNull();
     expect(tile('c').querySelector('[data-extra-suggested]')).toBeNull();
+  });
+
+  it('puts a suggested card first, with an accent the others do not carry (#62)', async () => {
+    answer(200, {
+      state: 'ok',
+      items: [
+        { key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' },
+        // On already: never suggested, never accented.
+        { key: 'kubecron', label: 'KubeCron', evidence: '3 CronJobs' },
+      ],
+    });
+    draw();
+    await waitFor(() => {
+      expect(tile('b').hasAttribute('data-extra-suggested-card')).toBe(true);
+    });
+    const order = [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+    expect(order).toEqual(['b', 'c', 'kubecron', 'a']);
+    expect(tile('b').className).toContain('border-accent');
+    for (const key of ['a', 'c', 'kubecron']) {
+      expect(tile(key).hasAttribute('data-extra-suggested-card')).toBe(false);
+      expect(tile(key).className).not.toContain('border-accent');
+    }
   });
 
   it('is not drawn when the suggestions could not be read', async () => {
@@ -422,5 +444,57 @@ describe('the sentence of a suggested extra', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(document.querySelector('[data-extra-suggested]')).toBeNull();
     expect(document.body.textContent).not.toContain('boom');
+  });
+});
+
+describe('the order of the cards while the page is open (#62)', () => {
+  const answer = () =>
+    vi.stubGlobal('fetch', (input: RequestInfo | URL) => {
+      const path = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
+      const body = path.endsWith('/suggestions')
+        ? { state: 'ok', items: [{ key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' }] }
+        : {};
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+  const tree = (list: readonly ExtensionInfo[], cluster = 'prod', client = new QueryClient()) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <KeyboardStack>
+          <ExtraTab cluster={cluster} clusters={[]} items={list} />
+        </KeyboardStack>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const order = () => [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+
+  it('holds: turning the suggested extra on does not move a card under the pointer', async () => {
+    answer();
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+    });
+    // The listing read again after the switch: b is on, so no longer suggested.
+    const after = items.map((one) => (one.key === 'b' ? { ...one, enabled: true } : one));
+    view.rerender(tree(after, 'prod', client));
+    await waitFor(() => {
+      expect(tile('b').getAttribute('data-on')).toBe('true');
+    });
+    expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+  });
+
+  it('is taken again for another cluster', async () => {
+    answer();
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['b', 'c', 'kubecron', 'a']);
+    });
+    // On staging the same extra is on, so nothing is suggested.
+    const staging = items.map((one) => (one.key === 'b' ? { ...one, enabled: true } : one));
+    view.rerender(tree(staging, 'staging', client));
+    await waitFor(() => {
+      expect(order()).toEqual(['c', 'b', 'kubecron', 'a']);
+    });
   });
 });
