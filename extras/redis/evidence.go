@@ -159,7 +159,7 @@ func hasAny(s string, words []string) bool {
 // evidence picks, for each Service the port guess took nothing of, the one
 // port that is its Redis, by "namespace/name".
 //
-// From a selected pod running a Redis image, whose container port the
+// From a selected pod running a Redis image or redis-server, whose container port the
 // Service port targets, when pods is not nil (a read scoped to one
 // namespace); then from an `app.kubernetes.io/name` or `app` label saying
 // Redis or Valkey, on the Service or its selector, on its only candidate port
@@ -293,7 +293,8 @@ func onePort(candidates []corev1.ServicePort) (corev1.ServicePort, bool) {
 	return corev1.ServicePort{}, false
 }
 
-// byImage is the candidate port a selected pod's Redis container listens on.
+// byImage is the candidate port a selected pod's Redis container listens on:
+// a container whose image says Redis or Valkey, or that runs the server.
 func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*corev1.Pod) (chosenPort, bool) {
 	if pods == nil || len(service.Spec.Selector) == 0 {
 		return chosenPort{}, false
@@ -305,6 +306,9 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 		}
 		for _, container := range pod.Spec.Containers {
 			name, ok := redisImage(container.Image)
+			if !ok {
+				name, ok = serverCommand(container)
+			}
 			if !ok {
 				continue
 			}
@@ -325,6 +329,85 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 		}
 	}
 	return chosenPort{}, false
+}
+
+// servers are the binaries a container runs when it is the server.
+var servers = []string{"redis-server", "valkey-server"}
+
+// launchers start the next word as the program: skipped before it.
+var launchers = map[string]bool{"exec": true, "tini": true, "dumb-init": true, "--": true}
+
+// shells run their `-c` argument as a command line.
+var shells = map[string]bool{"sh": true, "bash": true, "ash": true, "dash": true, "zsh": true}
+
+// serverCommand reports whether a container runs redis-server or
+// valkey-server, and which: as its program, by path or behind a launcher
+// (`tini --`, `exec`), or as the program of a segment of a shell line (`sh -c
+// "exec redis-server /etc/redis.conf"`). Only the program counts, never an
+// argument: an exporter's `--redis.addr` or a `nc -z redis-server 6379` loop
+// names a host. A server started with `--sentinel` is a Sentinel.
+func serverCommand(container corev1.Container) (string, bool) {
+	argv := append(append([]string{}, container.Command...), container.Args...)
+	return runs(argv, true)
+}
+
+// runs reads one command line; nested says a shell's `-c` line may be read.
+func runs(argv []string, nested bool) (string, bool) {
+	i := 0
+	for i < len(argv) && (launchers[base(argv[i])] || assignment(argv[i])) {
+		i++
+	}
+	if i >= len(argv) {
+		return "", false
+	}
+	program := base(argv[i])
+	if nested && shells[program] {
+		for j := i + 1; j+1 < len(argv); j++ {
+			if flag := argv[j]; strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "--") && strings.Contains(flag, "c") {
+				return shellLine(argv[j+1])
+			}
+		}
+		return "", false
+	}
+	for _, server := range servers {
+		if program != server {
+			continue
+		}
+		for _, arg := range argv[i+1:] {
+			if arg == "--sentinel" {
+				return "", false
+			}
+		}
+		return server, true
+	}
+	return "", false
+}
+
+// shellLine reads each segment of a shell line between `;`, `&&`, `||`, `|`,
+// `&` and new lines, quotes dropped.
+func shellLine(line string) (string, bool) {
+	line = strings.NewReplacer(`"`, " ", "'", " ", "&&", ";", "||", ";", "|", ";", "&", ";", "\n", ";", "\r", ";").Replace(line)
+	for _, segment := range strings.Split(line, ";") {
+		if name, ok := runs(strings.Fields(segment), false); ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// base is a program's name without its directory, lower-cased.
+func base(word string) string {
+	word = strings.ToLower(strings.TrimSpace(word))
+	if at := strings.LastIndexByte(word, '/'); at >= 0 {
+		word = word[at+1:]
+	}
+	return word
+}
+
+// assignment is an environment assignment before the program (`A=b prog`).
+func assignment(word string) bool {
+	eq := strings.IndexByte(word, '=')
+	return eq > 0 && !strings.ContainsAny(word[:eq], "/-")
 }
 
 // targets says whether the Service port reaches one of the container's ports:
