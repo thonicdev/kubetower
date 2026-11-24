@@ -345,6 +345,8 @@ type UpdateInstaller interface {
 	SetInstallUpdates(on bool) (UpdateInstall, error)
 	DownloadUpdate() (UpdateInstall, error)
 	InstallUpdate(ctx context.Context) (UpdateInstall, error)
+	// OpenUpdateFolder shows the verified file's folder, in the manual phase.
+	OpenUpdateFolder() (UpdateInstall, error)
 }
 
 // PreferenceStore is the read half and the twelve writes.
