@@ -35,6 +35,18 @@ export function contributedTabs(extensions: readonly Extension[], kind: string):
   return out;
 }
 
+/** The tab address `tab` names today: `x.<old>.<tab>` of an extension's
+ *  legacy key becomes `x.<key>.<tab>`, so a link written before a rename
+ *  opens the same tab. Any other value is returned unchanged. */
+export function currentTabAddress(extensions: readonly Extension[], tab: string | undefined): string | undefined {
+  if (tab === undefined || !tab.startsWith('x.')) return tab;
+  const dot = tab.indexOf('.', 2);
+  if (dot < 0) return tab;
+  const named = tab.slice(2, dot);
+  const owner = extensions.find((one) => one.legacyKeys?.includes(named) === true);
+  return owner === undefined ? tab : `x.${owner.key}${tab.slice(dot)}`;
+}
+
 /** The activity view an extension offers for this kind: the first in the
  *  extensions' order, with the key it belongs to. */
 export function contributedActivity(

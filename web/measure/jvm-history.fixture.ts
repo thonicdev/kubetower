@@ -1,8 +1,8 @@
-import type { History } from '../app/extras/jvm/data';
+import type { History } from '../app/extras/runtime/data';
 
 /**
  * The JVM tab's memory history, for its picture (`pnpm shots:extras jvm-history`):
- * what `extras/jvm` answered (`buildHistory`) for a week of a container that fills
+ * what `extras/runtimeinspect` answered (`buildHistory`) for a week of a container that fills
  * and is collected, creeps up, and restarts on the fourth day, beside a quiet
  * sidecar, against a 512 MiB limit. Generated from the Go builder's answer for a
  * synthetic window; only the cluster was put in the scene's name.

@@ -1,9 +1,9 @@
-import type { ClassHistogram } from '../app/extras/jvm/data';
+import type { ClassHistogram } from '../app/extras/runtime/data';
 
 /**
  * The JVM tab's class histogram, for its picture (`pnpm shots:extras jvm-histogram`):
- * what `extras/jvm` answered for the JDK 21 histogram of its tests
- * (`extras/jvm/testdata/jdk21-GC-class_histogram.txt`, a program holding twenty
+ * what `extras/runtimeinspect` answered for the JDK 21 histogram of its tests
+ * (`extras/runtimeinspect/testdata/jdk21-GC-class_histogram.txt`, a program holding twenty
  * thousand `int[]` and strings), generated from the Go parser's answer; only the
  * cluster, pod and container were put in the scene's names.
  */

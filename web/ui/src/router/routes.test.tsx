@@ -259,6 +259,25 @@ describe('the reserved x segment', () => {
     expect(document.getElementById('page')?.textContent ?? '').not.toMatch(/no page for the extra/);
   });
 
+  it('carries a bookmark under a legacy key to the same place under the current key', async () => {
+    stubEverything();
+    const extension = {
+      key: 'runtime',
+      legacyKeys: ['jvm'],
+      nav: { label: 'Runtime Inspector', path: 'x/runtime' },
+      routes: [
+        { path: 'x/runtime', element: <p>the extension page</p> },
+        { path: 'x/runtime/sub', element: <p>the sub page</p> },
+      ],
+    };
+    const { router } = mountApp('/c/prod/x/jvm/sub?ns=shop#heap', [extension]);
+
+    expect(await screen.findByText('the sub page')).toBeDefined();
+    expect(router.state.location.pathname).toBe('/c/prod/x/runtime/sub');
+    expect(router.state.location.search).toBe('?ns=shop');
+    expect(router.state.location.hash).toBe('#heap');
+  });
+
   it('says a registered extra has no page at an unknown sub-path, and links its own page', async () => {
     // The extra is in this build, so "this build has no page for the extra"
     // would be false; the address is what is wrong.
@@ -356,5 +375,13 @@ describe("an extension's routes stay under x/<key>", () => {
     const first = extensionWith([{ path: 'x/argocd', element: null }]);
     const second = extensionWith([{ path: 'x/argocd/other', element: null }]);
     expect(() => buildRoutes([first, second])).toThrow(/Two extensions share the key "argocd"/);
+  });
+
+  it("refuses a legacy key that is another extension's key, or that cannot name a route", () => {
+    const first = extensionWith([{ path: 'x/argocd', element: null }]);
+    const second = { ...extensionWith([{ path: 'x/delivery', element: null }], 'delivery'), legacyKeys: ['argocd'] };
+    expect(() => buildRoutes([first, second])).toThrow(/Two extensions share the key "argocd"/);
+    const bad = { ...extensionWith([{ path: 'x/delivery', element: null }], 'delivery'), legacyKeys: ['Old?'] };
+    expect(() => buildRoutes([bad])).toThrow(/cannot name a route/);
   });
 });

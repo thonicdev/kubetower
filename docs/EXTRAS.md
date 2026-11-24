@@ -13,7 +13,7 @@ this repository and under the same license as every other page.
 | `kubecron` | KubeCron | Whether each CronJob runs when it should, and what its past runs did | Nothing for the verdicts; a KubeCron collector for run history, found by itself (the Service labeled `kubecron.io/collector=true`, its token in `kubecron-api` beside it) or set per cluster in Settings › Extra |
 | `kubeadjust` | KubeAdjust | Whether each workload's requests and limits are the right size, and the `kubectl set resources` commands that would fix them | metrics-server; a Prometheus for a seven-day window; the `nodes/proxy` permission for disk figures |
 | `redis` | Redis viewer | The keys, values and memory of the Redis and Valkey instances the cluster runs, found from their Services. **It never writes**: every command it can send is a read on a fixed list, refused before it leaves otherwise. Each look opens one port-forward, reviewed for you, and closes it. An instance with a password is opened with the one its own pod is started with, read through the console's reveal - so you need `get` on that Secret - and never shown, stored or put in an address | A Redis or Valkey Service |
-| `jvm` | — (JVM Inspector, from the panel) | Which pods probably run Java, recognized from their spec alone - the image (a Java runtime image, a `-jre` or `-jdk` tag, a known Java product such as Kafka or Keycloak), a command line that starts `java` or carries JVM options, or `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or `JAVA_HOME` in the environment - and, for each Java container, its estimated maximum heap and how close that comes to its memory limit: a warning above 75 % of the limit, an error when an explicit `-Xmx` reaches it. The 75 % line is a heuristic, not a JDK rule. The page counts the Java pods by risk in tiles that filter, draws each container's heap, the room outside it, its limit and the 75 % line on one bar, with the working set from metrics-server as a mark where it is measured, and groups by namespace or by workload; a "Java" column on the Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets and Jobs lists carries the worst grade. It reads the spec only: an image whose entrypoint starts Java with nothing in the spec is not recognized. On a Java pod, a tile on its Details and a **JVM tab** ask the JVM itself, on a click: see [below](#the-jvm-inspectors-tab) | Pods running a JVM |
+| `runtime` (formerly `jvm`, still accepted) | — (Runtime Inspector, from the panel) | Which pods probably run Java, recognized from their spec alone - the image (a Java runtime image, a `-jre` or `-jdk` tag, a known Java product such as Kafka or Keycloak), a command line that starts `java` or carries JVM options, or `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or `JAVA_HOME` in the environment - and, for each Java container, its estimated maximum heap and how close that comes to its memory limit: a warning above 75 % of the limit, an error when an explicit `-Xmx` reaches it. The 75 % line is a heuristic, not a JDK rule. The page counts the Java pods by risk in tiles that filter, draws each container's heap, the room outside it, its limit and the 75 % line on one bar, with the working set from metrics-server as a mark where it is measured, and groups by namespace or by workload; a "Java" column on the Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets and Jobs lists carries the worst grade. It reads the spec only: an image whose entrypoint starts Java with nothing in the spec is not recognized. On a Java pod, a tile on its Details and a **JVM tab** ask the JVM itself, on a click: see [below](#the-runtime-inspectors-jvm-tab) | Pods running a JVM |
 | `events` | Event Intelligence | Kubernetes Events made readable: repeats counted once per object (`BackOff × 214`), grouped by cause across objects and unfolded per object, set on a timeline under what changed just before - a rollout with its revision, a ConfigMap edit, scaling, a new or failing node - with tiles that filter (warnings, crash loops, OOM kills, scheduling failures, objects touched), a 15 min, 1 h or 3 h window, and filters by namespace, type and kind. **It reads only, and says "since", never "because"**: a change is shown ahead of the groups that began after it. On a Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet or Job, the **Activity tab** draws the same timeline and causes narrowed to the object and its pods, in place of the core's plain list of events (its changes and rollouts stay below). A ConfigMap's data and Secrets are never read | Nothing; `list replicasets`, `configmaps`, `pods` and `nodes` for the changes (a refused read is said, and the rest still shows) |
 | `netinspect` | Network Inspector | Which NetworkPolicies select each pod, which peers and ports their rules allow, and whether one pod would reach another, with the policy and rule that decide on each side. **It reads the rules, never traffic**: every edge it draws is dashed and says so | NetworkPolicies, and a network plugin that applies them (flannel alone does not, and the page says so) |
 | `pending` | — (Pod Debugging, from the panel) | Why each Pending pod waits - resources, taints, node selector, pod affinity, topology spread, volumes, a quota that refused its creation - which node comes closest on what can be computed from the specs, and what it would take to start it. It never writes; pod affinity and spread are the scheduler's word, never recomputed | Nothing; `list nodes` for the node checks (without it, the scheduler's reasons alone) |
@@ -22,7 +22,7 @@ this repository and under the same license as every other page.
 | `security` | Security Center | What trivy-operator found in the cluster's images and workloads: vulnerabilities by severity, each CVE counted once per image, failed configuration checks and exposed secrets, by namespace, by image and by workload, the worst first, and which workloads a LoadBalancer or NodePort Service or an Ingress reaches from outside; a workload's own CVEs, failed checks and secrets on its page; the cluster's own reports (its components, cluster-scoped objects, control plane and nodes) below the workloads; an RBAC view of the Roles and ClusterRoles trivy-operator assessed, and a Compliance view of each standard's controls (NSA, CIS, Pod Security Standards), passed and failed; and a Security cell in the Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs and CronJobs lists. **It never writes, never scans and never sends a secret's matched text**: it reads trivy-operator's reports, the overview their counts alone, and a workload with no report reads "not scanned", never clean | trivy-operator, and the right to list its reports (`aquasecurity.github.io`), which Kubernetes' `view` role does not grant |
 | `dns` | DNS | How CoreDNS is doing, from its Prometheus metrics: queries per second, the NXDOMAIN and SERVFAIL share, p50 and p99 latency and the cache hit rate, in five tiles that filter, three charts and a bar per CoreDNS pod and per upstream, over 15 min, 1 h or 6 h. An upstream that stopped answering reads "No answers". On CoreDNS's Service and pods, a compact line ("412 q/s" and the worst graded figure) leads to the page. **It never writes and sends Prometheus only fixed queries**: no query text comes from the page, and a series is shown only if it belongs to a CoreDNS pod the person may list. The scrape may or may not label series with `pod`; the pod is then matched on the `instance` address | CoreDNS, and a Prometheus scraping its metrics port (9153); `list pods` in the namespace CoreDNS runs in |
 
-Two extras have no entry in the menu and are reached from the panel of what they are about: JVM Inspector from a Java pod, Pod Debugging from a Pending pod. Their pages are still routed. The Redis viewer has its entry, and is also reached from a Service's or a Pod's panel.
+Two extras have no entry in the menu and are reached from the panel of what they are about: Runtime Inspector from a Java pod, Pod Debugging from a Pending pod. Their pages are still routed. The Redis viewer has its entry, and is also reached from a Service's or a Pod's panel.
 
 ---
 
@@ -136,15 +136,15 @@ whatever failed spelled out - and they are what makes an empty page readable:
 
 ---
 
-## The JVM Inspector's tab
+## The Runtime Inspector’s JVM tab
 
-The JVM Inspector's page reads pod specs only and runs nothing. On a pod whose
+The Runtime Inspector’s page reads pod specs only and runs nothing. On a pod whose
 spec says a container is probably Java, the pod's Details open on a **tile**,
 read from the same spec: the runtime the image names (Temurin 21, Corretto 17),
 the OOMKill risk graded room, tight or OOMKill, and the estimated maximum heap
 against the memory limit with the 75 % line. A click opens the **JVM tab**.
 
-![The JVM tile on a Java pod's Details: the runtime, the risk, and the maximum heap against the memory limit](../web/app/extras/jvm/assets/pod-tile.png)
+![The JVM tile on a Java pod's Details: the runtime, the risk, and the maximum heap against the memory limit](../web/app/extras/runtime/assets/pod-tile.png)
 
 The object panel has that **JVM tab**,
 and the tab runs nothing either until **Inspect** is clicked. The button's
@@ -153,7 +153,7 @@ through the console's exec door - reviewed as `create pods/exec` on the pod for
 the person signed in, as a shell is, and recorded in the audit log with the
 command.
 
-![The JVM tab of a pod after Inspect: the JVM's version, uptime, GC and key flags, and the memory bar of heap, metaspace and code cache against the working set, request and limit](../web/app/extras/jvm/assets/pod-tab-inspected.png)
+![The JVM tab of a pod after Inspect: the JVM's version, uptime, GC and key flags, and the memory bar of heap, metaspace and code cache against the working set, request and limit](../web/app/extras/runtime/assets/pod-tab-inspected.png)
 
 - **What it sends** is a fixed list of read-only diagnostic commands, held by
   the extra: `jcmd -l` to find the JVM (process 1 when it lists none; a choice
@@ -201,7 +201,7 @@ Below Inspect, **Thread dump** is a button of its own, never polled. It runs
 the JVM, and its tooltip says what the click costs: the JVM pauses while
 it writes the dump, briefly, and longer the more threads it has.
 
-![The thread dump of a pod whose two threads wait for each other: the deadlock first, the ring of thread states, the filter and the download, and the blocked threads open with the thread holding each one's lock](../web/app/extras/jvm/assets/thread-dump.png)
+![The thread dump of a pod whose two threads wait for each other: the deadlock first, the ring of thread states, the filter and the download, and the blocked threads open with the thread holding each one's lock](../web/app/extras/runtime/assets/thread-dump.png)
 
 Beside them, **Memory history** reads the last seven days of the pod's
 containers' working set from the cluster's Prometheus. It runs nothing in the
@@ -217,7 +217,7 @@ takes minutes) is `pending` and is asked again every five seconds. This is the
 container's working set, not the JVM's own heap and pool metrics: those need a
 typed `Host` method of their own, and are not read.
 
-![A pod's memory history: seven days of two containers' working set against the app's 512 MiB limit, the app restarting on the fourth day](../web/app/extras/jvm/assets/memory-history.png)
+![A pod's memory history: seven days of two containers' working set against the app's 512 MiB limit, the app restarting on the fourth day](../web/app/extras/runtime/assets/memory-history.png)
 
 Beside them, **Flight recorder** records the JVM with Java Flight Recorder and
 downloads the `.jfr` file, to be opened in JDK Mission Control; nothing is
@@ -233,7 +233,7 @@ afterwards, as it stops a recording and removes its file if the page is left
 mid-recording. The name and the file are random ones the route draws, and the
 duration is looked up in the fixed list, never formatted from the request.
 
-![The flight recorder's confirmation: the file may hold environment variables, one minute, the default profile](../web/app/extras/jvm/assets/flight-recorder-confirm.png)
+![The flight recorder's confirmation: the file may hold environment variables, one minute, the default profile](../web/app/extras/runtime/assets/flight-recorder-confirm.png)
 
 Beside it, **Class histogram** runs `jcmd <pid> GC.class_histogram`, which is
 **a full GC**: the application pauses while it runs, longer the larger the heap.
@@ -247,7 +247,7 @@ silent short total. The parse is one pass over the output (a 50 000-class
 histogram takes about 12 ms and allocates about 11 KiB), and the 45 second
 deadline and 60 second budget sit under the exec's two minutes.
 
-![The class histogram of a JDK 21 JVM: the totals, and the fifty classes holding the most live bytes as bars](../web/app/extras/jvm/assets/class-histogram.png)
+![The class histogram of a JDK 21 JVM: the totals, and the fifty classes holding the most live bytes as bars](../web/app/extras/runtime/assets/class-histogram.png)
 
 - **What it shows**: the deadlocks the JVM reported (`Found one Java-level
   deadlock`) first, each with its cycle - which thread waits for which lock,

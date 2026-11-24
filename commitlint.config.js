@@ -75,6 +75,7 @@ module.exports = {
         'pending',
         'redis',
         'resources',
+        'runtime',
         'svcgroup',
         'terminal',
         'update',

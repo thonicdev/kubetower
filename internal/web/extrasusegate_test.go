@@ -122,6 +122,36 @@ func TestUnderTheServerProfileUseIsReviewedPerExtra(t *testing.T) {
 	}
 }
 
+// **A rename takes the page from nobody**: alice holds `use` only on the key
+// the extra was published under, as a ClusterRole written before the rename
+// does. She reaches every route, sees it in the menu, may turn it off, and the
+// write is recorded under the grant that allowed it. frank, holding neither, is
+// refused and told the key to grant from now on.
+func TestUnderTheServerProfileUseOnTheKeyAnExtraWasPublishedUnderStillGrantsIt(t *testing.T) {
+	s, mux, _ := turnedOn(t, []string{fixtureKey}, fixtureLegacyKey)
+
+	for what, path := range extraRoutes(fixtureKey) {
+		if rec := reach(mux, alice, path); rec.Code != http.StatusOK {
+			t.Errorf("alice holds use on %s and %s answered %d %q", fixtureLegacyKey, what, rec.Code, firstLine(rec.Body.String()))
+		}
+	}
+	if !menuHas(t, s, alice, fixtureKey) {
+		t.Error("the menu leaves out an extra alice may use under its old key")
+	}
+	rec := reach(mux, frank, extraRoutes(fixtureKey)["the page"])
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "use on "+UseGroup+"/"+fixtureKey) {
+		t.Errorf("frank holds no use and the page answered %d %q, want 403 naming %s", rec.Code,
+			firstLine(rec.Body.String()), fixtureKey)
+	}
+	if row := listed(t, s, alice)[fixtureKey]; !row.Writable || row.Locked != "" {
+		t.Errorf("alice holds use on %s and may not turn %s off: %+v", fixtureLegacyKey, fixtureKey, row)
+	}
+	if err := (apiClusters{s}).SetExtension(as(alice), "prod", fixtureKey, false); err != nil {
+		t.Errorf("alice holds use on %s and may not turn %s off: %v", fixtureLegacyKey, fixtureKey, err)
+	}
+
+}
+
 // extraGroup is the Extra heading of the menu drawn for who on `prod`, and
 // whether there is one.
 func extraGroup(t *testing.T, s *Server, who identity.Who) (api.NavGroup, bool) {
@@ -339,5 +369,23 @@ func TestTheUseReviewAnswersAnUnknownClusterAsTheAPIDoes(t *testing.T) {
 	assertUnknownClusterProblem(t, rec, "nosuch")
 	if n := useQuestions(reviews); n != 0 {
 		t.Errorf("%d use reviews asked about a cluster nobody can name", n)
+	}
+}
+
+// **An API address under the old key is redirected, not lost**: a 308, which
+// keeps the method and the body, to the same address and query under the key.
+func TestAnAddressUnderTheKeyAnExtraWasPublishedUnderIsRedirected(t *testing.T) {
+	_, mux, _ := turnedOn(t, []string{fixtureKey}, fixtureKey)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		request := httptest.NewRequest(method, "/x/prod/"+fixtureLegacyKey+"/panel?ns=shop", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, request)
+		if rec.Code != http.StatusPermanentRedirect || rec.Header().Get("Location") != "/x/prod/"+fixtureKey+"/panel?ns=shop" {
+			t.Errorf("%s under %s answered %d to %q, want 308 to /x/prod/%s/panel?ns=shop", method, fixtureLegacyKey,
+				rec.Code, rec.Header().Get("Location"), fixtureKey)
+		}
+	}
+	if rec := reach(mux, alice, "/x/prod/"+fixtureKey+"/panel"); rec.Code != http.StatusOK {
+		t.Errorf("the address the redirect points to answered %d", rec.Code)
 	}
 }

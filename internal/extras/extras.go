@@ -66,6 +66,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -107,6 +108,22 @@ func Canonical(key string) string {
 		return to
 	}
 	return key
+}
+
+// LegacyOf is every earlier key the extra key was published under, sorted, or
+// none. The `use` review asks about them too (internal/web), so a ClusterRole
+// written for an old name keeps granting the page after it is renamed.
+func LegacyOf(key string) []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	var out []string
+	for old, to := range legacy {
+		if to == key {
+			out = append(out, old)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Extra is one of them, as the settings page needs to draw it.
