@@ -11,11 +11,22 @@ built from its tag.
 - **Releases are signed.** `checksums.txt` is published with an Ed25519
   signature, `checksums.txt.sig`, and the desktop verifies it against a key
   built into the binary before it trusts any hash (#46, #52).
-- **The desktop can download a newer release and verify it.** Behind an
-  **Install updates** setting, on by default and desktop only: the asset for
-  this installation is fetched from GitHub over HTTPS and kept only when its
-  sha256 matches the signed `checksums.txt`. Nothing installs yet without an
-  installer for the platform (#47, #53).
+- **The desktop updates itself.** Settings offers a newer release in two
+  clicks: **Download** fetches the file for this installation from GitHub and
+  keeps it only when its sha256 matches the signed `checksums.txt`; **Restart
+  to update** installs it and starts KubeTower again, counting the terminals
+  and port-forwards it ends. A badge on Settings, an update banner, the
+  progress in place, and **Install updates** in Settings › Infos to turn it
+  off (#45, #47, #48, #53, #55).
+  - Windows: the setup, silently and per user, or the zip (#50, #57).
+  - macOS: the app from the disk image, swapped in place; the Dock badge
+    says a newer release is there (#51, #64).
+  - Linux: the AppImage and the `.tar.gz` in place, the `.deb` and `.rpm`
+    through `pkexec` with `apt-get`, `dnf` or `zypper` (#49, #56).
+  - A folder that is not writable says **Not writable**, with **Open folder**
+    on the verified file (#56, #57, #64).
+  - Never in a cluster or a container, never a downgrade, never a file the
+    signature does not vouch for.
 - **Settings has a Back control** to the page it was opened from, its
   filters and open object included (#13, #30).
 - **Settings › Extra reads at a glance.** Each extra has its icon, Edit and

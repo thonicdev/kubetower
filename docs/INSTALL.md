@@ -2,8 +2,8 @@
 
 The [README](../README.md#install) has the short version. This page has the
 details: what each release file holds, the Windows setup from a script, the
-Linux packages, how to check a download, what the desktop listens on, and the
-one address shape the console can be served at.
+Linux packages, updating from the console, how to check a download, what the
+desktop listens on, and the one address shape the console can be served at.
 
 > **The Windows and macOS builds are not code-signed yet.** Both systems warn
 > before the first run, and that warning is expected; on Windows 11 with Smart
@@ -27,6 +27,7 @@ one address shape the console can be served at.
 | `kubetower-<version>-x86_64.AppImage` | Any Linux, x86-64, without installing |
 | `kubetower_<version>_linux_amd64.tar.gz`, `kubetower_<version>_linux_arm64.tar.gz` | Linux, the binary alone |
 | `checksums.txt` | The SHA-256 of every file above |
+| `checksums.txt.sig` | The Ed25519 signature of `checksums.txt` ([Check a download](#check-a-download)) |
 
 Each archive holds the `kubetower` binary, `LICENSE`, `LICENSING.md` and
 `THIRD_PARTY_NOTICES.txt`, which lists the third-party software built into the
@@ -108,8 +109,9 @@ sudo apt install ./kubetower-<version>-amd64.deb     # sudo apt remove kubetower
 sudo dnf install ./kubetower-<version>-x86_64.rpm    # sudo dnf remove kubetower
 ```
 
-They are unsigned, x86-64 only, and published in no apt or dnf repository: a
-new version is a new download. A pre-release such as `0.1.0-rc.1` is versioned
+They are unsigned, x86-64 only, and published in no apt or dnf repository: the
+console installs a newer release itself ([Updating](#updating)), or a new
+version is a new download. A pre-release such as `0.1.0-rc.1` is versioned
 `0.1.0~rc.1` inside the package, so that the release `0.1.0` upgrades it.
 
 The AppImage is the same binary in one file that runs where it is:
@@ -121,12 +123,45 @@ chmod +x kubetower-<version>-x86_64.AppImage
 
 Where FUSE is missing (some containers and minimal systems), add
 `--appimage-extract-and-run` before the other arguments. It carries the license
-files under `usr/share/doc/kubetower/`, is unsigned, x86-64 only, and does not
-update itself.
+files under `usr/share/doc/kubetower/`, is unsigned and x86-64 only; the
+console replaces it with a newer release ([Updating](#updating)).
 
 From the `.tar.gz`, `kubetower --install` installs the binary in
 `~/.local/bin` with a desktop entry, and `--uninstall` removes it. That path
 has not been tried on a real Linux desktop yet.
+
+---
+
+## Updating
+
+The desktop checks for a newer release at most once a day (`KT_UPDATE_CHECK=off` turns
+the check off) and installs it from **Settings**, in two clicks:
+
+1. **Download** fetches the release file for this installation from GitHub over
+   HTTPS and keeps it only when `checksums.txt.sig` verifies against the key
+   built into the binary and the file's SHA-256 matches its line in
+   `checksums.txt`. Nothing unsigned or unmatched is ever installed, and never
+   an older release.
+2. **Restart to update** replaces KubeTower and starts it again. The terminals
+   and port-forwards it ends are counted beside the button.
+
+A badge on Settings (and on the Dock icon on macOS) says a newer release is
+there. **Install updates**, in Settings › Infos, turns the download and the
+install off; the check stays.
+
+| Installation | How it is replaced |
+|---|---|
+| Windows setup | The new setup runs silently in the same folder, for your user, with no administrator rights |
+| Windows zip | `kubetower.exe` is replaced beside itself |
+| macOS `.app` | The new `KubeTower.app` from the disk image takes the old one's place |
+| AppImage, `.tar.gz` | The file is replaced where it is |
+| `.deb`, `.rpm` | The package manager installs it (`apt-get`, `dnf` or `zypper`, through `pkexec`, which asks for your password) |
+
+Where KubeTower's folder is not writable (`C:\Program Files`, a system folder,
+an app run from the disk image or Downloads), Settings says **Not writable**
+and **Open folder** shows the verified file, to install by hand. A console in a
+cluster or in a container never downloads or installs anything: its image tag
+decides its version.
 
 ---
 
