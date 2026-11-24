@@ -380,15 +380,25 @@ export function OverflowMenuSeparator(): ReactNode {
 }
 
 /**
- * A small accent count, after a label: the Settings entry's "1". Hidden from
- * the accessibility tree, so the link or item it sits in keeps its own name
- * ("Settings", not "Settings1"); the tooltip on that control says why.
+ * A small accent count, after a label: the Settings entry's "1". Without a
+ * `label` it is hidden from the accessibility tree, so the link or item it sits
+ * in keeps its own name ("Settings", not "Settings1") and that control's
+ * tooltip says why. With one, it is announced by that label - where nothing
+ * else on the control says it, such as the account menu's trigger.
  */
-export function CountBadge({ children, title }: { children: ReactNode; title?: string | undefined }): ReactNode {
+export function CountBadge({
+  children,
+  title,
+  label,
+}: {
+  children: ReactNode;
+  title?: string | undefined;
+  label?: string | undefined;
+}): ReactNode {
   return (
     <span
       data-count-badge=""
-      aria-hidden="true"
+      {...(label === undefined ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label })}
       title={title}
       className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-accent px-1 text-2xs leading-4 font-semibold text-fg"
     >

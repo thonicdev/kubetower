@@ -23,7 +23,7 @@ import { PHASES, useUpdateInstall, type UpdateInstall } from './updateInstall';
  * it counts. Nothing is drawn where installing is off or not supported here.
  */
 export function UpdateControl({ prominent = false }: { prominent?: boolean }): ReactNode {
-  const { latest, install, offered, busy, timedOut, waitAgain, download, restart } = useUpdateInstall();
+  const { latest, install, offered, busy, timedOut, installAgain, refused, download, restart } = useUpdateInstall();
   if (install === undefined || !install.enabled || !install.supported) return null;
   // A download in any state is drawn; idle only while a newer release exists.
   if (install.phase === 'idle' && !offered) return null;
@@ -31,7 +31,6 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
   const start = (): void => {
     if (!busy) download.mutate();
   };
-  const refused = download.error ?? restart.error;
   const primary = prominent ? btnPrimary : btnSecondary;
 
   let step: ReactNode;
@@ -77,7 +76,7 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <span className="text-bad" data-update-step="timed-out" title="No answer from the restarted console">
             Failed
           </span>
-          <button type="button" className={btnSecondary} onClick={waitAgain} data-update-wait="">
+          <button type="button" className={btnSecondary} disabled={busy} onClick={installAgain} data-update-wait="">
             Retry
           </button>
         </>

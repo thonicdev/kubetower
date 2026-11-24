@@ -1,5 +1,5 @@
-import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useIsMutating, useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 
 import { request } from '../../api';
 import type { components, paths } from '../../api/schema';
@@ -69,18 +69,53 @@ function useKeep(): (next: UpdateInstall) => void {
 }
 
 /**
- * Whether "Installing…" has waited past INSTALL_TIMEOUT_MS, and a way to wait
- * again. The clock starts when the phase becomes `installing`.
+ * The current `installing`'s clock - when it began and whether its time ran
+ * out - in the query cache rather than in a component, so the banner and
+ * Infos' line, and a tab mounted later, read one clock and say the same thing.
  */
-function useInstallTimeout(installing: boolean): { timedOut: boolean; again: () => void } {
-  const [round, setRound] = useState(0);
-  const [expired, setExpired] = useState(-1);
+const CLOCK_KEY = ['update', 'installing-clock'] as const;
+
+interface InstallClock {
+  since: number;
+  expired: boolean;
+}
+
+/**
+ * Whether "Installing…" has waited past INSTALL_TIMEOUT_MS, and a way to start
+ * the clock again. The clock starts when the phase becomes `installing` and is
+ * cleared when it leaves it, so a later install never inherits an old timeout.
+ */
+function useInstallClock(installing: boolean): { timedOut: boolean; reset: () => void } {
+  const cache = useQueryClient();
+  const clock =
+    useQuery<InstallClock | null>({
+      queryKey: CLOCK_KEY,
+      queryFn: () => null,
+      enabled: false,
+      initialData: null,
+      staleTime: Infinity,
+      gcTime: Infinity,
+    }).data ?? null;
+  const since = clock?.since;
   useEffect(() => {
-    if (!installing) return undefined;
-    const timer = setTimeout(() => setExpired(round), INSTALL_TIMEOUT_MS);
+    if (installing && since === undefined) {
+      const fresh: InstallClock = { since: Date.now(), expired: false };
+      cache.setQueryData<InstallClock | null>(CLOCK_KEY, fresh);
+    }
+    if (!installing && since !== undefined) cache.setQueryData<InstallClock | null>(CLOCK_KEY, null);
+    if (!installing || since === undefined) return undefined;
+    // Every surface arms the same timer; the first to fire marks that clock.
+    const timer = setTimeout(
+      () =>
+        cache.setQueryData<InstallClock | null>(CLOCK_KEY, (was) => (was?.since === since ? { since, expired: true } : was)),
+      Math.max(0, since + INSTALL_TIMEOUT_MS - Date.now()),
+    );
     return () => clearTimeout(timer);
-  }, [installing, round]);
-  return { timedOut: installing && expired === round, again: () => setRound((n) => n + 1) };
+  }, [cache, installing, since]);
+  return {
+    timedOut: installing && clock?.expired === true,
+    reset: () => cache.setQueryData<InstallClock | null>(CLOCK_KEY, null),
+  };
 }
 
 /**
@@ -97,8 +132,10 @@ export function useUpdateInstall(): {
   busy: boolean;
   /** "Installing…" has had no answer for INSTALL_TIMEOUT_MS. */
   timedOut: boolean;
-  /** Wait for the restarted console again after a timeout. */
-  waitAgain: () => void;
+  /** Ask for the install again after a timeout, on a fresh clock. */
+  installAgain: () => void;
+  /** The last download or restart refused, whichever surface asked it. */
+  refused: Error | null;
   download: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   restart: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   allow: ReturnType<typeof useMutation<UpdateInstall, Error, boolean>>;
@@ -108,7 +145,8 @@ export function useUpdateInstall(): {
   const install = update?.install;
   const keep = useKeep();
   const cache = useQueryClient();
-  const { timedOut, again } = useInstallTimeout(install?.phase === 'installing');
+  const clock = useInstallClock(install?.phase === 'installing');
+  const timedOut = clock.timedOut;
   const moving = install !== undefined && MOVING.has(install.phase) && !timedOut;
   useQuery({
     queryKey: [...settingsKey, 'update'],
@@ -135,6 +173,9 @@ export function useUpdateInstall(): {
     mutationKey: RESTART_KEY,
     mutationFn: installUpdate,
     onSuccess: keep,
+    // Refused after a timeout, the console may be back as the new build, or
+    // still the old one: read what it says.
+    onError: reread,
   });
   // The server applies the setting even when it cannot save it (500
   // not_saved): read it back rather than keep the box where it was.
@@ -144,6 +185,11 @@ export function useUpdateInstall(): {
     onError: reread,
   });
   const busy = useIsMutating({ mutationKey: ['update'] }) > 0;
+  // The newest download or restart, from any surface: its refusal is drawn
+  // wherever the control is, and a newer request clears it.
+  const asked = useMutationState({ filters: { mutationKey: ['update'] }, select: (one) => one.state });
+  const last = asked[asked.length - 1];
+  const refused = last?.status === 'error' && last.error instanceof Error ? last.error : null;
   const offered =
     update?.state === 'newer' && install !== undefined && install.enabled && install.supported;
   return {
@@ -153,10 +199,12 @@ export function useUpdateInstall(): {
     offered,
     busy,
     timedOut,
-    waitAgain: () => {
-      again();
-      reread();
+    installAgain: () => {
+      if (busy) return;
+      clock.reset();
+      restart.mutate();
     },
+    refused,
     download,
     restart,
     allow,

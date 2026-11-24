@@ -192,7 +192,11 @@ export function SessionInline(): ReactNode {
         face={
           <>
             <Icon name="account" />
-            {badge.shown ? <CountBadge title={badge.title}>1</CountBadge> : null}
+            {badge.shown ? (
+              <CountBadge title={badge.title} label="Update available">
+                1
+              </CountBadge>
+            ) : null}
             <span className="max-w-40 truncate">{name}</span>
             {/* Pointing down: there is more under the name. `Menu.tsx`'s
                 chevron, turned rather than a second shape. */}

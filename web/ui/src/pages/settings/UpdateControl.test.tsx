@@ -71,6 +71,8 @@ function console(
     body: install,
   }),
   state = 'newer',
+  /** GET answers that replace the defaults below. */
+  extra: Readonly<Record<string, unknown>> = {},
 ): Console {
   const out: Console = { sent: [], reads: [], now: { install: install ?? idle } };
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
@@ -93,6 +95,7 @@ function console(
       });
     }
     out.reads.push(path);
+    if (path in extra) return json(200, extra[path]);
     switch (path) {
       case '/api/session':
         return json(200, { identity: 'alice', idleExpiresAt: '2999-01-01T00:00:00Z', absoluteExpiresAt: '2999-01-01T00:00:00Z' });
@@ -295,7 +298,7 @@ describe('the poll', () => {
     expect(c.reads).not.toContain('/api/settings/update');
   });
 
-  it('draws Installing… as failed once the console has not come back in time, and Retry waits again', async () => {
+  it('draws Installing… as failed once the console has not come back in time, and Retry installs again', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const c = console({ ...idle, phase: 'installing', version: '0.1.3' });
@@ -316,6 +319,8 @@ describe('the poll', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
+      // Retry asks for the install again, on a fresh clock.
+      expect(c.sent.map((one) => one.path)).toEqual(['/api/settings/update/install']);
     } finally {
       vi.useRealTimers();
     }
@@ -419,5 +424,160 @@ describe('what is drawn for odd states', () => {
     expect(banner()).toBeNull();
     expect(document.querySelector('[data-update-download]')).toBeNull();
     expect(document.querySelector('[data-install-updates] [role="alert"]')?.textContent).toContain('read-only state');
+  });
+});
+
+describe('the install timeout', () => {
+  const installing: UpdateInstall = { ...idle, phase: 'installing', version: '0.1.3' };
+  const ready: UpdateInstall = { ...idle, phase: 'ready', version: '0.1.3' };
+
+  it('is one clock for every surface, kept across a tab switch', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      console(installing);
+      const { router } = mountApp('/settings/infos');
+      const line = (): Element | null => document.querySelector('[data-update="newer"] [data-update-control]');
+      await waitFor(() => {
+        expect(line()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
+        expect(line()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
+      });
+      await router.navigate('/settings/general');
+      await waitFor(() => {
+        expect(document.querySelector('[data-infos]')).toBeNull();
+      });
+      await router.navigate('/settings/infos');
+      // A fresh line, on the same clock: no new Installing…, no new poll.
+      await waitFor(() => {
+        expect(line()).not.toBeNull();
+      });
+      expect(line()?.querySelector('[data-update-step="installing"]')).toBeNull();
+      expect(line()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
+      expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not carry over to the next install', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // The retry after the timeout is refused, and the console says it is
+      // ready again; the next Restart to update is a new install.
+      let asked = 0;
+      const c = console(installing, () => {
+        asked += 1;
+        return asked === 1
+          ? {
+              status: 409,
+              body: { type: 'about:blank', title: 'Conflict', status: 409, code: 'conflict', detail: 'conflict: nothing ready' },
+              now: ready,
+            }
+          : { status: 200, body: installing };
+      });
+      mountApp('/settings/general');
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-wait]')).not.toBeNull();
+      });
+      fireEvent.click(control()?.querySelector('[data-update-wait]') as Element);
+      await waitFor(() => {
+        expect(control()?.getAttribute('data-update-control')).toBe('ready');
+      });
+      fireEvent.click(banner()?.querySelector('[data-update-restart]') as Element);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      const polls = c.reads.filter((p) => p === '/api/settings/update').length;
+      await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS * 3);
+      // Still followed: no timeout, the poll runs.
+      expect(control()?.querySelector('[data-update-step="timed-out"]')).toBeNull();
+      expect(c.reads.filter((p) => p === '/api/settings/update').length).toBeGreaterThan(polls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('the install timeout, once the console answers', () => {
+  it('is cleared when the phase leaves installing, so the next install starts a new clock', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const installing: UpdateInstall = { ...idle, phase: 'installing', version: '0.1.3' };
+      const ready: UpdateInstall = { ...idle, phase: 'ready', version: '0.1.3' };
+      // The console is back, ready; its answer to the setting's write says so.
+      const c = console(installing, (_m, path, body) =>
+        path === '/api/settings/update'
+          ? { status: 200, body: { ...ready, enabled: (body as { enabled: boolean }).enabled } }
+          : { status: 200, body: installing },
+      );
+      mountApp('/settings/infos');
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
+      });
+      const box = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('[data-install-updates] input');
+      fireEvent.click(box() as Element);
+      await waitFor(() => {
+        expect(box()?.checked).toBe(false);
+      });
+      fireEvent.click(box() as Element);
+      await waitFor(() => {
+        expect(control()?.getAttribute('data-update-control')).toBe('ready');
+      });
+      fireEvent.click(banner()?.querySelector('[data-update-restart]') as Element);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS * 2);
+      expect(control()?.querySelector('[data-update-step="timed-out"]')).toBeNull();
+      expect(c.sent.map((one) => one.path)).toEqual([
+        '/api/settings/update',
+        '/api/settings/update',
+        '/api/settings/update/install',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('a refusal', () => {
+  it('is drawn on every surface that offers the control', async () => {
+    console(idle, () => ({
+      status: 409,
+      body: { type: 'about:blank', title: 'Conflict', status: 409, code: 'conflict', detail: 'conflict: an update is already in progress' },
+    }));
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-update-download]').length).toBe(2);
+    });
+    fireEvent.click(banner()?.querySelector('[data-update-download]') as Element);
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-update-refused]').length).toBe(2);
+    });
+  });
+});
+
+describe('the account menu trigger', () => {
+  it('announces the update where nothing else on it does', async () => {
+    // One cluster and a way to sign back in: Settings is in the account menu.
+    console(idle, undefined, 'newer', {
+      '/api/clusters': { state: 'ok', items: [{ name: 'prod', label: 'prod', state: 'ok' }] },
+      '/api/auth/methods': { password: false, sso: { state: 'ready' } },
+    });
+    mountApp('/c/prod/x/nope');
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'Update available' }).textContent).toBe('1');
+    });
   });
 });
