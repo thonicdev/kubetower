@@ -19,6 +19,8 @@ import (
 	"github.com/thonicdev/kubetower/internal/releasesig"
 	"github.com/thonicdev/kubetower/internal/statefile"
 	"github.com/thonicdev/kubetower/internal/update"
+	"github.com/thonicdev/kubetower/safego"
+	"github.com/thonicdev/kubetower/textutil"
 )
 
 // Phase is where the update stands.
@@ -180,7 +182,12 @@ func (u *Updater) Download() (Status, error) {
 	}
 	u.forget()
 	u.status.Phase = Downloading
-	go u.download()
+	safego.Go("update download", func() error { u.download(); return nil }, func(err error) {
+		// Only a panic gets here: download reports its own failures.
+		if err != nil {
+			u.fail(textutil.FirstLine(err.Error()))
+		}
+	})
 	return u.status, nil
 }
 
@@ -208,11 +215,13 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 		return u.fail("The downloaded file changed on disk since it was verified."), errors.New("hash changed")
 	}
 	install := u.installer()
-	go func() {
-		if err := install(context.WithoutCancel(ctx), plan); err != nil {
-			u.fail(firstLine(err.Error()))
+	safego.Go("update install", func() error {
+		return install(context.WithoutCancel(ctx), plan)
+	}, func(err error) {
+		if err != nil {
+			u.fail(textutil.FirstLine(err.Error()))
 		}
-	}()
+	})
 	return out, nil
 }
 
@@ -230,7 +239,7 @@ func (u *Updater) download() {
 	plan, err := u.fetch(ctx)
 	if err != nil {
 		_ = os.RemoveAll(filepath.Join(u.dir(), workDir))
-		u.fail(firstLine(err.Error()))
+		u.fail(textutil.FirstLine(err.Error()))
 		return
 	}
 	u.mu.Lock()
@@ -520,11 +529,4 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
