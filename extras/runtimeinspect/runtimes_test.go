@@ -82,6 +82,27 @@ func TestEachRuntimeIsReadFromTheSpec(t *testing.T) {
 		{"spark running a python application", corev1.Container{Image: "apache/spark:3.5.3", Env: envNamed("JAVA_HOME"), Args: []string{"local:///opt/app.py"}}, runtimeJava, sourceEnv},
 		{"a go variable in a jdk image", corev1.Container{Image: "eclipse-temurin:21-jre", Env: envNamed("GOMAXPROCS")}, runtimeJava, sourceImage},
 
+		// A program that runs another runtime takes the container from Java;
+		// one this page does not read leaves it unread.
+		{"uvicorn with JAVA_HOME", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"uvicorn", "main:app"}, Env: envNamed("JAVA_HOME")}, runtimePython, sourceCommand},
+		{"gunicorn in a jdk image", corev1.Container{Image: "eclipse-temurin:21-jre", Args: []string{"gunicorn", "app:app"}}, runtimePython, sourceCommand},
+		{"npm start with JAVA_HOME", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"npm", "start"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"npx with JAVA_HOME", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"npx", "serve"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"pnpm with JAVA_HOME", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"pnpm", "start"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"bun with JAVA_HOME", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"bun", "run", "start"}, Env: envNamed("JAVA_HOME")}, "", ""},
+		{"deno with JAVA_HOME", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"deno", "run", "main.ts"}, Env: envNamed("JAVA_HOME")}, "", ""},
+
+		// Where a program starts.
+		{"bash -o pipefail -c", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"bash", "-o", "pipefail", "-c", "python app.py"}}, runtimePython, sourceCommand},
+		{"bash -eo pipefail -c", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"bash", "-eo", "pipefail", "-c", "node server.js"}}, runtimeNode, sourceCommand},
+		{"bash --rcfile -c", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"bash", "--rcfile", "/etc/app.rc", "-c", "python app.py"}}, runtimePython, sourceCommand},
+		{"tini --", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"tini", "--", "node", "server.js"}}, runtimeNode, sourceCommand},
+		{"dumb-init", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"dumb-init", "node", "server.js"}}, runtimeNode, sourceCommand},
+		{"after &&", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app && node server.js"}}, runtimeNode, sourceCommand},
+		{"after a glued ;", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app; node server.js"}}, runtimeNode, sourceCommand},
+		{"after a lone ;", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app ; node server.js"}}, runtimeNode, sourceCommand},
+		{"a flag where the entrypoint's arguments start", corev1.Container{Image: "registry.example.com/x:1", Args: []string{"--config=/etc/app.js"}}, "", ""},
+
 		// Go products.
 		{"grafana's image renderer", corev1.Container{Image: "grafana/grafana-image-renderer:3.11.0"}, "", ""},
 		{"grafana oss", corev1.Container{Image: "grafana/grafana-oss:11.3.0"}, runtimeGo, sourceImage},
@@ -293,5 +314,18 @@ func TestTheSuggestionIgnoresGoProductsAlone(t *testing.T) {
 	app := pod("shop", "svc", corev1.Container{Name: "svc", Image: "registry.example.com/svc:1", Env: envNamed("GOMEMLIMIT")})
 	if got, err := New().Suggest(r, newHost(t, append(system, app)...), "kind"); err != nil || got != "1 probable Go pod in 1 namespace" {
 		t.Errorf("suggest with a Go application = %q, %v", got, err)
+	}
+}
+
+// The banner names the runtimes of the containers it counts: a Go container
+// read from its image's product alone, beside a Java one, is not named.
+func TestTheSuggestionNamesOnlyTheRuntimesItCounts(t *testing.T) {
+	h := newHost(t, pod("data", "api",
+		corev1.Container{Name: "api", Image: "eclipse-temurin:21-jre"},
+		corev1.Container{Name: "etcd", Image: "registry.k8s.io/etcd:3.5.16-0"},
+	))
+	got, err := New().Suggest(httptest.NewRequest("GET", "/", nil), h, "kind")
+	if err != nil || got != "1 probable Java pod in 1 namespace" {
+		t.Errorf("suggest = %q, %v", got, err)
 	}
 }

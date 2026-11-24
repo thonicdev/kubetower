@@ -25,11 +25,13 @@ func (JVM) Suggest(r *http.Request, h extension.Host, cluster string) (string, e
 	if len(pods) == 0 {
 		return "", nil
 	}
+	// From the containers kept, not p.Runtimes: a Go container read from its
+	// image's product alone is not named.
 	var runtimes []string
 	for _, p := range pods {
-		for _, r := range p.Runtimes {
-			if !slices.Contains(runtimes, r) {
-				runtimes = append(runtimes, r)
+		for _, c := range p.Containers {
+			if !slices.Contains(runtimes, c.Runtime) {
+				runtimes = append(runtimes, c.Runtime)
 			}
 		}
 	}
