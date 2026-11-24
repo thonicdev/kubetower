@@ -343,7 +343,10 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 		// The tool windows close with their tunnel or their cluster (#65),
 		// for as long as the native window can hold them.
 		if w.tools != nil {
-			go w.tools.watch(windowDone, toolWindowSweepEvery)
+			safego.Go("tool windows: closing with their tunnel or cluster", func() error {
+				w.tools.watch(windowDone, toolWindowSweepEvery)
+				return nil
+			}, nil)
 		}
 		if runtime.GOOS == "darwin" {
 			go watchWindowFacts(windowDone, feed, windowWatchEvery, refreshNativeWindow)
