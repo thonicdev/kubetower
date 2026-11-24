@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,5 +85,41 @@ func TestAnInstallThatDidNotStartAgainIsNotAFailure(t *testing.T) {
 	}
 	if s := u.Status(); s.Phase != Idle || s.Reason != "" {
 		t.Fatalf("%+v, want idle", s)
+	}
+}
+
+func TestAFolderThatIsNotWritableLeavesTheFileToOpen(t *testing.T) {
+	var opened []string
+	was := openFolder
+	openFolder = func(dir string) error { opened = append(opened, dir); return nil }
+	t.Cleanup(func() { openFolder = was })
+
+	f := newFake(t)
+	rec := &recorder{err: fmt.Errorf("%w: /opt/kubetower", ErrNotWritable)}
+	u := f.updater(t.TempDir(), rec, nil)
+	if _, err := u.OpenFolder(); !errors.Is(err, ErrNoFolder) {
+		t.Fatalf("%v before any install, want ErrNoFolder", err)
+	}
+	plan := installedPlan(t, u, rec)
+	deadline := time.Now().Add(2 * time.Second)
+	for u.Status().Phase == Installing && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	s := u.Status()
+	if s.Phase != Manual || s.Folder != filepath.Dir(plan.File) || s.Reason != "" {
+		t.Fatalf("%+v, want manual on %s with no reason", s, filepath.Dir(plan.File))
+	}
+	if got, _ := os.ReadFile(plan.File); string(got) != string(f.body) {
+		t.Fatalf("the verified file is gone: %q", got)
+	}
+	if _, err := u.OpenFolder(); err != nil || len(opened) != 1 || opened[0] != s.Folder {
+		t.Fatalf("%v, opened %q", err, opened)
+	}
+	// A new download starts over: the folder is forgotten.
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, u); s.Folder != "" {
+		t.Fatalf("%+v still names a folder", s)
 	}
 }

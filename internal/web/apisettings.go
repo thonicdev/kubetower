@@ -261,6 +261,7 @@ func updateInstallOf(s *Server, status updater.Status) api.UpdateInstall {
 		Done:         status.Done,
 		Total:        status.Total,
 		Reason:       status.Reason,
+		Folder:       status.Folder,
 	}
 	if s.setup.OpenWork != nil {
 		out.Ends.Terminals, out.Ends.Forwards = s.setup.OpenWork()

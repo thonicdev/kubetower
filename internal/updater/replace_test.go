@@ -51,7 +51,7 @@ func TestAReplaceThatCannotWriteLeavesTheFileAsItWas(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	err := replaceWith(dst, strings.NewReader("new"))
-	if err == nil || !strings.Contains(err.Error(), "is not writable") {
+	if !errors.Is(err, ErrNotWritable) {
 		t.Fatalf("%v, want not writable", err)
 	}
 	if got, _ := os.ReadFile(dst); string(got) != "old" {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,6 +20,9 @@ func replaceWith(dst string, src io.Reader) error {
 	dir := filepath.Dir(dst)
 	tmp, err := os.CreateTemp(dir, ".kubetower-update-*")
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("%w: %s", ErrNotWritable, dir)
+		}
 		return fmt.Errorf("%s is not writable: %w", dir, err)
 	}
 	keep := false

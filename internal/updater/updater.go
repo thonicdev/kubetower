@@ -33,6 +33,9 @@ const (
 	Ready       Phase = "ready"
 	Installing  Phase = "installing"
 	Failed      Phase = "failed"
+	// Manual: the installation's folder is not writable. The verified file
+	// waits in Folder, for the operator to install by hand.
+	Manual Phase = "manual"
 )
 
 // Status is what the Settings page is told.
@@ -53,6 +56,8 @@ type Status struct {
 	Total int64 `json:"total,omitempty"`
 	// Reason is the one line of a failure.
 	Reason string `json:"reason,omitempty"`
+	// Folder holds the verified file, in the manual phase.
+	Folder string `json:"folder,omitempty"`
 }
 
 // Plan is what an installer is handed: a verified file and what it replaces.
@@ -81,6 +86,11 @@ var (
 	// ErrNotRestarted: the new build is in place, but starting it failed. The
 	// update is installed: the next start of KubeTower runs it.
 	ErrNotRestarted = errors.New("the update is installed but KubeTower did not start again")
+	// ErrNotWritable: the installer cannot write where KubeTower is installed.
+	// The update ends in the manual phase rather than failed.
+	ErrNotWritable = errors.New("the installation folder is not writable")
+	// ErrNoFolder: Open folder was asked outside the manual phase.
+	ErrNoFolder = errors.New("no verified file waits to be installed by hand")
 )
 
 // installers is filled by the per-platform files (#49, #50, #51).
@@ -235,6 +245,8 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 		case err == nil:
 		case errors.Is(err, ErrNotRestarted):
 			u.installed(err)
+		case errors.Is(err, ErrNotWritable):
+			u.manual(plan.File, err)
 		default:
 			u.fail(textutil.FirstLine(err.Error()))
 		}
@@ -291,6 +303,31 @@ func (u *Updater) canInstall() bool {
 	}
 	ready := installable[u.o.Installation.Kind]
 	return ready == nil || ready()
+}
+
+// manual: the installation's folder is not writable. The verified copy stays
+// where it is, and Open folder shows it.
+func (u *Updater) manual(file string, err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.o.Logf != nil {
+		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
+	}
+	u.status.Phase = Manual
+	u.status.Folder = filepath.Dir(file)
+	u.status.Reason = ""
+}
+
+// OpenFolder shows the folder that holds the verified file, in the manual
+// phase, in the platform's file manager.
+func (u *Updater) OpenFolder() (Status, error) {
+	u.mu.Lock()
+	status := u.status
+	u.mu.Unlock()
+	if status.Phase != Manual || status.Folder == "" {
+		return status, ErrNoFolder
+	}
+	return status, openFolder(status.Folder)
 }
 
 // installed: the new build is in place but did not start. Not a failure: the
@@ -589,7 +626,7 @@ func (u *Updater) forget() {
 	_ = os.RemoveAll(filepath.Join(u.dir(), workDir))
 	u.planned = Plan{}
 	u.status.Phase, u.status.Version, u.status.Asset = Idle, "", ""
-	u.status.Done, u.status.Total, u.status.Reason = 0, 0, ""
+	u.status.Done, u.status.Total, u.status.Reason, u.status.Folder = 0, 0, "", ""
 }
 
 func (u *Updater) fail(reason string) Status {

@@ -9,7 +9,7 @@ type UpdateInstall = components['schemas']['UpdateInstall'];
 
 const MB = 1024 * 1024;
 
-type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed';
+type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed' | 'manual';
 
 export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
   idle: { phase: 'idle', enabled: true, supported: true, installation: 'linux-appimage', ends: { terminals: 0, forwards: 0 } },
@@ -33,6 +33,11 @@ export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
   failed: {
     phase: 'failed', enabled: true, supported: true, installation: 'linux-appimage',
     reason: 'kubetower-0.1.3-x86_64.AppImage does not match its signed sha256', ends: { terminals: 0, forwards: 0 },
+  },
+  manual: {
+    phase: 'manual', enabled: true, supported: true, installation: 'linux-tar',
+    version: '0.1.3', asset: 'kubetower_0.1.3_linux_amd64.tar.gz',
+    folder: '/home/user/.local/state/kubetower/update/install-1', ends: { terminals: 0, forwards: 0 },
   },
 };
 

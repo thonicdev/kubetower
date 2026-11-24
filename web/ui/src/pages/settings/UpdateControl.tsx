@@ -17,6 +17,7 @@ import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from 
  *   installing  Installing…, then Failed and Retry if the console is not back
  *               within INSTALL_TIMEOUT_MS
  *   failed      the reason, Retry
+ *   manual      Not writable, Open folder on the verified file
  *   (any other) nothing
  *
  * Two clicks and never one: Download only fetches and verifies; Restart to
@@ -24,7 +25,8 @@ import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from 
  * it counts. Nothing is drawn where installing is off or not supported here.
  */
 export function UpdateControl({ prominent = false }: { prominent?: boolean }): ReactNode {
-  const { latest, install, offered, busy, timedOut, waitAgain, refused, download, restart } = useUpdateInstall();
+  const { latest, install, offered, busy, timedOut, waitAgain, refused, download, restart, openFolder } =
+    useUpdateInstall();
   if (install === undefined || !install.enabled || !install.supported) return null;
   // A download in any state is drawn; idle only while a newer release exists.
   if (install.phase === 'idle' && !offered) return null;
@@ -101,6 +103,29 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
             data-update-retry=""
           >
             Retry
+          </button>
+        </>
+      );
+      break;
+    case 'manual':
+      step = (
+        <>
+          <span data-update-step="manual">
+            <Pill tone="warn" title={install.asset}>
+              Not writable
+            </Pill>
+          </span>
+          <button
+            type="button"
+            className={primary}
+            disabled={busy}
+            onClick={() => {
+              if (!busy) openFolder.mutate();
+            }}
+            title={install.folder}
+            data-update-open-folder=""
+          >
+            Open folder
           </button>
         </>
       );
