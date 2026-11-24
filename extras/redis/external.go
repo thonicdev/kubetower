@@ -45,8 +45,10 @@ func managedHost(host string) bool {
 		if strings.HasSuffix(rest, ".cache") {
 			return true
 		}
-		for _, label := range strings.Split(rest, ".") {
-			if label == "memorydb" {
+		// A cluster's labels before it: `memorydb.amazonaws.com` alone is
+		// AWS's, not an endpoint.
+		for i, label := range strings.Split(rest, ".") {
+			if label == "memorydb" && i > 0 {
 				return true
 			}
 		}
@@ -100,10 +102,8 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 	if host == "" || isTool(name) {
 		return externalDoor{}, false
 	}
-	for _, label := range strings.Split(host, ".") {
-		if isTool(label) {
-			return externalDoor{}, false
-		}
+	if hostTool(host) {
+		return externalDoor{}, false
 	}
 	var ports []corev1.ServicePort
 	for _, port := range service.Spec.Ports {
@@ -150,6 +150,23 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 func redisLikePort(port corev1.ServicePort) bool {
 	name := strings.ToLower(port.Name)
 	return engineToken(name) != "" || name == "rediss" || name == "valkeys" || (port.Port >= 6379 && port.Port <= 6399)
+}
+
+// hostTool reports whether a host names a tool beside the server: in its
+// first label, or in a label that carries the engine (`app.redis-exporter`,
+// `valkey-proxy.example.com`). Never in the other labels (`redis.backups`,
+// `redis.prod.web.corp`), nor in the client's part of a managed host, whose
+// names are the customer's (`master.web-sessions.….cache.amazonaws.com`).
+func hostTool(host string) bool {
+	if managedHost(host) {
+		return false
+	}
+	for i, label := range strings.Split(host, ".") {
+		if (i == 0 || engineToken(label) != "") && isTool(label) {
+			return true
+		}
+	}
+	return false
 }
 
 // redisPortIn is the first port that looks like a Redis's, or nil.

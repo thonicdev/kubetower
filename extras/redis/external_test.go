@@ -71,8 +71,23 @@ func TestExternalRedis(t *testing.T) {
 			"its name says redis"},
 		{"sessions", "demo.cache.amazonaws.com.evil.example.com", nil, 0, ""},
 		{"sessions", "demo.redislabs.com.example.com", nil, 0, ""},
-		// A tool in any label of the host.
+		// A tool in the host's first label or in one that carries the engine,
+		// never in a neutral label nor in a managed host's client part (the
+		// review of #76).
 		{"sessions", "app.redis-exporter.example.com", nil, 0, ""},
+		{"sessions", "cache.valkey-proxy.example.com", nil, 0, ""},
+		{"sessions", "metrics.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6379}}, 0, ""},
+		{"sessions", "master.web-sessions.abc123.use1.cache.amazonaws.com", []corev1.ServicePort{{Name: "tcp", Port: 6379}}, 6379, "it is on 6379"},
+		{"sessions", "master.api-proxy.abc123.use1.cache.amazonaws.com", nil, 0, "it points at master.api-proxy.abc123.use1.cache.amazonaws.com"},
+		{"sessions", "clustercfg.admin-sessions.abc123.memorydb.us-east-1.amazonaws.com", nil, 0,
+			"it points at clustercfg.admin-sessions.abc123.memorydb.us-east-1.amazonaws.com"},
+		{"sessions", "admin.abc123.use1.cache.amazonaws.com", nil, 0, "it points at admin.abc123.use1.cache.amazonaws.com"},
+		{"sessions", "redis.backups.example.com", nil, 0, "it points at redis.backups.example.com"},
+		{"sessions", "redis.prod.web.corp", nil, 0, "it points at redis.prod.web.corp"},
+		// AWS's own names, not endpoints.
+		{"sessions", "xcache.amazonaws.com", nil, 0, ""},
+		{"sessions", "memorydb.amazonaws.com", nil, 0, ""},
+		{"sessions", "memorydb.us-east-1.amazonaws.com", nil, 0, ""},
 		// A role glued to the engine's name, never another word.
 		{"redismain", "x.example.com", nil, 0, "its name says redis"},
 		{"redismaster", "x.example.com", nil, 0, "its name says redis"},
