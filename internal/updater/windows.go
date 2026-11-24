@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -26,13 +27,47 @@ func psArgs(args []string) string {
 	return " -ArgumentList " + strings.Join(quoted, ",")
 }
 
-// setupScript waits for pid, runs the per-user setup silently and waits for
-// it, then starts KubeTower again from where the setup put it. A setup that
-// failed leaves the old install, which is started again all the same.
+// setupScript waits for pid, runs the per-user setup silently into the folder
+// this KubeTower runs from, and waits for it, then starts KubeTower again from
+// there. `/D=` names that folder, last and unquoted as NSIS wants it (Windows
+// PowerShell joins -ArgumentList with spaces): otherwise the setup installs
+// where the registry says, the old exe starts again and the update is offered
+// forever. A setup that failed leaves the old install, started again all the same.
 func setupScript(pid int, setup, exe string, args []string) string {
 	return fmt.Sprintf("$ErrorActionPreference='Continue'; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
-		"Start-Process -FilePath %s -ArgumentList '/S' -Wait; Start-Process -FilePath %s%s",
-		pid, psQuote(setup), psQuote(exe), psArgs(args))
+		"Start-Process -FilePath %s -ArgumentList '/S',%s -Wait; Start-Process -FilePath %s%s",
+		pid, psQuote(setup), psQuote("/D="+windowsDir(exe)), psQuote(exe), psArgs(args))
+}
+
+// windowsDir is the folder of a Windows path, composed on any platform (the
+// scripts are tested everywhere, where filepath does not split on `\`).
+// A drive's root keeps its backslash: `C:\`.
+func windowsDir(path string) string {
+	i := strings.LastIndexAny(path, `\/`)
+	switch {
+	case i < 0:
+		return path
+	case i > 0 && path[i-1] == ':':
+		return path[:i+1]
+	}
+	return path[:i]
+}
+
+// errNoStop: internal/launch gave no way to stop, so no helper is started.
+var errNoStop = errors.New("this console cannot stop itself to finish the update")
+
+// finish starts the helper script, then stops this process. Without a way to
+// stop it starts nothing: a helper left waiting on a console that never exits
+// would later move a deleted file, or run the setup unasked.
+func finish(script string, start func(string) error, stop func()) error {
+	if stop == nil {
+		return errNoStop
+	}
+	if err := start(script); err != nil {
+		return err
+	}
+	stop()
+	return nil
 }
 
 // swapScript waits for pid, moves the new executable over the old one, then
