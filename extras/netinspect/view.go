@@ -139,6 +139,10 @@ type Graph struct {
 	Truncated bool `json:"truncated"`
 }
 
+// everyone are the nodes that name every pod: a rule's empty peer, and
+// Cilium's all and cluster entities.
+var everyone = map[string]bool{"anyone": true, "entity:all": true, "entity:cluster": true}
+
 // Node kinds.
 const (
 	nodeNamespace = "namespace"
@@ -164,6 +168,10 @@ type Node struct {
 	// Internal is rules whose both ends fall inside this node (a namespace
 	// allowing its own pods), drawn as a count rather than a loop.
 	Internal int `json:"internal"`
+	// Ends is, on "others", how many of the nodes it holds are not
+	// namespaces (a CIDR, world, an entity): such an end never refuses, so
+	// "others" cannot be called isolated when it holds one.
+	Ends int `json:"ends,omitempty"`
 }
 
 // Edge is "a rule lets From reach To". Side says which end's policy says so:
@@ -585,6 +593,12 @@ func (g *graphBuilder) finish(scope, focus string) Graph {
 	}
 	sort.Slice(ids, func(i, j int) bool {
 		a, b := g.nodes[ids[i]], g.nodes[ids[j]]
+		// A peer naming everyone is never folded: its rules speak for every
+		// pair it covers, which the page can only draw if it can tell them
+		// from the rules of the namespaces folded beside it.
+		if ei, ej := everyone[ids[i]], everyone[ids[j]]; ei != ej {
+			return ei
+		}
 		if degree[ids[i]] != degree[ids[j]] {
 			return degree[ids[i]] > degree[ids[j]]
 		}
@@ -666,6 +680,9 @@ func (g *graphBuilder) foldAt(scope string, ids []string, keep int) Graph {
 		}
 		kept[id] = others.ID
 		n := g.nodes[id]
+		if n.Kind != nodeNamespace {
+			others.Ends++
+		}
 		others.Pods += n.Pods
 		others.IsolatedIn += n.IsolatedIn
 		others.IsolatedOut += n.IsolatedOut

@@ -81,6 +81,17 @@ export interface Deployment {
   members: Member[];
 }
 
+/** An ExternalName Service to a Redis outside the cluster: listed, never probed or opened. */
+export interface External {
+  namespace: string;
+  service: string;
+  host: string;
+  /** Absent when the Service declares no port, or several nothing tells apart. */
+  port?: number;
+  portName?: string;
+  why: string;
+}
+
 export interface Inventory {
   scope: string;
   complete: boolean;
@@ -94,6 +105,8 @@ export interface Inventory {
   /** Deployments. */
   redises: number;
   namespaces: { name: string; deployments: Deployment[] }[];
+  /** ExternalName Services to a Redis outside the cluster. */
+  external?: External[];
 }
 
 export interface Server {
@@ -197,6 +210,8 @@ export interface ServiceAnswer {
   deployments: Deployment[];
   /** The namespace was grouped without its pods, and why. */
   podsNotes?: string[];
+  /** Set, with no deployment, for an ExternalName Service to a Redis outside the cluster. */
+  external?: External;
 }
 
 export type ProblemKind = 'refusal' | 'failure' | 'absent';

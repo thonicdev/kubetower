@@ -99,6 +99,9 @@ type discovery struct {
 	// SlicesNote says why what is behind each Service could not be read, when
 	// the EndpointSlice listing failed. Empty when it answered.
 	SlicesNote string
+	// External are the ExternalName Services to a Redis outside the cluster:
+	// listed, never dialled (external.go).
+	External []externalDoor
 	// ScopePods are the pods of a one-namespace read, when they were listed to
 	// stand in for the EndpointSlices (podsBySelector); nil otherwise.
 	ScopePods map[string]*corev1.Pod
@@ -124,7 +127,7 @@ func discover(r *http.Request, h extension.Host, cluster, namespace string) (dis
 		}
 		services = append(services, service)
 	}
-	out := discovery{Complete: page.Complete, Note: page.Note}
+	out := discovery{Complete: page.Complete, Note: page.Note, External: externals(services)}
 
 	var slices []discoveryv1.EndpointSlice
 	slicesRead := false

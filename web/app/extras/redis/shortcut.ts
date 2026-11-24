@@ -1,7 +1,7 @@
 import type { ExtensionShortcutTarget, ExtensionTabObject, ExtensionTabProps } from '@kubetower/ui';
 
 import { RedisProblem, getInventory, getService, type Deployment } from './data';
-import { instanceHref, inventoryHref } from './parts';
+import { externalAddress, instanceHref, inventoryHref, serviceHref } from './parts';
 import { UNKNOWN, engineOfDeployment, mainDoor, modeOf, shapeOf } from './tiles';
 
 /**
@@ -59,6 +59,11 @@ export async function serviceShortcut({ cluster, namespace, name }: ExtensionTab
   if (namespace === undefined || namespace === '') return null;
   try {
     const answer = await getService(cluster, namespace, name, signal);
+    // Outside the cluster: the tile says so and opens the Service's tab,
+    // without a Probe.
+    if (answer.external !== undefined) {
+      return { title: name, badges: ['external'], detail: externalAddress(answer.external), to: `${serviceHref(cluster, namespace, name)}?tab=x.redis.backend` };
+    }
     // Only through one of its own Redis doors: a Service in front of
     // Sentinel ports alone holds no keys, as for a Pod.
     const own = answer.deployments.find((d) => d.members.some((m) => m.sentinel !== true && m.doors.some((door) => door.service === name)));
@@ -66,8 +71,7 @@ export async function serviceShortcut({ cluster, namespace, name }: ExtensionTab
   } catch (error) {
     if (notRedis(error) || signal.aborted) return null;
     // The Service's Redis tab says what could not be read.
-    const here = `/c/${encodeURIComponent(cluster)}/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
-    return notChecked(name, error, `${here}?tab=x.redis.backend`);
+    return notChecked(name, error, `${serviceHref(cluster, namespace, name)}?tab=x.redis.backend`);
   }
 }
 

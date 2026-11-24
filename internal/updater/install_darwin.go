@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/thonicdev/kubetower/textutil"
 )
 
 func init() {
@@ -40,7 +42,7 @@ func installApp(ctx context.Context, plan Plan) error {
 	defer os.Remove(mount)
 	attach := exec.CommandContext(ctx, "/usr/bin/hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, plan.File)
 	if out, err := attach.CombinedOutput(); err != nil {
-		return fmt.Errorf("the disk image could not be mounted: %s", firstLine(string(out)))
+		return fmt.Errorf("the disk image could not be mounted: %s", textutil.FirstLine(string(out)))
 	}
 	defer func() { _ = exec.Command("/usr/bin/hdiutil", "detach", mount, "-quiet", "-force").Run() }()
 
@@ -56,7 +58,7 @@ func installApp(ctx context.Context, plan Plan) error {
 	next += ".app"
 	if out, err := exec.CommandContext(ctx, "/usr/bin/ditto", source, next).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(next)
-		return fmt.Errorf("the new app could not be copied: %s", firstLine(string(out)))
+		return fmt.Errorf("the new app could not be copied: %s", textutil.FirstLine(string(out)))
 	}
 	if err := swapBundle(bundle, next); err != nil {
 		_ = os.RemoveAll(next)

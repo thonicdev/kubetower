@@ -7,6 +7,7 @@ import { externalHref } from '../../externalHref';
 import { focusRing } from '../../focus';
 
 import { checkUpdates, settingsKey, useUpdateWatch, type Settings } from './data';
+import { InstallUpdatesSetting, UpdateControl } from './UpdateControl';
 
 /**
  * Infos: which version this is, whether a newer one exists, and where
@@ -115,7 +116,8 @@ function Links({
  * own words, `failed` is warn-colored, and the server's full sentence - the
  * one the start-up log writes - is on hover rather than on the page.
  *
- * It offers and does not update: the whole of the offer is the link.
+ * Where this console can install, Download sits beside the link
+ * (`UpdateControl.tsx`): the two clicks of #48.
  */
 const WORDS: Readonly<Record<string, { text: string; tone: string }>> = {
   current: { text: 'Up to date', tone: 'text-ok' },
@@ -134,6 +136,7 @@ function Update({ update }: { update: Settings['info']['update'] }): ReactNode {
     <>
       <UpdateLine update={update} />
       {ASKABLE.has(update.state) ? <CheckNow checking={update.checking} /> : null}
+      <InstallUpdatesSetting />
     </>
   );
 }
@@ -217,6 +220,7 @@ function UpdateLine({ update }: { update: NonNullable<Settings['info']['update']
             {update.releaseUrl}
           </span>
         )}
+        <UpdateControl />
       </p>
     );
   }
