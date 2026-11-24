@@ -12,6 +12,9 @@ export type Side = 'ingress' | 'egress';
 export const EVERY_PORT = 'every port';
 /** Arrows a side of the graph draws, the `+N` one included. */
 export const MAX_ARROWS = 5;
+
+/** Arrows per side in the enlarged graph. */
+export const MAX_ARROWS_LARGE = 12;
 /** Rows a direction shows before `Show all`, and the count that brings a filter. */
 export const MAX_ROWS = 8;
 /** Rows past which an expanded list scrolls inside a bounded height. */
@@ -176,14 +179,14 @@ function groupOf(f: Flow): { key: string; name: string; plural: string } {
 
 /**
  * What the graph draws for one side: the allow flows' peers, one arrow each
- * up to five; beyond that one arrow per namespace, and past five of those
- * the four largest and a `+N` for the rest.
+ * up to `max` (five; more in the enlarged graph); beyond that one arrow per
+ * namespace, and past `max` of those the largest and a `+N` for the rest.
  */
-export function arrowsOf(flows: readonly Flow[]): Arrow[] {
+export function arrowsOf(flows: readonly Flow[], max = MAX_ARROWS): Arrow[] {
   const allowed = flows.filter((f) => f.kind === 'allow');
   const peers = new Map<string, Flow[]>();
   for (const f of allowed) peers.set(f.peerKey, [...(peers.get(f.peerKey) ?? []), f]);
-  if (peers.size <= MAX_ARROWS) {
+  if (peers.size <= max) {
     return [...peers.entries()].map(([key, fs]) => {
       const first = fs[0] as Flow;
       return {
@@ -222,9 +225,9 @@ export function arrowsOf(flows: readonly Flow[]): Arrow[] {
       members: [...g.peers.keys()].map((k) => k.replace(/^[a-z]+:/, '')),
     };
   };
-  if (sorted.length <= MAX_ARROWS) return sorted.map(toArrow);
-  const head = sorted.slice(0, MAX_ARROWS - 1).map(toArrow);
-  const rest = sorted.slice(MAX_ARROWS - 1);
+  if (sorted.length <= max) return sorted.map(toArrow);
+  const head = sorted.slice(0, max - 1).map(toArrow);
+  const rest = sorted.slice(max - 1);
   const restFlows = rest.flatMap(([, g]) => g.flows);
   return [
     ...head,

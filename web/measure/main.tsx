@@ -1291,6 +1291,26 @@ const CONSOLES: Readonly<
       },
     },
   },
+  // The kinds column with kinds that hold nothing, so its Show / Hide unused
+  // kinds toggle is drawn (#60).
+  'console-unused-kinds': {
+    at: `/c/${OVERVIEW_CLUSTER}`,
+    answers: {
+      ...OVERVIEW_ANSWERS,
+      [`/api/c/${OVERVIEW_CLUSTER}/nav/occupancy`]: {
+        state: 'ok',
+        data: {
+          kinds: {
+            pods: { state: 'some' },
+            deployments: { state: 'some' },
+            jobs: { state: 'none' },
+            cronjobs: { state: 'none' },
+            persistentvolumeclaims: { state: 'none' },
+          },
+        },
+      },
+    },
+  },
   'overview-unmeasured': { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_UNMEASURED_ANSWERS },
   // A Prometheus with no usable cAdvisor series and an empty leaderboard, as
   // an in-cluster console can answer.

@@ -78,7 +78,7 @@ export function FlowsBadge({
   );
 }
 
-const FLOW_STATE: Record<'absent' | 'refused' | 'tls' | 'unreachable', string> = {
+export const FLOW_STATE: Record<'absent' | 'refused' | 'tls' | 'unreachable', string> = {
   absent: 'no flow source',
   refused: 'not allowed',
   tls: 'TLS only',

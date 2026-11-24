@@ -323,6 +323,9 @@ describe('the Show unused kinds button', () => {
       expect(row('/c/prod/jobs')).not.toBeNull();
     });
     expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    // The label says what the next press does.
+    expect(toggle().textContent).toContain('Hide unused kinds');
+    expect(toggle().textContent).not.toContain('Show unused kinds');
     expect(menu().querySelector('details[data-group="storage"]')).not.toBeNull();
     expect(JSON.parse(localStorage.getItem('kubetower.kinds') ?? 'null')).toEqual({
       showUnused: true,
