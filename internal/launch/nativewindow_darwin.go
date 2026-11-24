@@ -1014,12 +1014,25 @@ const (
 func handOutOfToolWindow(action objc.ID) {
 	target := actionURL(action)
 	kind := objc.Send[int](action, hot.navigationType)
-	user := kind == navigationTypeLinkActivated || kind == navigationTypeFormSubmitted
+	user := (kind == navigationTypeLinkActivated || kind == navigationTypeFormSubmitted) && personMadeIt()
 	if ok, why := toolHandOuts.allow(target, user, time.Now()); !ok {
 		log.Printf("[kubetower] a tool window's link was not opened in the browser: %s", why)
 		return
 	}
 	openOutside(target)
+}
+
+// personMadeIt says whether AppKit's current event is a click or a key press
+// made just now (aRealGesture), for a script's a.click() is reported as an
+// activated link too. Called from the navigation callback, so it uses hot only.
+func personMadeIt() bool {
+	event := nativeWindowState.app.Send(hot.currentEvent)
+	if event == 0 {
+		return false
+	}
+	now := objc.Send[float64](objc.ID(hot.nsProcessInfo).Send(hot.processInfo), hot.systemUptime)
+	at := objc.Send[float64](event, hot.timestamp)
+	return aRealGesture(objc.Send[int](event, hot.eventType), time.Duration((now-at)*float64(time.Second)))
 }
 
 // closeAllToolWindows closes every tool window: the console's window has
@@ -1601,6 +1614,8 @@ var hot struct {
 	setUIDelegate, setNavigationDelegate, initContentRect objc.SEL
 	setContentView, setAppearance, center, loadRequest    objc.SEL
 	requestWithURL, close, navigationType                 objc.SEL
+	currentEvent, eventType, timestamp                    objc.SEL
+	systemUptime                                          objc.SEL
 	wkWebViewConfiguration, wkWebsiteDataStore, wkWebView objc.Class
 	nsWindow, nsURLRequest                                objc.Class
 	darkAppearance                                        objc.ID // NSAppearanceNameDarkAqua
@@ -1737,6 +1752,10 @@ func warmHotPath() {
 	hot.requestWithURL = sel("requestWithURL:")
 	hot.close = sel("close")
 	hot.navigationType = sel("navigationType")
+	hot.currentEvent = sel("currentEvent")
+	hot.eventType = sel("type")
+	hot.timestamp = sel("timestamp")
+	hot.systemUptime = sel("systemUptime")
 	hot.wkWebViewConfiguration = objc.GetClass("WKWebViewConfiguration")
 	hot.wkWebsiteDataStore = objc.GetClass("WKWebsiteDataStore")
 	hot.wkWebView = objc.GetClass("WKWebView")

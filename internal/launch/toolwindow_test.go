@@ -398,3 +398,87 @@ func TestAToolWindowKeepsToItsTunnel(t *testing.T) {
 		}
 	}
 }
+
+// fakeBuilder records the steps of a build and, during embed, what a close
+// request would have done.
+type fakeBuilder struct {
+	building                buildingWindows
+	created, embedded, held bool
+	steps                   []string
+	closeHonoured           bool
+}
+
+func (f *fakeBuilder) create() (uintptr, bool) {
+	f.steps = append(f.steps, "create")
+	return 0x51, f.created
+}
+
+func (f *fakeBuilder) embed(h uintptr) bool {
+	f.steps = append(f.steps, "embed")
+	f.closeHonoured = f.building.closeHonoured(h)
+	return f.embedded
+}
+
+func (f *fakeBuilder) hold(uintptr) bool {
+	f.steps = append(f.steps, "hold")
+	return f.held
+}
+
+func (f *fakeBuilder) show(uintptr)    { f.steps = append(f.steps, "show") }
+func (f *fakeBuilder) destroy(uintptr) { f.steps = append(f.steps, "destroy") }
+
+func TestAToolWindowIsShownOnlyOnceBuiltAndCannotBeClosedMeanwhile(t *testing.T) {
+	for _, c := range []struct {
+		name                    string
+		created, embedded, held bool
+		want                    string
+		open                    bool
+	}{
+		{"built", true, true, true, "create embed hold show", true},
+		{"no window", false, true, true, "create", false},
+		{"no engine", true, false, true, "create embed destroy", false},
+		{"no policy", true, true, false, "create embed hold destroy", false},
+	} {
+		building := buildingWindows{}
+		f := &fakeBuilder{building: building, created: c.created, embedded: c.embedded, held: c.held}
+		h, open := buildToolWindow(f, building)
+		if got := strings.Join(f.steps, " "); got != c.want || open != c.open {
+			t.Errorf("%s: steps %q open %v, want %q %v", c.name, got, open, c.want, c.open)
+		}
+		if c.created && f.closeHonoured {
+			t.Errorf("%s: a close request during the build would have destroyed the window", c.name)
+		}
+		if len(building) != 0 {
+			t.Errorf("%s: still building after the build: %v", c.name, building)
+		}
+		if open && !building.closeHonoured(h) {
+			t.Errorf("%s: an open window refuses to close", c.name)
+		}
+	}
+	if !(buildingWindows{}).closeHonoured(0x99) {
+		t.Error("a window this process is not building refuses to close")
+	}
+}
+
+func TestOnlyAFreshClickOrKeyPressCountsAsAGestureOnMacOS(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		eventType int
+		age       time.Duration
+		want      bool
+	}{
+		{"click just now", nsEventLeftMouseUp, 30 * time.Millisecond, true},
+		{"return key", nsEventKeyDown, 200 * time.Millisecond, true},
+		{"middle click", nsEventOtherMouseUp, 0, true},
+		{"click a second ago", nsEventLeftMouseUp, time.Second, true},
+		{"click long ago, a timer's a.click()", nsEventLeftMouseUp, 5 * time.Second, false},
+		{"mouse moved", 5, 10 * time.Millisecond, false},
+		{"scroll", 22, 10 * time.Millisecond, false},
+		{"no current event", 0, 0, false},
+		{"a timestamp ahead of the clock", nsEventKeyDown, -time.Second, false},
+	} {
+		if got := aRealGesture(c.eventType, c.age); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}

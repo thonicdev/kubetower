@@ -165,42 +165,79 @@ func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) {
 		log.Printf("[kubetower] the tool window for %s was not drawn: %v", loggableURL(target.URL), toolWindowClassErr)
 		return
 	}
+	b := &windowsToolBuilder{tools: tools, id: id, target: target}
+	if _, drawn = buildToolWindow(b, toolWindowsBuilding); drawn {
+		log.Printf("[kubetower] opened %s in a tool window, %q", loggableURL(target.URL), target.Title)
+	}
+}
+
+// toolWindowsBuilding is every tool window whose engine is being embedded:
+// toolWindowProc ignores a close request for it (buildingWindows).
+var toolWindowsBuilding = buildingWindows{}
+
+// windowsToolBuilder is toolWindowBuilder on Windows, for one window.
+type windowsToolBuilder struct {
+	tools    *toolWindows
+	id       int
+	target   toolWindowTarget
+	chromium *edge.Chromium
+	web      *coreWebView2
+}
+
+// create makes the window, hidden: it is shown once the engine is in it.
+func (b *windowsToolBuilder) create() (uintptr, bool) {
 	var instance windows.Handle
 	_ = windows.GetModuleHandleEx(0, nil, &instance)
 	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(toolWindowClass)),
-		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(target.Title))), wsOverlappedWindow,
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(b.target.Title))), wsOverlappedWindow,
 		cwUseDefault, cwUseDefault, toolWindowWidth, toolWindowHeight, 0, 0, uintptr(instance), 0)
 	if hwnd == 0 {
-		log.Printf("[kubetower] the tool window for %s was not drawn: CreateWindowEx failed (%v)", loggableURL(target.URL), err)
-		return
+		log.Printf("[kubetower] the tool window for %s was not drawn: CreateWindowEx failed (%v)", loggableURL(b.target.URL), err)
+		return 0, false
 	}
 	colourTheFrameOf(hwnd)
+	return hwnd, true
+}
+
+func (b *windowsToolBuilder) embed(hwnd uintptr) bool {
+	b.chromium = edge.NewChromium()
+	b.chromium.DataPath = filepath.Join(statefile.Dir(), "toolwindows-webview2")
+	// No message callback: web messages are turned off in hold, and the
+	// engine drops a message that has no callback.
+	if !embedToolWindow(b.chromium, hwnd) {
+		log.Printf("[kubetower] the tool window for %s was not drawn: WebView2 could not be embedded", loggableURL(b.target.URL))
+		return false
+	}
+	return true
+}
+
+func (b *windowsToolBuilder) hold(uintptr) bool {
+	web, err := holdTheToolWindow(b.chromium)
+	if err != nil {
+		log.Printf("[kubetower] the tool window for %s was not drawn: %v", loggableURL(b.target.URL), err)
+		return false
+	}
+	b.web = web
+	return true
+}
+
+// show registers the window, so its procedure serves it, then shows it and
+// loads the tool.
+func (b *windowsToolBuilder) show(hwnd uintptr) {
+	w := &toolWindow{id: b.id, origin: b.target.Origin, chromium: b.chromium, web: b.web, tools: b.tools}
+	toolWindowsOpen[hwnd] = w
+	toolWindowWebs[uintptr(unsafe.Pointer(b.web))] = w
 	procShowWindow.Call(hwnd, swShow)
 	procUpdateWindow.Call(hwnd)
+	b.chromium.Resize()
+	b.chromium.Navigate(b.target.URL)
+}
 
-	chromium := edge.NewChromium()
-	chromium.DataPath = filepath.Join(statefile.Dir(), "toolwindows-webview2")
-	// No message callback: web messages are turned off below, and the engine
-	// drops a message that has no callback.
-	if !embedToolWindow(chromium, hwnd) {
-		log.Printf("[kubetower] the tool window for %s was not drawn: WebView2 could not be embedded", loggableURL(target.URL))
-		procDestroyWindow.Call(hwnd)
-		return
+func (b *windowsToolBuilder) destroy(hwnd uintptr) {
+	if b.chromium != nil {
+		closeController(b.chromium)
 	}
-	web, err2 := holdTheToolWindow(chromium)
-	if err2 != nil {
-		log.Printf("[kubetower] the tool window for %s was not drawn: %v", loggableURL(target.URL), err2)
-		closeController(chromium)
-		procDestroyWindow.Call(hwnd)
-		return
-	}
-	w := &toolWindow{id: id, origin: target.Origin, chromium: chromium, web: web, tools: tools}
-	toolWindowsOpen[hwnd] = w
-	toolWindowWebs[uintptr(unsafe.Pointer(web))] = w
-	drawn = true
-	chromium.Resize()
-	chromium.Navigate(target.URL)
-	log.Printf("[kubetower] opened %s in a tool window, %q", loggableURL(target.URL), target.Title)
+	procDestroyWindow.Call(hwnd)
 }
 
 // embedToolWindow runs go-webview2's Embed and puts back what its own message
@@ -290,8 +327,12 @@ func releaseToolWindow(w *toolWindow) {
 
 // toolWindowProc is the class's window procedure. A message for a window not
 // (or no longer) in the map, including those sent while it is being created,
-// goes to DefWindowProc.
+// goes to DefWindowProc, but for a close request while it is built, which is
+// ignored (buildingWindows).
 func toolWindowProc(hwnd, msg, wParam, lParam uintptr) uintptr {
+	if msg == wmClose && !toolWindowsBuilding.closeHonoured(hwnd) {
+		return 0
+	}
 	if w, ok := toolWindowsOpen[hwnd]; ok {
 		switch msg {
 		case wmSize:

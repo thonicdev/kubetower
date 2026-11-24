@@ -465,3 +465,78 @@ func afterEmbed(returned, panicked, controller bool) embedOutcome {
 		return embedOutcome{wakeDispatch: true}
 	}
 }
+
+// toolWindowBuilder is what drawing one native tool window takes, step by
+// step; Windows implements it and a test fakes it. embed may pump the
+// thread's messages (go-webview2's Embed runs a loop of its own), so the
+// window's procedure can run in the middle of it.
+type toolWindowBuilder interface {
+	create() (handle uintptr, ok bool)
+	embed(handle uintptr) bool
+	hold(handle uintptr) bool
+	show(handle uintptr)
+	destroy(handle uintptr)
+}
+
+// buildingWindows is every native tool window between its creation and the
+// engine being in it. Main thread only.
+type buildingWindows map[uintptr]struct{}
+
+// closeHonoured says whether a close request (the title bar's X, Alt+F4)
+// may destroy the window: not while it is built, for the engine would then be
+// asked for a controller on a window that no longer exists, and go-webview2
+// ends the process on that failure.
+func (b buildingWindows) closeHonoured(handle uintptr) bool {
+	_, building := b[handle]
+	return !building
+}
+
+// buildToolWindow draws one window: hidden until the engine is in it and its
+// policy held, and deaf to a close request in between. It reports the handle
+// and whether the window is open; a window that could not be built is
+// destroyed and never shown.
+func buildToolWindow(b toolWindowBuilder, building buildingWindows) (uintptr, bool) {
+	handle, ok := b.create()
+	if !ok {
+		return 0, false
+	}
+	building[handle] = struct{}{}
+	defer delete(building, handle) // also when a step panics
+	ok = b.embed(handle) && b.hold(handle)
+	delete(building, handle)
+	if !ok {
+		b.destroy(handle)
+		return 0, false
+	}
+	b.show(handle)
+	return handle, true
+}
+
+// AppKit's NSEventType values of a click or a key press.
+const (
+	nsEventLeftMouseDown  = 1
+	nsEventLeftMouseUp    = 2
+	nsEventRightMouseDown = 3
+	nsEventRightMouseUp   = 4
+	nsEventKeyDown        = 10
+	nsEventKeyUp          = 11
+	nsEventOtherMouseDown = 25
+	nsEventOtherMouseUp   = 26
+)
+
+// gestureFreshness is how long after a click or a key press a navigation may
+// still be taken as caused by it.
+const gestureFreshness = time.Second
+
+// aRealGesture says whether a macOS navigation follows a person's click or key
+// press: AppKit's current event is one, made within gestureFreshness. WebKit
+// reports a script's a.click() as an activated link too, so its
+// navigationType alone does not say a person asked.
+func aRealGesture(eventType int, age time.Duration) bool {
+	switch eventType {
+	case nsEventLeftMouseDown, nsEventLeftMouseUp, nsEventRightMouseDown, nsEventRightMouseUp,
+		nsEventKeyDown, nsEventKeyUp, nsEventOtherMouseDown, nsEventOtherMouseUp:
+		return age >= 0 && age <= gestureFreshness
+	}
+	return false
+}
