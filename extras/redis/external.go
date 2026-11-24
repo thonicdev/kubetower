@@ -15,9 +15,14 @@ import (
 // instance routes look among discovery's Instances only, so nothing dials it.
 
 // managedSuffixes are the domains of a managed Redis whose hosts need not
-// name the engine: Azure Cache for Redis Enterprise, Redis Cloud (its
-// private-link hosts included, `pl-….redislabs.com`) and Aiven.
-var managedSuffixes = []string{".redisenterprise.cache.azure.net", ".redislabs.com", ".aivencloud.com"}
+// name the engine: Azure Cache for Redis Enterprise and Redis Cloud (its
+// private-link hosts included, `pl-….redislabs.com`).
+var managedSuffixes = []string{".redisenterprise.cache.azure.net", ".redislabs.com"}
+
+// aivenSuffix is Aiven's domain, which also serves its PostgreSQL, Kafka and
+// every other service: a host there counts only with a port that looks like
+// a Redis's, unless its own words or the Service's name say the engine.
+const aivenSuffix = ".aivencloud.com"
 
 // awsSuffixes are AWS's domains, China's included.
 var awsSuffixes = []string{".amazonaws.com", ".amazonaws.com.cn"}
@@ -122,6 +127,10 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 		if len(ports) == 1 {
 			out.Port, out.PortName = int(ports[0].Port), ports[0].Name
 		}
+	case strings.HasSuffix(host, aivenSuffix) && redisPortIn(ports) != nil:
+		port := redisPortIn(ports)
+		out.Why = "it points at " + host
+		out.Port, out.PortName = int(port.Port), port.Name
 	case engineToken(name) != "":
 		// The name alone does not say which port: only one that looks like a
 		// Redis's is kept (`redis-ha` with `api:443` gets its host alone).
@@ -141,6 +150,16 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 func redisLikePort(port corev1.ServicePort) bool {
 	name := strings.ToLower(port.Name)
 	return engineToken(name) != "" || name == "rediss" || name == "valkeys" || (port.Port >= 6379 && port.Port <= 6399)
+}
+
+// redisPortIn is the first port that looks like a Redis's, or nil.
+func redisPortIn(ports []corev1.ServicePort) *corev1.ServicePort {
+	for i := range ports {
+		if redisLikePort(ports[i]) {
+			return &ports[i]
+		}
+	}
+	return nil
 }
 
 // externals is every ExternalName Service to a Redis, in namespace then name
