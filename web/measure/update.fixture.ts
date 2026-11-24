@@ -9,7 +9,9 @@ type UpdateInstall = components['schemas']['UpdateInstall'];
 
 const MB = 1024 * 1024;
 
-export const UPDATE_STEPS: Readonly<Record<string, UpdateInstall>> = {
+type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed';
+
+export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
   idle: { phase: 'idle', enabled: true, supported: true, installation: 'linux-appimage', ends: { terminals: 0, forwards: 0 } },
   downloading: {
     phase: 'downloading', enabled: true, supported: true, installation: 'linux-appimage',

@@ -1302,7 +1302,7 @@ const CONSOLES: Readonly<
   ),
   'console-update-badge': {
     at: `/c/${OVERVIEW_CLUSTER}`,
-    answers: { ...OVERVIEW_ANSWERS, ...updateSettings(UPDATE_STEPS.idle as never) },
+    answers: { ...OVERVIEW_ANSWERS, ...updateSettings(UPDATE_STEPS.idle) },
   },
   // The kinds column with kinds that hold nothing, so its Show / Hide unused
   // kinds toggle is drawn (#60).

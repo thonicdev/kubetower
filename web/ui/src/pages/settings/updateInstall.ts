@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 
 import { request } from '../../api';
 import type { components, paths } from '../../api/schema';
@@ -36,8 +37,25 @@ export function getUpdateInstall(signal?: AbortSignal): Promise<UpdateInstall> {
 /** The phases that move on their own, read again until they settle. */
 const MOVING: ReadonlySet<string> = new Set(['downloading', 'verifying', 'installing']);
 
+/** The phases a page knows how to draw; any other is drawn as nothing. */
+export const PHASES: ReadonlySet<string> = new Set(['idle', 'downloading', 'verifying', 'ready', 'installing', 'failed']);
+
 /** How often a running download or install is read. */
 export const INSTALL_POLL_MS = 500;
+
+/**
+ * How long "Installing…" waits for the restarted console before it is drawn
+ * as failed and the poll stops.
+ */
+export const INSTALL_TIMEOUT_MS = 3 * 60_000;
+
+/**
+ * The two writes that start work, keyed so every surface sees one running:
+ * the banner and Infos' version line both offer Download, and one click must
+ * disable both.
+ */
+const DOWNLOAD_KEY = ['update', 'download'] as const;
+const RESTART_KEY = ['update', 'restart'] as const;
 
 /** Write a fresh state into the settings read, where every surface reads it. */
 function useKeep(): (next: UpdateInstall) => void {
@@ -51,14 +69,36 @@ function useKeep(): (next: UpdateInstall) => void {
 }
 
 /**
+ * Whether "Installing…" has waited past INSTALL_TIMEOUT_MS, and a way to wait
+ * again. The clock starts when the phase becomes `installing`.
+ */
+function useInstallTimeout(installing: boolean): { timedOut: boolean; again: () => void } {
+  const [round, setRound] = useState(0);
+  const [expired, setExpired] = useState(-1);
+  useEffect(() => {
+    if (!installing) return undefined;
+    const timer = setTimeout(() => setExpired(round), INSTALL_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [installing, round]);
+  return { timedOut: installing && expired === round, again: () => setRound((n) => n + 1) };
+}
+
+/**
  * The update as the page draws it: the check's answer, the install state, and
  * the three writes. `offered` is the badge's and the banner's condition: a
  * newer release, installing allowed, and this installation supported.
  */
 export function useUpdateInstall(): {
+  running: string | undefined;
   latest: string | undefined;
   install: UpdateInstall | undefined;
   offered: boolean;
+  /** A download or a restart is being asked, from this surface or another. */
+  busy: boolean;
+  /** "Installing…" has had no answer for INSTALL_TIMEOUT_MS. */
+  timedOut: boolean;
+  /** Wait for the restarted console again after a timeout. */
+  waitAgain: () => void;
   download: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   restart: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   allow: ReturnType<typeof useMutation<UpdateInstall, Error, boolean>>;
@@ -68,7 +108,8 @@ export function useUpdateInstall(): {
   const install = update?.install;
   const keep = useKeep();
   const cache = useQueryClient();
-  const moving = install !== undefined && MOVING.has(install.phase);
+  const { timedOut, again } = useInstallTimeout(install?.phase === 'installing');
+  const moving = install !== undefined && MOVING.has(install.phase) && !timedOut;
   useQuery({
     queryKey: [...settingsKey, 'update'],
     queryFn: async ({ signal }) => {
@@ -84,10 +125,40 @@ export function useUpdateInstall(): {
     // The console is restarting under an install: the read fails until it is back.
     retry: false,
   });
-  const download = useMutation<UpdateInstall, Error, void>({ mutationFn: downloadUpdate, onSuccess: keep });
-  const restart = useMutation<UpdateInstall, Error, void>({ mutationFn: installUpdate, onSuccess: keep });
-  const allow = useMutation<UpdateInstall, Error, boolean>({ mutationFn: setInstallUpdates, onSuccess: keep });
+  const reread = (): void => void cache.invalidateQueries({ queryKey: settingsKey, exact: true });
+  const download = useMutation<UpdateInstall, Error, void>({
+    mutationKey: DOWNLOAD_KEY,
+    mutationFn: downloadUpdate,
+    onSuccess: keep,
+  });
+  const restart = useMutation<UpdateInstall, Error, void>({
+    mutationKey: RESTART_KEY,
+    mutationFn: installUpdate,
+    onSuccess: keep,
+  });
+  // The server applies the setting even when it cannot save it (500
+  // not_saved): read it back rather than keep the box where it was.
+  const allow = useMutation<UpdateInstall, Error, boolean>({
+    mutationFn: setInstallUpdates,
+    onSuccess: keep,
+    onError: reread,
+  });
+  const busy = useIsMutating({ mutationKey: ['update'] }) > 0;
   const offered =
     update?.state === 'newer' && install !== undefined && install.enabled && install.supported;
-  return { latest: update?.latest, install, offered, download, restart, allow };
+  return {
+    running: settings.data?.info.version,
+    latest: update?.latest,
+    install,
+    offered,
+    busy,
+    timedOut,
+    waitAgain: () => {
+      again();
+      reread();
+    },
+    download,
+    restart,
+    allow,
+  };
 }

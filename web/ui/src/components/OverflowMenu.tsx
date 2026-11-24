@@ -379,11 +379,16 @@ export function OverflowMenuSeparator(): ReactNode {
   return <div role="separator" className="my-1 border-t border-line" />;
 }
 
-/** A small accent count, after a label: the Settings entry's "1". */
+/**
+ * A small accent count, after a label: the Settings entry's "1". Hidden from
+ * the accessibility tree, so the link or item it sits in keeps its own name
+ * ("Settings", not "Settings1"); the tooltip on that control says why.
+ */
 export function CountBadge({ children, title }: { children: ReactNode; title?: string | undefined }): ReactNode {
   return (
     <span
       data-count-badge=""
+      aria-hidden="true"
       title={title}
       className="ml-1 inline-flex min-w-4 items-center justify-center rounded-full bg-accent px-1 text-2xs leading-4 font-semibold text-fg"
     >

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { btnPrimary, btnSecondary } from '../../components/buttons';
 import { Pill } from '../../components/Pill';
-import { useUpdateInstall, type UpdateInstall } from './updateInstall';
+import { PHASES, useUpdateInstall, type UpdateInstall } from './updateInstall';
 
 /**
  * The update's control, in the place it is drawn: the banner atop Settings and
@@ -13,18 +13,24 @@ import { useUpdateInstall, type UpdateInstall } from './updateInstall';
  *   downloading a bar and the megabytes
  *   verifying   Verifying
  *   ready       Ready, what the restart ends, Restart to update
- *   installing  Installing…
+ *   installing  Installing…, then Failed and Retry if the console is not back
+ *               within INSTALL_TIMEOUT_MS
  *   failed      the reason, Retry
+ *   (any other) nothing
  *
  * Two clicks and never one: Download only fetches and verifies; Restart to
  * update is a second request, because it ends the terminals and port-forwards
  * it counts. Nothing is drawn where installing is off or not supported here.
  */
 export function UpdateControl({ prominent = false }: { prominent?: boolean }): ReactNode {
-  const { latest, install, offered, download, restart } = useUpdateInstall();
+  const { latest, install, offered, busy, timedOut, waitAgain, download, restart } = useUpdateInstall();
   if (install === undefined || !install.enabled || !install.supported) return null;
   // A download in any state is drawn; idle only while a newer release exists.
   if (install.phase === 'idle' && !offered) return null;
+  if (!PHASES.has(install.phase)) return null;
+  const start = (): void => {
+    if (!busy) download.mutate();
+  };
   const refused = download.error ?? restart.error;
   const primary = prominent ? btnPrimary : btnSecondary;
 
@@ -54,8 +60,10 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <button
             type="button"
             className={btnPrimary}
-            disabled={restart.isPending}
-            onClick={() => restart.mutate()}
+            disabled={busy}
+            onClick={() => {
+              if (!busy) restart.mutate();
+            }}
             data-update-restart=""
           >
             Restart to update
@@ -64,7 +72,16 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
       );
       break;
     case 'installing':
-      step = (
+      step = timedOut ? (
+        <>
+          <span className="text-bad" data-update-step="timed-out" title="No answer from the restarted console">
+            Failed
+          </span>
+          <button type="button" className={btnSecondary} onClick={waitAgain} data-update-wait="">
+            Retry
+          </button>
+        </>
+      ) : (
         <span data-update-step="installing" role="status">
           <Pill tone="info">Installing…</Pill>
         </span>
@@ -79,8 +96,8 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <button
             type="button"
             className={btnSecondary}
-            disabled={download.isPending}
-            onClick={() => download.mutate()}
+            disabled={busy}
+            onClick={start}
             data-update-retry=""
           >
             Retry
@@ -93,8 +110,8 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
         <button
           type="button"
           className={primary}
-          disabled={download.isPending}
-          onClick={() => download.mutate()}
+          disabled={busy}
+          onClick={start}
           title={latest === undefined ? undefined : `KubeTower ${latest}`}
           data-update-download=""
         >
@@ -114,17 +131,18 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
   );
 }
 
-const MB = 1024 * 1024;
+const MIB = 1024 * 1024;
 
-function megabytes(n: number): string {
-  return (n / MB).toFixed(1);
+function mebibytes(n: number): string {
+  return (n / MIB).toFixed(1);
 }
 
 /** The download's bar and its figures. */
 function Progress({ install }: { install: UpdateInstall }): ReactNode {
   const done = install.done ?? 0;
   const total = install.total ?? 0;
-  const share = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  // An unknown size has no share: the bar is indeterminate and only what came is counted.
+  const share = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : undefined;
   return (
     <span className="flex items-center gap-2" data-update-step="downloading">
       <span
@@ -132,14 +150,20 @@ function Progress({ install }: { install: UpdateInstall }): ReactNode {
         aria-label="Download"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={share}
+        {...(share === undefined ? {} : { 'aria-valuenow': share })}
         className="relative inline-block h-1.5 w-40 overflow-hidden rounded-full bg-panel-2"
       >
-        <span className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${String(share)}%` }} />
+        {share === undefined ? (
+          <span className="absolute inset-0 animate-pulse rounded-full bg-accent/50" />
+        ) : (
+          <span className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${String(share)}%` }} />
+        )}
       </span>
-      <span className="tabular-nums text-muted" title={install.asset}>
-        {megabytes(done)} / {megabytes(total)} MB
-      </span>
+      {share === undefined && done === 0 ? null : (
+        <span className="tabular-nums text-muted" title={install.asset} data-update-size="">
+          {share === undefined ? `${mebibytes(done)} MiB` : `${mebibytes(done)} / ${mebibytes(total)} MiB`}
+        </span>
+      )}
     </span>
   );
 }
@@ -166,6 +190,7 @@ export function UpdateBanner(): ReactNode {
   const { latest, install, offered } = useUpdateInstall();
   if (install === undefined || !install.enabled || !install.supported) return null;
   if (!offered && install.phase === 'idle') return null;
+  if (!PHASES.has(install.phase)) return null;
   const version = install.version ?? latest;
   return (
     <section
@@ -185,7 +210,7 @@ export function UpdateBanner(): ReactNode {
 /** "Install updates", where this console can install. */
 export function InstallUpdatesSetting(): ReactNode {
   const { install, allow } = useUpdateInstall();
-  if (install === undefined) return null;
+  if (install?.supported !== true) return null;
   return (
     <label className="mt-1 flex items-center gap-2 text-xs text-fg" data-install-updates="">
       <input
@@ -206,6 +231,14 @@ export function InstallUpdatesSetting(): ReactNode {
 
 /** The badge on every Settings entry while an update can be installed. */
 export function useUpdateBadge(): { shown: boolean; title: string } {
-  const { latest, offered } = useUpdateInstall();
-  return { shown: offered, title: latest === undefined ? 'Update available' : `Update available: ${latest}` };
+  const { running, latest, offered } = useUpdateInstall();
+  return { shown: offered, title: badgeTitle(running, latest) };
+}
+
+/** The badge's tooltip: the running build and the release it would become (#48). */
+export function badgeTitle(running: string | undefined, latest: string | undefined): string {
+  const lines = ['Update available'];
+  if (running !== undefined && running !== '') lines.push(`Running: ${running}`);
+  if (latest !== undefined && latest !== '') lines.push(`New: ${latest}`);
+  return lines.join('\n');
 }

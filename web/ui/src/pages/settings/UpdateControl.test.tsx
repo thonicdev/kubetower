@@ -1,9 +1,9 @@
-import { fireEvent, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetKeyboardStack } from '../../keyboard/stack';
 import { mountApp } from '../../testing/harness';
-import type { UpdateInstall } from './updateInstall';
+import { INSTALL_POLL_MS, INSTALL_TIMEOUT_MS, type UpdateInstall } from './updateInstall';
 
 /**
  * The update's badge, banner and steps (#48): what is drawn for each state of
@@ -53,6 +53,8 @@ function settings(install: UpdateInstall | undefined, state = 'newer'): unknown 
 
 interface Console {
   sent: { method: string; path: string; body: unknown }[];
+  /** Every GET, in order. */
+  reads: string[];
   /** What GET /api/settings/update and the next settings read answer. */
   now: { install: UpdateInstall };
 }
@@ -60,13 +62,17 @@ interface Console {
 /** A console whose update is `install`; the writes answer `next(method, path)`. */
 function console(
   install: UpdateInstall | undefined,
-  next: (method: string, path: string, body: unknown) => { status: number; body: unknown } = (_m, _p) => ({
+  next: (
+    method: string,
+    path: string,
+    body: unknown,
+  ) => { status: number; body: unknown; now?: UpdateInstall } | Promise<{ status: number; body: unknown; now?: UpdateInstall }> = (_m, _p) => ({
     status: 200,
     body: install,
   }),
   state = 'newer',
 ): Console {
-  const out: Console = { sent: [], now: { install: install ?? idle } };
+  const out: Console = { sent: [], reads: [], now: { install: install ?? idle } };
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url).split('?')[0] ?? '';
     const method = init?.method ?? 'GET';
@@ -80,10 +86,13 @@ function console(
     if (method !== 'GET') {
       const body: unknown = init?.body === undefined ? undefined : JSON.parse(String(init.body));
       out.sent.push({ method, path, body });
-      const answer = next(method, path, body);
-      if (answer.status === 200) out.now.install = answer.body as UpdateInstall;
-      return json(answer.status, answer.body);
+      return Promise.resolve(next(method, path, body)).then((answer) => {
+        if (answer.now !== undefined) out.now.install = answer.now;
+        else if (answer.status === 200) out.now.install = answer.body as UpdateInstall;
+        return json(answer.status, answer.body);
+      });
     }
+    out.reads.push(path);
     switch (path) {
       case '/api/session':
         return json(200, { identity: 'alice', idleExpiresAt: '2999-01-01T00:00:00Z', absoluteExpiresAt: '2999-01-01T00:00:00Z' });
@@ -110,7 +119,11 @@ describe('the badge on Settings', () => {
     await waitFor(() => {
       expect(document.querySelector('a[href^="/settings"] [data-count-badge]')?.textContent).toBe('1');
     });
-    expect(document.querySelector('a[href^="/settings"]')?.getAttribute('title')).toBe('Update available: 0.1.3');
+    const link = document.querySelector('a[href^="/settings"]');
+    // The running build and the release it would become (#48).
+    expect(link?.getAttribute('title')).toBe('Update available\nRunning: kubetower 0.1.2\nNew: 0.1.3');
+    // The badge is not part of the link's name.
+    expect(screen.getByRole('link', { name: 'Settings' })).toBe(link);
   });
 
   for (const [name, install, state] of [
@@ -180,7 +193,7 @@ describe('the banner and its two clicks', () => {
       });
       if (step === 'downloading') {
         expect(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('25');
-        expect(banner()?.textContent).toContain('5.0 / 20.0 MB');
+        expect(banner()?.textContent).toContain('5.0 / 20.0 MiB');
       }
       if (step === 'failed') {
         expect(banner()?.textContent).toContain('does not match its signed sha256');
@@ -246,5 +259,165 @@ describe('Settings › Infos', () => {
     expect(document.querySelector('[data-install-updates]')).toBeNull();
     expect(document.querySelector('[data-update-download]')).toBeNull();
     expect(banner()).toBeNull();
+  });
+});
+
+describe('the poll', () => {
+  it('reads a running download every INSTALL_POLL_MS, stops once it settles, and reads the settings again', async () => {
+    const downloading: UpdateInstall = { ...idle, phase: 'downloading', version: '0.1.3', done: 1, total: 4 };
+    const c = console(downloading);
+    mountApp('/settings/general');
+    await waitFor(() => {
+      expect(c.reads.filter((p) => p === '/api/settings/update').length).toBeGreaterThanOrEqual(2);
+    });
+    expect(control()?.getAttribute('data-update-control')).toBe('downloading');
+
+    c.now.install = { ...downloading, phase: 'ready' };
+    await waitFor(() => {
+      expect(control()?.getAttribute('data-update-control')).toBe('ready');
+    });
+    // Settled: the whole settings read again.
+    await waitFor(() => {
+      expect(c.reads.lastIndexOf('/api/settings')).toBeGreaterThan(c.reads.lastIndexOf('/api/settings/update'));
+    });
+    const polls = c.reads.filter((p) => p === '/api/settings/update').length;
+    await new Promise((resolve) => setTimeout(resolve, INSTALL_POLL_MS * 3));
+    expect(c.reads.filter((p) => p === '/api/settings/update').length).toBe(polls);
+  });
+
+  it('does not poll while nothing runs', async () => {
+    const c = console(idle);
+    mountApp('/settings/general');
+    await waitFor(() => {
+      expect(control()?.getAttribute('data-update-control')).toBe('idle');
+    });
+    await new Promise((resolve) => setTimeout(resolve, INSTALL_POLL_MS * 3));
+    expect(c.reads).not.toContain('/api/settings/update');
+  });
+
+  it('draws Installing… as failed once the console has not come back in time, and Retry waits again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const c = console({ ...idle, phase: 'installing', version: '0.1.3' });
+      mountApp('/settings/general');
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="timed-out"]')?.textContent).toBe('Failed');
+      });
+      // The poll stopped with it.
+      const polls = c.reads.filter((p) => p === '/api/settings/update').length;
+      await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS * 4);
+      expect(c.reads.filter((p) => p === '/api/settings/update').length).toBe(polls);
+
+      fireEvent.click(control()?.querySelector('[data-update-wait]') as Element);
+      await waitFor(() => {
+        expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('one request at a time', () => {
+  it('disables every Download while one is asked, and sends one POST for two clicks', async () => {
+    let release: (value: { status: number; body: unknown }) => void = () => undefined;
+    const c = console(idle, () => new Promise((resolve) => (release = resolve)));
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-update-download]').length).toBe(2);
+    });
+    const [inBanner, inLine] = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-update-download]'));
+    fireEvent.click(inBanner as Element);
+    await waitFor(() => {
+      for (const button of document.querySelectorAll<HTMLButtonElement>('[data-update-download]')) {
+        expect(button.disabled).toBe(true);
+      }
+    });
+    fireEvent.click(inLine as Element);
+    expect(c.sent.length).toBe(1);
+    release({ status: 200, body: { ...idle, phase: 'downloading', done: 0, total: 0 } });
+    await waitFor(() => {
+      expect(control()?.getAttribute('data-update-control')).toBe('downloading');
+    });
+  });
+
+  it('disables Restart to update while it is asked', async () => {
+    const ready: UpdateInstall = { ...idle, phase: 'ready', version: '0.1.3' };
+    console(ready, () => new Promise(() => undefined));
+    mountApp('/settings/general');
+    const restart = (): HTMLButtonElement | null | undefined =>
+      banner()?.querySelector<HTMLButtonElement>('[data-update-restart]');
+    await waitFor(() => {
+      expect(restart()?.disabled).toBe(false);
+    });
+    fireEvent.click(restart() as Element);
+    await waitFor(() => {
+      expect(restart()?.disabled).toBe(true);
+    });
+  });
+});
+
+describe('what is drawn for odd states', () => {
+  it('draws an indeterminate bar and no "0.0 / 0.0" while the size is unknown', async () => {
+    console({ ...idle, phase: 'downloading', version: '0.1.3', done: 0 });
+    mountApp('/settings/general');
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-banner] [role="progressbar"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[role="progressbar"]')?.hasAttribute('aria-valuenow')).toBe(false);
+    expect(document.querySelector('[data-update-size]')).toBeNull();
+    expect(banner()?.textContent).not.toContain('0.0');
+  });
+
+  it('counts what came while the size is unknown', async () => {
+    console({ ...idle, phase: 'downloading', version: '0.1.3', done: 3 * 1024 * 1024 });
+    mountApp('/settings/general');
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-size]')?.textContent).toBe('3.0 MiB');
+    });
+  });
+
+  it('draws nothing for a phase it does not know', async () => {
+    // A newer server's phase, which this page's contract does not name yet.
+    console({ ...idle, phase: 'paused' as UpdateInstall['phase'] });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(document.querySelector('[data-update="newer"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-update-control]')).toBeNull();
+    expect(banner()).toBeNull();
+  });
+
+  it('draws no Install updates setting where this installation cannot be updated', async () => {
+    console({ ...idle, supported: false });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(document.querySelector('[data-update="newer"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-install-updates]')).toBeNull();
+  });
+
+  it('reads the setting back when the server applied it but could not save it', async () => {
+    const off: UpdateInstall = { ...idle, enabled: false };
+    console(idle, () => ({
+      status: 500,
+      body: { type: 'about:blank', title: 'Internal Server Error', status: 500, code: 'not_saved', detail: 'not_saved: read-only state' },
+      now: off,
+    }));
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(true);
+    });
+    fireEvent.click(document.querySelector('[data-install-updates] input') as Element);
+    await waitFor(() => {
+      expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(false);
+    });
+    expect(banner()).toBeNull();
+    expect(document.querySelector('[data-update-download]')).toBeNull();
+    expect(document.querySelector('[data-install-updates] [role="alert"]')?.textContent).toContain('read-only state');
   });
 });
