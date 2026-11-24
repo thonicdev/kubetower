@@ -201,6 +201,16 @@ func drawNativeWindow(url string, feed windowSources, toasts bool) bool {
 		})
 	}
 
+	// The tool windows (#65) open from here on, on this thread, and close
+	// with this window.
+	if feed.Tools != nil {
+		feed.Tools.attach(windowsToolHost{console: view, tools: feed.Tools})
+		defer func() {
+			feed.Tools.attach(nil)
+			closeAllToolWindows()
+		}()
+	}
+
 	view.Navigate(url)
 	log.Printf("[kubetower] opened %s in a native window. Closing it stops KubeTower", loggableURL(url))
 	view.Run()
@@ -398,7 +408,8 @@ type coreWebView2Controller struct{ vtbl *coreWebView2ControllerVtbl }
 
 type coreWebView2ControllerVtbl struct {
 	queryInterface, addRef, release edge.ComProc
-	_                               [22]edge.ComProc // get_IsVisible ... Close
+	_                               [21]edge.ComProc // get_IsVisible ... remove_AcceleratorKeyPressed
+	close                           edge.ComProc
 	getCoreWebView2                 edge.ComProc
 }
 

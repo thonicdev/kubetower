@@ -42,6 +42,9 @@ type windowSources struct {
 	Update func() update.Report
 	// Clusters is the console's own cluster list (`web.Server.Clusters`).
 	Clusters func(context.Context) ([]api.Cluster, *api.Failure)
+	// Tools is the tool windows (#65), which the native window attaches to
+	// once drawn. Nil where none can open.
+	Tools *toolWindows
 }
 
 func countOf(source func() int) int {

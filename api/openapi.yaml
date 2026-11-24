@@ -2770,6 +2770,40 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/forwards/{id}/window:
+    post:
+      operationId: openForwardWindow
+      tags: [dock]
+      summary: Open a forward's flow UI in a window of the desktop's own.
+      description: >-
+        Hubble UI or Whisker, at `path` on the forward's loopback address, in a
+        window the desktop draws beside the console's, titled
+        `KubeTower · <cluster> · <tool>`. Registered only where the forwards are
+        and the desktop can draw that window; answered 409 while the console is
+        not in the desktop's native window (`capabilities.toolWindow` false),
+        where the page opens the forward in the browser instead. The address is
+        built from the live forward, never taken from the page, and the window
+        keeps no cookie or storage with the console's. With `closeWithWindow`,
+        closing the window closes the forward unless another window shows it; a
+        forward that goes away closes its window.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 64 }
+        - $ref: '#/components/parameters/RequestMarker'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ForwardWindowRequest' }
+      responses:
+        '204': { description: The window is opening. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   # The session is an HttpOnly, SameSite=Lax, same-origin cookie. Declared
   # here rather than described only in prose so a generated client knows to send
@@ -3594,6 +3628,12 @@ components:
             does register the extension switches on one replica, reviewed
             for each person; whether a person may press one is the extension
             listing's `writable`.
+        toolWindow:
+          type: boolean
+          description: >-
+            The console is in the desktop's own native window, which can draw a
+            forward's flow UI in a window beside it (`openForwardWindow`). False
+            in a browser, under the server profile, and on Linux.
         portForwardLimit:
           type: integer
           description: Live forwards permitted. Process-wide, or per identity in a shared profile.
@@ -8895,6 +8935,26 @@ components:
         reason:
           $ref: '#/components/schemas/Reason'
 
+    ForwardWindowRequest:
+      type: object
+      additionalProperties: false
+      required: [tool]
+      properties:
+        tool:
+          type: string
+          enum: [hubble, whisker]
+          description: The flow UI the window shows, which names it.
+        path:
+          type: string
+          maxLength: 1024
+          description: >-
+            The absolute path and query on the forward to open, `/` when absent.
+            Never an address: a path naming a host is refused.
+        closeWithWindow:
+          type: boolean
+          description: >-
+            The forward was opened for this window: closing the window closes it,
+            unless another window shows it.
     ForwardRequest:
       type: object
       additionalProperties: false

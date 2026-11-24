@@ -65,6 +65,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) {
 		Settings:       apiSettings{s},
 		Updates:        s.updateCheck(),
 		Installer:      s.updateInstaller(),
+		ToolWindows:    s.toolWindows(),
 		Prefs:          apiPrefs{s},
 		KindPrefs:      apiKindPrefs{s},
 		Reads:          apiReads{s},
@@ -355,6 +356,11 @@ func (p apiProfile) Capabilities(_ *http.Request) api.Capabilities {
 	}
 	if limited, ok := s.forwards.(interface{ Limit() int }); ok {
 		caps.PortForwardLimit = limited.Limit()
+	}
+	// Asked on every read: the native window is drawn after the server
+	// starts, and a page in the browser fallback has none.
+	if tools := s.toolWindows(); tools != nil {
+		caps.ToolWindow = tools.Available()
 	}
 	caps.ReadOnly = p.readOnly()
 	return caps
@@ -1168,6 +1174,15 @@ func (i apiInstaller) InstallUpdate(ctx context.Context) (api.UpdateInstall, err
 
 // updateInstaller is api.Deps.Installer: nil, as an interface, where nothing
 // installs, so the routes are not registered.
+// toolWindows is SetupInfo.ToolWindows, nil under the server profile and
+// where there are no forwards: a window shows a forward of this process.
+func (s *Server) toolWindows() api.ToolWindows {
+	if s.setup.ToolWindows == nil || s.inCluster || !s.offersForwards() {
+		return nil
+	}
+	return s.setup.ToolWindows
+}
+
 func (s *Server) updateInstaller() api.UpdateInstaller {
 	if s.setup.Installer == nil {
 		return nil

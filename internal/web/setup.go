@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/thonicdev/kubetower/internal/api"
 	"github.com/thonicdev/kubetower/internal/cluster"
 	"github.com/thonicdev/kubetower/internal/updater"
 )
@@ -81,6 +82,11 @@ type SetupInfo struct {
 
 	// OpenWork counts the terminals and port-forwards a restart would end.
 	OpenWork func() (terminals, forwards int)
+
+	// ToolWindows draws a forward's flow UI in a desktop window (#65), on a
+	// desktop that can draw a native window. Nil elsewhere: the route is then
+	// not registered and `capabilities.toolWindow` is false.
+	ToolWindows api.ToolWindows
 }
 
 // UpdateInstaller is internal/updater.Updater, as the Settings page drives it.

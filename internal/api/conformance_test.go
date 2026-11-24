@@ -179,7 +179,7 @@ var order = []string{
 	"setRailReveal", "setRailNameplate",
 	"setColumnSize", "setColumnPlace", "setColumnShow", "setColumnDensity", "resetColumns",
 	"openDesktopTerminal", "listLogContainers", "streamLogs",
-	"listForwards", "openForward", "closeForward",
+	"listForwards", "openForward", "closeForward", "openForwardWindow",
 }
 
 func exercises() map[string]exercise {
@@ -331,6 +331,8 @@ func exercises() map[string]exercise {
 		"openForward": {status: 201, path: at("/api/forwards"),
 			body: sends(`{"cluster":"prod","namespace":"default","pod":"api-1","remotePort":8080}`)},
 		"closeForward": {status: 204, path: at("/api/forwards/fwd-1")},
+		"openForwardWindow": {status: 204, path: at("/api/forwards/fwd-1/window"),
+			body: sends(`{"tool":"hubble","path":"/?namespace=default","closeWithWindow":true}`)},
 	}
 }
 
@@ -427,7 +429,7 @@ func walkContract(t *testing.T, spec map[string]any,
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{},
 		// Every channel on offer: this exercises every operation the contract
 		// declares, and two of them - the node-shell preview and its setting -
 		// exist only where the node-shell channel does. A build offering no
@@ -911,7 +913,7 @@ func TestEveryRequestBodyMatchesTheContract(t *testing.T) {
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{},
 		AllowOrigin: func(*http.Request, string) bool { return true },
 	}).Mount(mux)
 

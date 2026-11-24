@@ -32,6 +32,7 @@ func TestTheWindowsComSlotsAreWhereWebView2PutsThem(t *testing.T) {
 		field   string
 		slot    uintptr // WebView2.idl's order, IUnknown's three first
 	}{
+		{"ICoreWebView2Controller::Close", unsafe.Offsetof(coreWebView2ControllerVtbl{}.close), controller, "Close", 24},
 		{"ICoreWebView2Controller::get_CoreWebView2", unsafe.Offsetof(coreWebView2ControllerVtbl{}.getCoreWebView2), controller, "GetCoreWebView2", 25},
 		{"ICoreWebView2::get_Settings", unsafe.Offsetof(coreWebView2Vtbl{}.getSettings), webView, "GetSettings", 3},
 		{"ICoreWebView2::add_NavigationStarting", unsafe.Offsetof(coreWebView2Vtbl{}.addNavigationStarting), webView, "AddNavigationStarting", 7},

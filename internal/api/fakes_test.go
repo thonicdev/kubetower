@@ -1489,3 +1489,10 @@ func (f fakeInstaller) InstallUpdate(context.Context) (UpdateInstall, error) {
 	out.Phase = "installing"
 	return out, nil
 }
+
+// fakeToolWindows is the desktop's tool windows, in the native window.
+type fakeToolWindows struct{}
+
+func (fakeToolWindows) Available() bool { return true }
+
+func (fakeToolWindows) OpenToolWindow(string, string, string, bool) error { return nil }

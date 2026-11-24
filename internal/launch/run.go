@@ -338,6 +338,12 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 			LogStreams: ui.OpenLogStreams,
 			Update:     p.updates.Report,
 			Clusters:   ui.Clusters,
+			Tools:      w.tools,
+		}
+		// The tool windows close with their tunnel or their cluster (#65),
+		// for as long as the native window can hold them.
+		if w.tools != nil {
+			go w.tools.watch(windowDone, toolWindowSweepEvery)
 		}
 		if runtime.GOOS == "darwin" {
 			go watchWindowFacts(windowDone, feed, windowWatchEvery, refreshNativeWindow)
@@ -935,9 +941,12 @@ type workers struct {
 	shells        *terminal.Terminal
 	forwards      web.Forwards
 	countForwards func() int
-	archives      web.Archives
-	feeds         web.Recorders
-	probe         *health.Health
+	// tools is the desktop's tool windows (#65): nil where no native window
+	// can be drawn or there are no forwards.
+	tools    *toolWindows
+	archives web.Archives
+	feeds    web.Recorders
+	probe    *health.Health
 }
 
 // startWorkers opens the archive, the terminals, the port forwards, the
@@ -1023,6 +1032,7 @@ func startWorkers(ctx context.Context, p *profile, inCluster bool, undo *cleanup
 	return &workers{
 		shells:   shells,
 		forwards: forwards, countForwards: countForwards,
+		tools:    startToolWindows(forwards, clusters.Known),
 		archives: archives, feeds: feeds, probe: probe,
 	}, nil
 }
@@ -1225,7 +1235,10 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 			},
 			// Download, then Restart to update (#47), and what the restart ends.
 			Installer: setupInstaller(p.installer),
-			OpenWork:  openWorkOf(w),
+			// A forward's flow UI in a window of its own (#65), where a
+			// native window can be drawn. A nil interface otherwise.
+			ToolWindows: setupToolWindows(w.tools),
+			OpenWork:    openWorkOf(w),
 			// The kubeconfig files, in precedence order, as they were read at
 			// **startup** and not as they are now.
 			//

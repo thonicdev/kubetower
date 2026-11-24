@@ -287,6 +287,11 @@ func (a *API) routes() {
 		m.HandleFunc("GET /api/forwards", a.listForwards)
 		m.HandleFunc("POST /api/forwards", a.guard(a.openForward))
 		m.HandleFunc("DELETE /api/forwards/{id}", a.guard(a.closeForward))
+		// A forward's flow UI in a desktop window (#65): only where one can
+		// be drawn.
+		if a.deps.ToolWindows != nil {
+			m.HandleFunc("POST /api/forwards/{id}/window", a.guard(a.openForwardWindow))
+		}
 	}
 
 	// The socket channels are registered without a method and depend on the
