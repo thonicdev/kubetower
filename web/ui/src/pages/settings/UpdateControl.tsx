@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router';
 
 import { btnPrimary, btnSecondary } from '../../components/buttons';
 import { Pill } from '../../components/Pill';
-import { PHASES, useUpdateInstall, type UpdateInstall } from './updateInstall';
+import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from './updateInstall';
 
 /**
  * The update's control, in the place it is drawn: the banner atop Settings and
@@ -23,7 +24,7 @@ import { PHASES, useUpdateInstall, type UpdateInstall } from './updateInstall';
  * it counts. Nothing is drawn where installing is off or not supported here.
  */
 export function UpdateControl({ prominent = false }: { prominent?: boolean }): ReactNode {
-  const { latest, install, offered, busy, timedOut, installAgain, refused, download, restart } = useUpdateInstall();
+  const { latest, install, offered, busy, timedOut, waitAgain, refused, download, restart } = useUpdateInstall();
   if (install === undefined || !install.enabled || !install.supported) return null;
   // A download in any state is drawn; idle only while a newer release exists.
   if (install.phase === 'idle' && !offered) return null;
@@ -76,7 +77,7 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <span className="text-bad" data-update-step="timed-out" title="No answer from the restarted console">
             Failed
           </span>
-          <button type="button" className={btnSecondary} disabled={busy} onClick={installAgain} data-update-wait="">
+          <button type="button" className={btnSecondary} onClick={waitAgain} data-update-wait="">
             Retry
           </button>
         </>
@@ -187,6 +188,8 @@ function Ends({ install }: { install: UpdateInstall }): ReactNode {
  *  on its way. */
 export function UpdateBanner(): ReactNode {
   const { latest, install, offered } = useUpdateInstall();
+  // The banner is on every Settings tab: it forgets a refusal for all of them.
+  useForgetRefusals(useLocation().pathname);
   if (install === undefined || !install.enabled || !install.supported) return null;
   if (!offered && install.phase === 'idle') return null;
   if (!PHASES.has(install.phase)) return null;

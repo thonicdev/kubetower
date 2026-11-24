@@ -5,7 +5,7 @@ import { ApiError, logout, useSession, useSignsBackIn } from '../api';
 import { leaveFor } from '../auth/leave';
 import { SERVER_SIGN_IN_PATH } from '../auth/next';
 import { Icon } from '../components/Icon';
-import { CountBadge, OverflowMenu, OverflowMenuItem } from '../components/OverflowMenu';
+import { OverflowMenu, OverflowMenuItem } from '../components/OverflowMenu';
 import { useUpdateBadge } from '../pages/settings/UpdateControl';
 import { useNow } from '../components/useNow';
 import { focusRing } from '../focus';
@@ -186,17 +186,15 @@ export function SessionInline(): ReactNode {
       <OverflowMenu
         label={name}
         title={data === undefined ? 'Account' : `Signed in as ${data.identity}`}
+        // An update behind the menu is its dot, described to a screen reader;
+        // the trigger's name stays the account. Settings inside carries the "1".
+        {...(badge.shown ? { flagged: true, flaggedText: 'Update available' } : {})}
         // The header's other text controls' box - `text-xs`, `py-0.5` - so the
         // name sits on their line, and drawn pressed while its menu is open.
         triggerClassName="flex min-h-6 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs pointer-coarse:min-h-11 text-muted hover:bg-panel-2 hover:text-fg aria-expanded:bg-panel-2 aria-expanded:text-fg"
         face={
           <>
             <Icon name="account" />
-            {badge.shown ? (
-              <CountBadge title={badge.title} label="Update available">
-                1
-              </CountBadge>
-            ) : null}
             <span className="max-w-40 truncate">{name}</span>
             {/* Pointing down: there is more under the name. `Menu.tsx`'s
                 chevron, turned rather than a second shape. */}

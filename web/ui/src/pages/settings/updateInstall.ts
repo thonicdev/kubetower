@@ -57,6 +57,31 @@ export const INSTALL_TIMEOUT_MS = 3 * 60_000;
 const DOWNLOAD_KEY = ['update', 'download'] as const;
 const RESTART_KEY = ['update', 'restart'] as const;
 
+/** How long a refused download or restart stays drawn. */
+export const REFUSED_MS = 10_000;
+
+/**
+ * Forget a refused download or restart once it has been read: after
+ * REFUSED_MS, and when `place` changes (another Settings tab) or the caller
+ * goes. The refusal is shared by every surface, so it is forgotten in one place.
+ */
+export function useForgetRefusals(place: string): void {
+  const cache = useQueryClient();
+  const refused = useMutationState({ filters: { mutationKey: ['update'], status: 'error' } }).length;
+  useEffect(() => {
+    if (refused === 0) return undefined;
+    const timer = setTimeout(() => forgetRefusals(cache), REFUSED_MS);
+    return () => clearTimeout(timer);
+  }, [cache, refused]);
+  // Leaving the tab, or Settings, forgets it at once.
+  useEffect(() => () => forgetRefusals(cache), [cache, place]);
+}
+
+function forgetRefusals(cache: ReturnType<typeof useQueryClient>): void {
+  const mutations = cache.getMutationCache();
+  for (const one of mutations.findAll({ mutationKey: ['update'], status: 'error' })) mutations.remove(one);
+}
+
 /** Write a fresh state into the settings read, where every surface reads it. */
 function useKeep(): (next: UpdateInstall) => void {
   const cache = useQueryClient();
@@ -132,8 +157,11 @@ export function useUpdateInstall(): {
   busy: boolean;
   /** "Installing…" has had no answer for INSTALL_TIMEOUT_MS. */
   timedOut: boolean;
-  /** Ask for the install again after a timeout, on a fresh clock. */
-  installAgain: () => void;
+  /**
+   * Wait for the restarted console again after a timeout, on a fresh clock.
+   * Never a second install: the server answers 409 to one outside `ready`.
+   */
+  waitAgain: () => void;
   /** The last download or restart refused, whichever surface asked it. */
   refused: Error | null;
   download: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
@@ -173,8 +201,7 @@ export function useUpdateInstall(): {
     mutationKey: RESTART_KEY,
     mutationFn: installUpdate,
     onSuccess: keep,
-    // Refused after a timeout, the console may be back as the new build, or
-    // still the old one: read what it says.
+    // Refused, the console may have moved on: read what it says.
     onError: reread,
   });
   // The server applies the setting even when it cannot save it (500
@@ -199,10 +226,9 @@ export function useUpdateInstall(): {
     offered,
     busy,
     timedOut,
-    installAgain: () => {
-      if (busy) return;
+    waitAgain: () => {
       clock.reset();
-      restart.mutate();
+      reread();
     },
     refused,
     download,

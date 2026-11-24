@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetKeyboardStack } from '../../keyboard/stack';
 import { mountApp } from '../../testing/harness';
-import { INSTALL_POLL_MS, INSTALL_TIMEOUT_MS, type UpdateInstall } from './updateInstall';
+import { INSTALL_POLL_MS, INSTALL_TIMEOUT_MS, REFUSED_MS, type UpdateInstall } from './updateInstall';
 
 /**
  * The update's badge, banner and steps (#48): what is drawn for each state of
@@ -298,7 +298,7 @@ describe('the poll', () => {
     expect(c.reads).not.toContain('/api/settings/update');
   });
 
-  it('draws Installing… as failed once the console has not come back in time, and Retry installs again', async () => {
+  it('draws Installing… as failed once the console has not come back in time, and Retry waits again without installing again', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const c = console({ ...idle, phase: 'installing', version: '0.1.3' });
@@ -319,8 +319,12 @@ describe('the poll', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
-      // Retry asks for the install again, on a fresh clock.
-      expect(c.sent.map((one) => one.path)).toEqual(['/api/settings/update/install']);
+      // Retry waits again on a fresh clock and reads the settings: no second
+      // install, which the server refuses outside ready.
+      expect(c.sent).toEqual([]);
+      await waitFor(() => {
+        expect(c.reads.filter((p) => p === '/api/settings/update').length).toBeGreaterThan(polls);
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -465,19 +469,9 @@ describe('the install timeout', () => {
   it('does not carry over to the next install', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      // The retry after the timeout is refused, and the console says it is
-      // ready again; the next Restart to update is a new install.
-      let asked = 0;
-      const c = console(installing, () => {
-        asked += 1;
-        return asked === 1
-          ? {
-              status: 409,
-              body: { type: 'about:blank', title: 'Conflict', status: 409, code: 'conflict', detail: 'conflict: nothing ready' },
-              now: ready,
-            }
-          : { status: 200, body: installing };
-      });
+      // After the timeout the console says it is ready again, read on
+      // Retry; the next Restart to update is a new install.
+      const c = console(installing, () => ({ status: 200, body: installing }));
       mountApp('/settings/general');
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
@@ -486,6 +480,7 @@ describe('the install timeout', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-wait]')).not.toBeNull();
       });
+      c.now.install = ready;
       fireEvent.click(control()?.querySelector('[data-update-wait]') as Element);
       await waitFor(() => {
         expect(control()?.getAttribute('data-update-control')).toBe('ready');
@@ -566,18 +561,67 @@ describe('a refusal', () => {
       expect(document.querySelectorAll('[data-update-refused]').length).toBe(2);
     });
   });
+
+  it('is forgotten on another Settings tab', async () => {
+    console(idle, () => ({
+      status: 409,
+      body: { type: 'about:blank', title: 'Conflict', status: 409, code: 'conflict', detail: 'conflict: an update is already in progress' },
+    }));
+    const { router } = mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(banner()?.querySelector<HTMLButtonElement>('[data-update-download]')?.disabled).toBe(false);
+    });
+    fireEvent.click(banner()?.querySelector('[data-update-download]') as Element);
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-refused]')).not.toBeNull();
+    });
+    await router.navigate('/settings/general');
+    await waitFor(() => {
+      expect(document.querySelector('[data-infos]')).toBeNull();
+    });
+    expect(document.querySelector('[data-update-refused]')).toBeNull();
+  });
+
+  it('is forgotten after REFUSED_MS', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      console(idle, () => ({
+        status: 409,
+        body: { type: 'about:blank', title: 'Conflict', status: 409, code: 'conflict', detail: 'conflict: an update is already in progress' },
+      }));
+      mountApp('/settings/general');
+      await waitFor(() => {
+        expect(banner()?.querySelector<HTMLButtonElement>('[data-update-download]')?.disabled).toBe(false);
+      });
+      fireEvent.click(banner()?.querySelector('[data-update-download]') as Element);
+      await waitFor(() => {
+        expect(document.querySelector('[data-update-refused]')).not.toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(REFUSED_MS / 2);
+      expect(document.querySelector('[data-update-refused]')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(REFUSED_MS);
+      await waitFor(() => {
+        expect(document.querySelector('[data-update-refused]')).toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('the account menu trigger', () => {
-  it('announces the update where nothing else on it does', async () => {
+  it('keeps the account as its name and describes the update', async () => {
     // One cluster and a way to sign back in: Settings is in the account menu.
     console(idle, undefined, 'newer', {
       '/api/clusters': { state: 'ok', items: [{ name: 'prod', label: 'prod', state: 'ok' }] },
       '/api/auth/methods': { password: false, sso: { state: 'ready' } },
     });
     mountApp('/c/prod/x/nope');
+    let trigger: HTMLElement | undefined;
     await waitFor(() => {
-      expect(screen.getByRole('img', { name: 'Update available' }).textContent).toBe('1');
+      trigger = screen.getByRole('button', { name: 'alice' });
+      expect(trigger.getAttribute('aria-describedby')).not.toBeNull();
     });
+    expect(document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Update available');
   });
 });
