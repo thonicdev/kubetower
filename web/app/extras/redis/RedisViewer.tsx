@@ -76,6 +76,10 @@ export function RedisViewer(): ReactNode {
   const data = inventory.data;
   const rows = data === undefined ? [] : data.namespaces.flatMap((ns) => ns.deployments.map((d) => ({ namespace: ns.name, d })));
   // The tile probes the member it opens: the one that answers for it.
+  // Under a filter the counts follow the grid: the deployments it shows, and
+  // no external tile.
+  const narrowed = AXES.some((a) => filters[a] !== undefined);
+  const shownCount = narrowed ? rows.filter(({ d }) => passes(readingOf(d, probes), filters)).length : rows.length;
   const unprobed = rows
     .map(({ d }) => mainMember(d))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && m.reachable && probes[m.key] === undefined);
@@ -87,15 +91,18 @@ export function RedisViewer(): ReactNode {
         <p className="text-xs text-muted" data-counts="">
           {cluster}
           {scope === '' ? null : <> · {scope}</>}
-          {data === undefined || data.redises === 0 ? null : (
+          {data === undefined || data.redises === 0 ? null : narrowed ? (
+            <>
+              {' '}
+              · {shownCount} of {plural(data.redises, 'deployment')}
+            </>
+          ) : (
             <>
               {' '}
               · {plural(data.redises, 'deployment')}, {plural(data.services, 'Service')}
             </>
           )}
-          {data === undefined || (data.external ?? []).length === 0 || AXES.some((a) => filters[a] !== undefined) ? null : (
-            <> · {(data.external ?? []).length} external</>
-          )}
+          {data === undefined || (data.external ?? []).length === 0 || narrowed ? null : <> · {(data.external ?? []).length} external</>}
         </p>
         <span className="flex-1" />
         {scope === '' ? null : (

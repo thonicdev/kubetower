@@ -9,36 +9,59 @@ import (
 
 // An ExternalName Service is a DNS alias: it has no endpoints and no pod, so
 // a pod port-forward cannot reach what it names. One whose target is a
-// managed Redis (ElastiCache, MemoryDB, Azure Cache, a Redis Cloud host) is
+// managed Redis (ElastiCache, MemoryDB, Azure Cache, Redis Cloud, Aiven) is
 // still a Redis the cluster's workloads use, so the inventory lists it, as
 // outside the cluster, with its host and port. It is never an instance: the
 // instance routes look among discovery's Instances only, so nothing dials it.
 
-// managedHost reports whether a host is an AWS ElastiCache or MemoryDB
-// endpoint, which names neither engine: `….cache.amazonaws.com`, or a
-// `memorydb` label under `amazonaws.com`.
+// managedSuffixes are the domains of a managed Redis whose hosts need not
+// name the engine: Azure Cache for Redis Enterprise, Redis Cloud (its
+// private-link hosts included, `pl-….redislabs.com`) and Aiven.
+var managedSuffixes = []string{".redisenterprise.cache.azure.net", ".redislabs.com", ".aivencloud.com"}
+
+// awsSuffixes are AWS's domains, China's included.
+var awsSuffixes = []string{".amazonaws.com", ".amazonaws.com.cn"}
+
+// managedHost reports whether a host is a managed Redis's that names neither
+// engine: one of managedSuffixes, or an AWS ElastiCache or MemoryDB endpoint
+// (`….cache.amazonaws.com`, or a `memorydb` label, under `amazonaws.com` or
+// `amazonaws.com.cn`).
 func managedHost(host string) bool {
-	if !strings.HasSuffix(host, ".amazonaws.com") {
-		return false
-	}
-	if strings.HasSuffix(host, ".cache.amazonaws.com") {
-		return true
-	}
-	for _, label := range strings.Split(host, ".") {
-		if label == "memorydb" {
+	for _, suffix := range managedSuffixes {
+		if strings.HasSuffix(host, suffix) {
 			return true
+		}
+	}
+	for _, suffix := range awsSuffixes {
+		rest, ok := strings.CutSuffix(host, suffix)
+		if !ok {
+			continue
+		}
+		if strings.HasSuffix(rest, ".cache") {
+			return true
+		}
+		for _, label := range strings.Split(rest, ".") {
+			if label == "memorydb" {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// glued are the role words a name may glue to the engine's (`redismaster`,
+// `valkeyprimary`).
+var glued = map[string]bool{"master": true, "main": true, "primary": true, "replica": true, "cache": true}
+
 // engineToken is the engine a host or a name says as a token of its own,
 // between `.`, `-` and `_` (`demo.redis.cache.windows.net`, `redis-ha`,
-// `valkey7`), never inside another word (`rediscover`, `credis`, `predis`).
+// `valkey7`), or glued to a role word (`redismain`), never inside another
+// word (`rediscover`, `credis`, `predis`).
 func engineToken(s string) string {
 	for _, token := range strings.FieldsFunc(s, func(r rune) bool { return r == '.' || r == '-' || r == '_' }) {
 		for _, engine := range engines {
-			if rest, ok := strings.CutPrefix(token, engine); ok && strings.Trim(rest, "0123456789") == "" {
+			rest, ok := strings.CutPrefix(token, engine)
+			if ok && (strings.Trim(rest, "0123456789") == "" || glued[rest]) {
 				return engine
 			}
 		}
@@ -69,8 +92,13 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 	}
 	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(service.Spec.ExternalName)), ".")
 	name := strings.ToLower(service.Name)
-	if host == "" || isTool(name) || isTool(strings.SplitN(host, ".", 2)[0]) {
+	if host == "" || isTool(name) {
 		return externalDoor{}, false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if isTool(label) {
+			return externalDoor{}, false
+		}
 	}
 	var ports []corev1.ServicePort
 	for _, port := range service.Spec.Ports {
@@ -107,10 +135,12 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 	return out, true
 }
 
-// redisLikePort is a port whose name says the engine or whose number is in
-// the range Redis and Valkey deployments use (6379 to 6399).
+// redisLikePort is a port whose name says the engine or its TLS scheme
+// (`rediss`, `valkeys`), or whose number is in the range Redis and Valkey
+// deployments use (6379 to 6399).
 func redisLikePort(port corev1.ServicePort) bool {
-	return engineToken(strings.ToLower(port.Name)) != "" || (port.Port >= 6379 && port.Port <= 6399)
+	name := strings.ToLower(port.Name)
+	return engineToken(name) != "" || name == "rediss" || name == "valkeys" || (port.Port >= 6379 && port.Port <= 6399)
 }
 
 // externals is every ExternalName Service to a Redis, in namespace then name

@@ -49,6 +49,33 @@ func TestExternalRedis(t *testing.T) {
 		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "api", Port: 443}}, 0, "its name says redis"},
 		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6390}}, 6390, "its name says redis"},
 		{"redis_main", "x.example.com", nil, 0, "its name says redis"},
+		// Managed hosts that name neither engine (the review of #75).
+		{"sessions", "demo.redisenterprise.cache.azure.net", []corev1.ServicePort{{Name: "tls", Port: 10000}}, 10000,
+			"it points at demo.redisenterprise.cache.azure.net"},
+		{"sessions", "demo.abc123.cache.amazonaws.com.cn", nil, 0, "it points at demo.abc123.cache.amazonaws.com.cn"},
+		{"sessions", "clustercfg.demo.memorydb.cn-north-1.amazonaws.com.cn", nil, 0,
+			"it points at clustercfg.demo.memorydb.cn-north-1.amazonaws.com.cn"},
+		{"sessions", "pl-12345.c1.eu-west-1.ec2.cloud.redislabs.com", []corev1.ServicePort{{Name: "tcp", Port: 12345}}, 12345,
+			"it points at pl-12345.c1.eu-west-1.ec2.cloud.redislabs.com"},
+		{"sessions", "demo-project.aivencloud.com", nil, 0, "it points at demo-project.aivencloud.com"},
+		{"sessions", "demo.cache.amazonaws.com.evil.example.com", nil, 0, ""},
+		{"sessions", "demo.redislabs.com.example.com", nil, 0, ""},
+		// A tool in any label of the host.
+		{"sessions", "app.redis-exporter.example.com", nil, 0, ""},
+		// A role glued to the engine's name, never another word.
+		{"redismain", "x.example.com", nil, 0, "its name says redis"},
+		{"redismaster", "x.example.com", nil, 0, "its name says redis"},
+		{"valkeyprimary", "x.example.com", nil, 0, "its name says valkey"},
+		{"rediscache", "x.example.com", nil, 0, "its name says redis"},
+		{"redisdata", "x.example.com", nil, 0, ""},
+		{"predis", "x.example.com", nil, 0, ""},
+		{"notredis", "x.example.com", nil, 0, ""},
+		// The port range on a name match, at its bounds, and the TLS scheme.
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6378}}, 0, "its name says redis"},
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6379}}, 6379, "it is on 6379"},
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6399}}, 6399, "its name says redis"},
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "tcp", Port: 6400}}, 0, "its name says redis"},
+		{"redis-ha", "x.example.com", []corev1.ServicePort{{Name: "rediss", Port: 443}}, 443, "its name says redis"},
 		// A managed host keeps its one port.
 		{"sessions", "demo.abc123.cache.amazonaws.com", []corev1.ServicePort{{Name: "tls", Port: 443}}, 443, "it points at demo.abc123.cache.amazonaws.com"},
 	} {
