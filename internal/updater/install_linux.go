@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-
-	"github.com/thonicdev/kubetower/textutil"
+	"strings"
 )
 
 func init() {
@@ -15,14 +13,28 @@ func init() {
 	installers[LinuxTar] = installTar
 	installers[LinuxDeb] = installPackage
 	installers[LinuxRPM] = installPackage
+	for _, kind := range []Kind{LinuxDeb, LinuxRPM} {
+		installable[kind] = func() bool {
+			_, err := packageCommand(kind, "", lookPath)
+			return err == nil
+		}
+	}
 }
+
+// lookPath and runPrivileged are exec's, held in variables for the tests.
+var (
+	lookPath      = exec.LookPath
+	runPrivileged = func(ctx context.Context, argv []string) ([]byte, error) {
+		return exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+	}
+)
 
 // installAppImage replaces the AppImage file itself, then starts it again.
 func installAppImage(_ context.Context, plan Plan) error {
 	if err := replaceFile(plan.Installation.Path, plan.File); err != nil {
 		return err
 	}
-	return restart(plan.Installation.Path, os.Args[1:])
+	return startAgain(plan.Installation.Path)
 }
 
 // installTar replaces the binary from the tar.gz's root `kubetower`.
@@ -30,22 +42,20 @@ func installTar(_ context.Context, plan Plan) error {
 	if err := replaceFromTarGz(plan.Installation.Path, plan.File, "kubetower"); err != nil {
 		return err
 	}
-	return restart(plan.Installation.Path, os.Args[1:])
+	return startAgain(plan.Installation.Path)
 }
 
 // installPackage installs the .deb or the .rpm through pkexec, which asks for
 // the password through polkit, then starts the packaged binary again.
 func installPackage(ctx context.Context, plan Plan) error {
-	argv, err := packageCommand(plan.Installation.Kind, plan.File, exec.LookPath)
+	argv, err := packageCommand(plan.Installation.Kind, plan.File, lookPath)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	if out, err := runPrivileged(ctx, argv); err != nil {
 		return pkexecFailure(err, out)
 	}
-	return restart(plan.Installation.Path, os.Args[1:])
+	return startAgain(plan.Installation.Path)
 }
 
 // pkexecFailure says why pkexec or the package manager refused, in one line.
@@ -59,5 +69,23 @@ func pkexecFailure(err error, out []byte) error {
 			return errors.New("not authorized to install packages: nothing was installed")
 		}
 	}
-	return fmt.Errorf("the package manager refused: %s", textutil.FirstLine(string(out)))
+	return fmt.Errorf("the package manager refused: %s", refusal(string(out)))
+}
+
+// refusal is the line of a package manager's output that says why: the first
+// that reads as an error ("E: ...", "error: ..."), else the last one. The first
+// lines are progress ("Reading package lists...").
+func refusal(out string) string {
+	last := ""
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "E:") || strings.HasPrefix(strings.ToLower(line), "error") {
+			return line
+		}
+		last = line
+	}
+	return last
 }
