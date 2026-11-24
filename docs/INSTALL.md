@@ -132,7 +132,19 @@ has not been tried on a real Linux desktop yet.
 
 ## Check a download
 
-Compare a file with its line in `checksums.txt`, from the directory you
+First check `checksums.txt` itself. It is signed with the project's Ed25519
+key, published as `checksums.txt.sig` beside it. With OpenSSL 3 and
+[`internal/releasesig/release-key.pem`](../internal/releasesig/release-key.pem)
+from the repository:
+
+```bash
+openssl pkeyutl -verify -rawin -pubin -inkey release-key.pem \
+  -in checksums.txt -sigfile checksums.txt.sig
+```
+
+It prints `Signature Verified Successfully`.
+
+Then compare a file with its line in `checksums.txt`, from the directory you
 downloaded both to, with the file's name in place of `<file>`.
 
 Linux:
