@@ -11,31 +11,32 @@ per release. Keep the bold lead short: it is all the dialog draws.
 
 ## Unreleased
 
+## 0.2.1 — Welcome dialog, favorite extras and update fixes
+
 ### Added
 
-- **An image's version is always visible.** Wherever a container's image is
-  shown - a Pod's and a workload's containers, the Shell's container
-  choice, the Runtime Inspector - its tag, or a short digest, is a badge of
-  its own, the repository is cut from the left (…/team/app), and the full
-  reference is on hover with a copy (#110).
-- **Storage Inspector**, a new read-only extra (key `storage`): the
-  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their orphans,
-  how full each claim is (graded at 80 and 90 %), and each claim's last
-  VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
-  Overview. Extras can now draw a tile on the Overview (#90).
+- **Welcome and What's new in a dialog.** They open in the dialog an
+  extra's About uses, instead of a band atop the page. Welcome shows the
+  KubeTower mark and a card per view (Clusters, Overview, Network Inspector,
+  Runtime Inspector, Event Intelligence, Extras), each opening its view, or
+  Settings › Extra for this cluster where that extra is off. What's new marks
+  each highlight Added or Fixed (#107, #112).
 - **Favorite extras.** A star on each extra, in Settings › Extra and on its
   row of the menu, marks it a favorite of that cluster: it joins the menu's
   Favorites section beside the favorite kinds, in the order marked, and a
   link to it sits under the cluster's head on the Overview. Kept where the
-  favorite kinds are (#111).
-
-### Changed
-
-- **Welcome and What's new open in a dialog**, the one an extra's About
-  uses, instead of a band atop the page. Welcome shows the KubeTower mark and
-  a card per view (Clusters, Overview, Network Inspector, Runtime Inspector,
-  Event Intelligence, Extras), each opening its view. What's new marks each
-  highlight Added or Fixed (#107).
+  favorite kinds are (#111, #114).
+- **An image's version is always visible.** Wherever a container's image is
+  shown - a Pod's and a workload's containers, the Shell's container
+  choice, the Runtime Inspector - its tag, or a short digest, is a badge of
+  its own after a `:` or `@`, the repository is cut from the left
+  (…/team/app), and the full reference is on hover, with a copy where there
+  is room (#110, #113, #116).
+- **Storage Inspector**, a new read-only extra (key `storage`): the
+  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their
+  orphans, how full each mounted claim is (graded at 80 and 90 %), and each
+  claim's last VolumeSnapshot; a Storage tab on claims and pods, and a tile
+  on the Overview. Extras can now draw a tile on the Overview (#90, #95).
 
 ### Fixed
 
@@ -46,7 +47,7 @@ per release. Keep the bold lead short: it is all the dialog draws.
   not stop within 90 seconds, the install goes back to Ready with the reason,
   and Install is offered again. Check now no longer loses a downloaded
   update, its Install button or the "Install updates" setting. Each install's
-  steps are written to `update-install.log` in the state folder (#96).
+  steps are written to `update-install.log` in the state folder (#96, #97).
   From 0.2.0 on Windows: close the window after Install; the setup then
   runs. <!-- highlight -->
 - **Updates on Linux and macOS say what happened.** A console that did not
@@ -57,7 +58,10 @@ per release. Keep the bold lead short: it is all the dialog draws.
   kept, so Install needs no new download. A helper waiting to restart
   KubeTower is stopped with the install, and logs its steps to
   `update-install.log`. On Windows, a second Install closes the window too,
-  and the window goes as soon as the update asks (#101).
+  and the window goes as soon as the update asks (#101, #106).
+- **Updates: an install that never came back is said after a sleep.** Once
+  the machine wakes, "Installing…" turns to Failed on the next read rather
+  than up to three minutes later (#99, #108).
 - **Runtime Inspector: a Node.js process that exited is said.** A chosen
   process that ended before its inspector opened shows `pid N exited` beside
   the ones left, or one line when none is, instead of an empty choice. A heap
@@ -66,13 +70,9 @@ per release. Keep the bold lead short: it is all the dialog draws.
 - **Event Intelligence: the held count follows the namespace.** Filtered to a
   namespace, `N of M` counts its Warnings against its own tiles, not the
   cluster's (#100, #105).
-- **What's new: "Not saved" is announced** to a screen reader, and the
-  tour's tips are reached from the keyboard (#100, #105).
+- **What's new: "Not saved" is announced** to a screen reader (#100, #105).
 - **The release notes link the signing key at the release's tag**, as they
   say, instead of on `main` (#100, #105).
-- **Updates: an install that never came back is said after a sleep.** Once
-  the machine wakes, "Installing…" turns to Failed on the next read rather
-  than up to three minutes later (#99, #108).
 
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 
