@@ -201,6 +201,16 @@ func drawNativeWindow(url string, feed windowSources, toasts bool) bool {
 		})
 	}
 
+	// The tool windows (#65) open from here on, on this thread, and close
+	// with this window.
+	if feed.Tools != nil {
+		feed.Tools.attach(windowsToolHost{console: view, tools: feed.Tools})
+		defer func() {
+			feed.Tools.attach(nil)
+			closeAllToolWindows()
+		}()
+	}
+
 	view.Navigate(url)
 	log.Printf("[kubetower] opened %s in a native window. Closing it stops KubeTower", loggableURL(url))
 	view.Run()
@@ -398,7 +408,8 @@ type coreWebView2Controller struct{ vtbl *coreWebView2ControllerVtbl }
 
 type coreWebView2ControllerVtbl struct {
 	queryInterface, addRef, release edge.ComProc
-	_                               [22]edge.ComProc // get_IsVisible ... Close
+	_                               [21]edge.ComProc // get_IsVisible ... remove_AcceleratorKeyPressed
+	close                           edge.ComProc
 	getCoreWebView2                 edge.ComProc
 }
 
@@ -427,7 +438,8 @@ type navigationStartingArgs struct{ vtbl *navigationStartingArgsVtbl }
 type navigationStartingArgsVtbl struct {
 	queryInterface, addRef, release edge.ComProc
 	getURI                          edge.ComProc
-	_                               [4]edge.ComProc // get_IsUserInitiated, get_IsRedirected, get_RequestHeaders, get_Cancel
+	getIsUserInitiated              edge.ComProc
+	_                               [3]edge.ComProc // get_IsRedirected, get_RequestHeaders, get_Cancel
 	putCancel                       edge.ComProc
 }
 
@@ -438,6 +450,8 @@ type newWindowRequestedArgsVtbl struct {
 	getURI                          edge.ComProc
 	_                               [2]edge.ComProc // put_NewWindow, get_NewWindow
 	putHandled                      edge.ComProc
+	_                               [1]edge.ComProc // get_Handled
+	getIsUserInitiated              edge.ComProc
 }
 
 // windowEvent is an event handler handed to WebView2: a COM object with IUnknown

@@ -18,6 +18,7 @@ import type {
   ExtensionSuggestion,
   Forward,
   ForwardRequest,
+  ForwardWindowRequest,
   ListPage,
   LogPage,
   LoginRequest,
@@ -1171,4 +1172,11 @@ export function openForward(body: ForwardRequest): Promise<Forward> {
 
 export function closeForward(id: string): Promise<void> {
   return request<void>(url('/api/forwards/{id}', { id }), { method: 'DELETE' });
+}
+
+/** Open a forward's flow UI in a window of the desktop's own, beside the
+ *  console's. Only where `capabilities.toolWindow` is true; the server builds
+ *  the address from the forward, so only the path on it is sent. */
+export function openForwardWindow(id: string, body: ForwardWindowRequest): Promise<void> {
+  return request<void>(url('/api/forwards/{id}/window', { id }), { method: 'POST', body });
 }

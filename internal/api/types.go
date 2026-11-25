@@ -152,6 +152,10 @@ type Capabilities struct {
 	Assistant        bool `json:"assistant"`
 	PortForward      bool `json:"portForward"`
 	PortForwardLimit int  `json:"portForwardLimit,omitempty"`
+	// ToolWindow is the console being in the desktop's own native window,
+	// which can draw a forward's flow UI in a window beside it
+	// (openForwardWindow).
+	ToolWindow bool `json:"toolWindow,omitempty"`
 	// Preferences is whether this console keeps what a person arranges - the
 	// rail, the nameplates, the column layouts, the density - which is whether
 	// the twelve preference writes are registered. False under the server

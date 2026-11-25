@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { btnSecondary, externalHref, forwardLink, forwardsQuery, openForward, queryKeys, useCapabilities, type Forward } from '@kubetower/ui';
+import { btnSecondary, externalHref, forwardLink, forwardsQuery, openForward, openForwardWindow, queryKeys, useCapabilities, type Forward } from '@kubetower/ui';
 
 import { configuredHref, tunnelSuffix, uisQuery, type FlowUI } from './data';
 
@@ -25,6 +25,7 @@ export function FlowUIButtons({ cluster, namespace }: { cluster: string; namespa
   const capabilities = useCapabilities();
   if (uis.data === undefined) return null;
   const canTunnel = capabilities.data?.portForward === true;
+  const inWindow = canTunnel && capabilities.data?.toolWindow === true;
   const shown = KINDS.flatMap(({ kind, label }) => {
     const ui = uis.data[kind];
     if (ui === undefined) return [];
@@ -37,7 +38,11 @@ export function FlowUIButtons({ cluster, namespace }: { cluster: string; namespa
       {shown.map(({ kind, label, ui }) => (
         // Keyed by the cluster too: a press on one cluster never leaves its
         // state on the next one's button.
-        <FlowUIButton key={`${cluster}/${kind}`} kind={kind} label={label} ui={ui} cluster={cluster} namespace={namespace} />
+        ui.url === undefined && ui.tunnel !== undefined && inWindow ? (
+          <FlowUIWindowButton key={`${cluster}/${kind}`} kind={kind} label={label} tunnel={ui.tunnel} cluster={cluster} namespace={namespace} />
+        ) : (
+          <FlowUIButton key={`${cluster}/${kind}`} kind={kind} label={label} ui={ui} cluster={cluster} namespace={namespace} />
+        )
       ))}
     </span>
   );
@@ -136,6 +141,98 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
       <button type="button" data-flow-ui={kind} disabled={pending} onClick={open} className={btnSecondary}>
         {pending ? `${label}…` : label}
       </button>
+      {failure === null ? null : (
+        <span role="alert" className="text-xs text-bad">
+          {failure}
+        </span>
+      )}
+    </>
+  );
+}
+
+type Tunnel = NonNullable<FlowUI['tunnel']>;
+
+/**
+ * The desktop's own native window (`capabilities.toolWindow`): the button opens
+ * the UI in a KubeTower window of its own, through the tunnel, opening the
+ * tunnel first when it is not open; ↗ beside it opens the tunnel in the default
+ * browser instead. A tunnel opened for the window closes with it.
+ */
+function FlowUIWindowButton({ kind, label, tunnel, cluster, namespace }: { kind: 'hubble' | 'whisker'; label: string; tunnel: Tunnel; cluster: string; namespace: string }): ReactNode {
+  const client = useQueryClient();
+  const [pending, setPending] = useState<'window' | 'browser' | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [focusLink, setFocusLink] = useState(false);
+  const link = useRef<HTMLAnchorElement>(null);
+  const live = useQuery(forwardsQuery(true));
+  const forward = live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
+  useEffect(() => {
+    if (focusLink && link.current !== null) {
+      link.current.focus();
+      setFocusLink(false);
+    }
+  }, [focusLink, forward?.id]);
+  const suffix = tunnelSuffix(kind, namespace);
+
+  /** The live forward, or one opened now (`opened`). */
+  const ensure = async (): Promise<{ made: Forward; opened: boolean }> => {
+    if (forward !== undefined) return { made: forward, opened: false };
+    const made = await openForward({
+      cluster,
+      namespace: tunnel.namespace,
+      service: tunnel.service,
+      remotePort: tunnel.port,
+      ...(tunnel.portName === undefined || tunnel.portName === '' ? {} : { portName: tunnel.portName }),
+      ...(tunnel.appProtocol === undefined || tunnel.appProtocol === '' ? {} : { appProtocol: tunnel.appProtocol }),
+    });
+    client.setQueryData<Forward[]>(queryKeys.forwards, (before) => [...(before ?? []).filter((one) => one.id !== made.id), made]);
+    return { made, opened: true };
+  };
+  const run = (which: 'window' | 'browser', then: (made: Forward, opened: boolean) => Promise<void>): void => {
+    setPending(which);
+    setFailure(null);
+    ensure()
+      .then(({ made, opened }) => then(made, opened))
+      .catch((error: unknown) => setFailure(error instanceof Error ? error.message : String(error)))
+      .finally(() => {
+        setPending(null);
+        void client.invalidateQueries({ queryKey: queryKeys.forwards });
+      });
+  };
+  const toWindow = (): void => run('window', (made, opened) => openForwardWindow(made.id, { tool: kind, path: suffix, closeWithWindow: opened }));
+  const toBrowser = (): void =>
+    run('browser', () => {
+      setFocusLink(true);
+      return Promise.resolve();
+    });
+  const to = forward === undefined ? undefined : externalHref(forwardLink(forward, forward.scheme ?? 'http') + suffix);
+
+  return (
+    <>
+      <span className="inline-flex gap-1">
+        <button type="button" data-flow-ui={kind} data-flow-ui-window="" disabled={pending !== null} onClick={toWindow} className={btnSecondary}>
+          {pending === 'window' ? `${label}…` : label}
+        </button>
+        {to !== undefined ? (
+          <a
+            ref={link}
+            href={to}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-flow-ui-browser={kind}
+            title={to}
+            aria-label={`${label} in browser`}
+            onClick={() => void client.invalidateQueries({ queryKey: queryKeys.forwards })}
+            className={btnSecondary}
+          >
+            ↗
+          </a>
+        ) : (
+          <button type="button" data-flow-ui-browser={kind} disabled={pending !== null} onClick={toBrowser} title="Open in browser" aria-label={`${label} in browser`} className={btnSecondary}>
+            {pending === 'browser' ? '…' : '↗'}
+          </button>
+        )}
+      </span>
       {failure === null ? null : (
         <span role="alert" className="text-xs text-bad">
           {failure}

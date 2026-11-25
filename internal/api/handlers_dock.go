@@ -234,6 +234,33 @@ func (a *API) closeForward(w http.ResponseWriter, r *http.Request) {
 	writeNoContent(w)
 }
 
+// openForwardWindow opens a forward's flow UI in a desktop window. The route
+// exists only where a.deps.ToolWindows is set.
+func (a *API) openForwardWindow(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" || len(id) > 64 {
+		badRequest(w, "an id is required")
+		return
+	}
+	var body ForwardWindowRequest
+	if !decode(w, r, maxBody, &body) {
+		return
+	}
+	if body.Tool != "hubble" && body.Tool != "whisker" {
+		badRequest(w, "tool is hubble or whisker")
+		return
+	}
+	if len(body.Path) > 1024 {
+		badRequest(w, "path is at most 1024 bytes")
+		return
+	}
+	if err := a.deps.ToolWindows.OpenToolWindow(id, body.Tool, body.Path, body.CloseWithWindow); err != nil {
+		fail(w, err)
+		return
+	}
+	writeNoContent(w)
+}
+
 // sseWriteWait bounds each write and flush of a log stream to the browser.
 const sseWriteWait = 10 * time.Second
 

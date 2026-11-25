@@ -1766,6 +1766,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forwards/{id}/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a forward's flow UI in a window of the desktop's own.
+         * @description Hubble UI or Whisker, at `path` on the forward's loopback address, in a window the desktop draws beside the console's, titled `KubeTower · <cluster> · <tool>`. Registered only where the forwards are and the desktop can draw that window; answered 409 while the console is not in the desktop's native window (`capabilities.toolWindow` false), where the page opens the forward in the browser instead. The address is built from the live forward, never taken from the page, and the window keeps no cookie or storage with the console's. With `closeWithWindow`, closing the window closes the forward unless another window shows it; a forward that goes away closes its window.
+         */
+        post: operations["openForwardWindow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1981,6 +2001,8 @@ export interface components {
              * @default false
              */
             replicated: boolean;
+            /** @description The console is in the desktop's own native window, which can draw a forward's flow UI in a window beside it (`openForwardWindow`). False in a browser, under the server profile, and on Linux. */
+            toolWindow?: boolean;
             /** @description Live forwards permitted. Process-wide, or per identity in a shared profile. */
             portForwardLimit?: number;
             /**
@@ -4622,6 +4644,17 @@ export interface components {
             forwardable?: boolean;
             reason?: components["schemas"]["Reason"];
         };
+        ForwardWindowRequest: {
+            /**
+             * @description The flow UI the window shows, which names it.
+             * @enum {string}
+             */
+            tool: "hubble" | "whisker";
+            /** @description The absolute path and query on the forward to open, `/` when absent. Never an address: a path naming a host is refused. */
+            path?: string;
+            /** @description The forward was opened for this window: closing the window closes it, unless another window shows it. */
+            closeWithWindow?: boolean;
+        };
         ForwardRequest: {
             cluster: string;
             namespace: string;
@@ -7222,6 +7255,37 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    openForwardWindow: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required on every mutation. The session is a cookie, so a cross-site form post would otherwise carry it; a custom header cannot be set cross-origin without a preflight the browser then refuses. Paired with an `Origin` check on the server - either alone has a known hole. */
+                "X-KubeTower-Request": components["parameters"]["RequestMarker"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardWindowRequest"];
+            };
+        };
+        responses: {
+            /** @description The window is opening. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
 }

@@ -121,6 +121,10 @@ type Deps struct {
 	// Installer downloads and installs an update on the desktop (#47). Nil
 	// where nothing installs, and the routes are then not registered.
 	Installer UpdateInstaller
+	// ToolWindows draws a forward's flow UI in a desktop window (#65). Nil
+	// where no native window can be drawn, and the route is then not
+	// registered.
+	ToolWindows ToolWindows
 
 	// Now is the clock, held here so the plan store's expiry can be tested at
 	// its boundaries rather than by waiting.
@@ -347,6 +351,15 @@ type UpdateInstaller interface {
 	InstallUpdate(ctx context.Context) (UpdateInstall, error)
 	// OpenUpdateFolder shows the verified file's folder, in the manual phase.
 	OpenUpdateFolder() (UpdateInstall, error)
+}
+
+// ToolWindows is the desktop's windows for a forward's flow UI. Available is
+// whether the console is in the native window now; OpenToolWindow refuses with
+// ErrConflict where it is not, ErrNotFound for a forward that is not live and
+// ErrInvalid for a tool or a path it does not take.
+type ToolWindows interface {
+	Available() bool
+	OpenToolWindow(forwardID, tool, path string, closeTunnel bool) error
 }
 
 // PreferenceStore is the read half and the twelve writes.

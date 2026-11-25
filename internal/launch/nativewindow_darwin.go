@@ -224,7 +224,10 @@ var (
 	menuTargetClass  objc.Class
 	delegateClass    objc.Class
 	webDelegateClass objc.Class
-	registerErr      error
+	// toolDelegateClass is the tool windows' window, UI and navigation
+	// delegate (#65).
+	toolDelegateClass objc.Class
+	registerErr       error
 )
 
 // nativeWindow opens the console in a window this process owns, and blocks
@@ -464,9 +467,20 @@ func drawNativeWindow(url string, feed windowSources) bool {
 	// Same order for the facts: from here a refresh is delivered, and whatever
 	// was published before is applied now.
 	applyWindowFacts()
+	// The tool windows (#65) open from here on, and close with this window.
+	if feed.Tools != nil {
+		macToolWindows.tools = feed.Tools
+		macToolWindows.byWindow = map[objc.ID]*macToolWindow{}
+		macToolWindows.byWeb = map[objc.ID]*macToolWindow{}
+		feed.Tools.attach(darwinToolHost{})
+	}
 
 	log.Printf("[kubetower] opened %s in a native window. Closing it stops KubeTower", loggableURL(url))
 	state.app.Send(sel("run"))
+	if feed.Tools != nil {
+		feed.Tools.attach(nil)
+		closeAllToolWindows()
+	}
 	interruptTarget.Store(0)
 	notices.enabled.Store(false)
 	endActivity()
@@ -574,6 +588,10 @@ func registerClasses() {
 			{Cmd: sel("kubeTowerRefresh:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID) {
 				applyWindowFacts()
 				deliverNotices()
+			}},
+			// Tool windows to draw or close (#65), relayed by darwinToolHost.
+			{Cmd: sel("kubeTowerToolWindows:"), Fn: func(_ objc.ID, _ objc.SEL, _ objc.ID) {
+				runToolWindowOps()
 			}},
 			// A lost forward (deliverNativeNotices), the end of a settle or gap
 			// (scheduled by deliverNotices), or the permission answer.
@@ -789,6 +807,240 @@ func registerClasses() {
 				showCluster(objc.Send[int](sender, hot.tag))
 			}},
 		})
+	if registerErr != nil {
+		return
+	}
+
+	// The tool windows' delegate (#65): one object for every tool window, as
+	// their window, UI and navigation delegate. Each callback finds its window
+	// in macToolWindows by the object it is handed.
+	//
+	//   - The operator closed a tool window: it is forgotten and reported, and
+	//     its tunnel follows (toolWindows.closed).
+	//   - A new window from a tool's page goes to the default browser.
+	//   - A main-frame navigation keeps to the tunnel (toolNavigation); a
+	//     download is canceled.
+	toolDelegateClass, registerErr = objc.RegisterClass(
+		"KubeTowerToolDelegate", nsObject, nil, nil, []objc.MethodDef{
+			{Cmd: sel("windowWillClose:"), Fn: func(_ objc.ID, _ objc.SEL, notification objc.ID) {
+				toolWindowWillClose(notification.Send(hot.object))
+			}},
+			{
+				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
+				Fn: func(_ objc.ID, _ objc.SEL, _, _, action, _ objc.ID) objc.ID {
+					handOutOfToolWindow(action)
+					return 0
+				},
+			},
+			{
+				Cmd: sel("webView:decidePolicyForNavigationAction:decisionHandler:"),
+				Fn: func(_ objc.ID, _ objc.SEL, webView, action, decide objc.ID) {
+					callBlock(decide, decideToolNavigation(webView, action))
+				},
+			},
+		})
+}
+
+// --- Tool windows (#65) ------------------------------------------------------
+//
+// toolwindow.go decides; this draws. Each window is an NSWindow holding a
+// WKWebView whose website data store is non-persistent and its own: no
+// cookie, storage or cache is shared with the console's web view, so nothing
+// the console set reaches the tool's origin. Main thread only, through hot,
+// since everything here runs from kubeTowerToolWindows: or a delegate.
+
+// darwinToolHost is toolWindowHost on macOS: each call is queued and the main
+// thread asked to run the queue, through the same door as refreshNativeWindow.
+type darwinToolHost struct{}
+
+func (darwinToolHost) openToolWindow(id int, target toolWindowTarget) {
+	queueToolWindowOp(toolWindowOp{id: id, target: target})
+}
+
+func (darwinToolHost) closeToolWindow(id int) {
+	queueToolWindowOp(toolWindowOp{id: id, close: true})
+}
+
+type toolWindowOp struct {
+	id     int
+	target toolWindowTarget
+	close  bool
+}
+
+// toolWindowOps is the queue between any goroutine and the main thread.
+var toolWindowOps struct {
+	mu      sync.Mutex
+	pending []toolWindowOp
+}
+
+func queueToolWindowOp(op toolWindowOp) {
+	toolWindowOps.mu.Lock()
+	toolWindowOps.pending = append(toolWindowOps.pending, op)
+	toolWindowOps.mu.Unlock()
+	if target := interruptTarget.Load(); target != 0 {
+		objc.ID(target).Send(hot.performOnMain, hot.toolWindows, objc.ID(0), false)
+	}
+}
+
+// macToolWindow is one drawn window.
+type macToolWindow struct {
+	id      int
+	origin  string
+	webView objc.ID
+}
+
+// macToolWindows is every drawn tool window, by window and by web view. Main
+// thread only.
+var macToolWindows struct {
+	tools    *toolWindows
+	byWindow map[objc.ID]*macToolWindow
+	byWeb    map[objc.ID]*macToolWindow
+}
+
+// runToolWindowOps draws and closes what was queued.
+func runToolWindowOps() {
+	toolWindowOps.mu.Lock()
+	ops := toolWindowOps.pending
+	toolWindowOps.pending = nil
+	toolWindowOps.mu.Unlock()
+	for _, op := range ops {
+		if op.close {
+			for window, w := range macToolWindows.byWindow {
+				if w.id == op.id {
+					window.Send(hot.close)
+				}
+			}
+			continue
+		}
+		drawToolWindow(op.id, op.target)
+	}
+}
+
+// drawToolWindow draws one tool window and loads its tunnel.
+func drawToolWindow(id int, target toolWindowTarget) {
+	tools := macToolWindows.tools
+	if tools == nil || hot.toolDelegate == 0 || hot.wkWebView == 0 {
+		if tools != nil {
+			tools.closed(id)
+		}
+		return
+	}
+	nsurl := objc.ID(hot.nsURL).Send(hot.urlWithString, nsStringHot(target.URL))
+	if nsurl == 0 {
+		log.Printf("[kubetower] the tool window for %s was not drawn: the address does not parse", loggableURL(target.URL))
+		tools.closed(id)
+		return
+	}
+	configuration := objc.ID(hot.wkWebViewConfiguration).Send(hot.alloc).Send(hot.init)
+	configuration.Send(hot.setWebsiteDataStore, objc.ID(hot.wkWebsiteDataStore).Send(hot.nonPersistentDataStore))
+	webView := objc.ID(hot.wkWebView).Send(hot.alloc).
+		Send(hot.initWithFrameConfiguration, rectOf(toolWindowWidth, toolWindowHeight), configuration)
+	configuration.Send(hot.release)
+	webView.Send(hot.setUIDelegate, hot.toolDelegate)
+	webView.Send(hot.setNavigationDelegate, hot.toolDelegate)
+
+	// Released when closed, AppKit's default for a window made this way; the
+	// web view is the window's once it is its content view.
+	window := objc.ID(hot.nsWindow).Send(hot.alloc).
+		Send(hot.initContentRect, rectOf(toolWindowWidth, toolWindowHeight),
+			styleMaskTitled|styleMaskClosable|styleMaskMiniaturizable|styleMaskResizable,
+			backingStoreBuffered, false)
+	window.Send(hot.setTitle, nsStringHot(target.Title))
+	window.Send(hot.setContentView, webView)
+	webView.Send(hot.release)
+	window.Send(hot.setAppearance, hot.darkAppearance)
+	window.Send(hot.setDelegate, hot.toolDelegate)
+	window.Send(hot.center)
+
+	w := &macToolWindow{id: id, origin: target.Origin, webView: webView}
+	macToolWindows.byWindow[window] = w
+	macToolWindows.byWeb[webView] = w
+	webView.Send(hot.loadRequest, objc.ID(hot.nsURLRequest).Send(hot.requestWithURL, nsurl))
+	window.Send(hot.makeKeyAndOrderFront, objc.ID(0))
+	log.Printf("[kubetower] opened %s in a tool window, %q", loggableURL(target.URL), target.Title)
+}
+
+// toolWindowWillClose forgets a closing tool window and reports it. Its web
+// view lets go of the delegate first, so nothing calls back into a window
+// that is gone.
+func toolWindowWillClose(window objc.ID) {
+	w, ok := macToolWindows.byWindow[window]
+	if !ok {
+		return
+	}
+	delete(macToolWindows.byWindow, window)
+	delete(macToolWindows.byWeb, w.webView)
+	w.webView.Send(hot.setNavigationDelegate, objc.ID(0))
+	w.webView.Send(hot.setUIDelegate, objc.ID(0))
+	window.Send(hot.setDelegate, objc.ID(0))
+	if macToolWindows.tools != nil {
+		macToolWindows.tools.closed(w.id)
+	}
+}
+
+// decideToolNavigation is the request-side policy of a tool window.
+func decideToolNavigation(webView, action objc.ID) uintptr {
+	if objc.Send[bool](action, hot.shouldPerformDownload) {
+		return policyCancel
+	}
+	frame := action.Send(hot.targetFrame)
+	if frame == 0 || !objc.Send[bool](frame, hot.isMainFrame) {
+		return policyAllow
+	}
+	w, ok := macToolWindows.byWeb[webView]
+	if !ok {
+		return policyCancel
+	}
+	target := actionURL(action)
+	allow, handOut := toolNavigation(w.origin, target)
+	if allow {
+		return policyAllow
+	}
+	if handOut {
+		handOutOfToolWindow(action)
+	}
+	return policyCancel
+}
+
+// WKNavigationType: a link clicked and a form sent are the operator's; a
+// script's window.open or location is WKNavigationTypeOther (-1).
+const (
+	navigationTypeLinkActivated = 0
+	navigationTypeFormSubmitted = 1
+)
+
+// handOutOfToolWindow opens the action's address in the default browser if
+// toolHandOuts allows it, and logs why not otherwise.
+func handOutOfToolWindow(action objc.ID) {
+	target := actionURL(action)
+	kind := objc.Send[int](action, hot.navigationType)
+	user := (kind == navigationTypeLinkActivated || kind == navigationTypeFormSubmitted) && personMadeIt()
+	if ok, why := toolHandOuts.allow(target, user, time.Now()); !ok {
+		log.Printf("[kubetower] a tool window's link was not opened in the browser: %s", why)
+		return
+	}
+	openOutside(target)
+}
+
+// personMadeIt says whether AppKit's current event is a click or a key press
+// made just now (aRealGesture), for a script's a.click() is reported as an
+// activated link too. Called from the navigation callback, so it uses hot only.
+func personMadeIt() bool {
+	event := nativeWindowState.app.Send(hot.currentEvent)
+	if event == 0 {
+		return false
+	}
+	now := objc.Send[float64](objc.ID(hot.nsProcessInfo).Send(hot.processInfo), hot.systemUptime)
+	at := objc.Send[float64](event, hot.timestamp)
+	return aRealGesture(objc.Send[int](event, hot.eventType), time.Duration((now-at)*float64(time.Second)))
+}
+
+// closeAllToolWindows closes every tool window: the console's window has
+// closed. Main thread, after the event loop returned.
+func closeAllToolWindows() {
+	for window := range macToolWindows.byWindow {
+		window.Send(hot.close)
+	}
 }
 
 // followPageTitle puts the page's title on the window, which the title bar, the
@@ -1355,6 +1607,19 @@ var hot struct {
 	activityReason                                      objc.ID // activityReason, as an NSString
 	aboutOptions                                        objc.ID // aboutPanel(), as the panel's NSDictionary
 	quitAnswer                                          objc.Block
+
+	// The tool windows (#65): drawn and closed from kubeTowerToolWindows:.
+	toolWindows, object, nonPersistentDataStore           objc.SEL
+	setWebsiteDataStore, initWithFrameConfiguration       objc.SEL
+	setUIDelegate, setNavigationDelegate, initContentRect objc.SEL
+	setContentView, setAppearance, center, loadRequest    objc.SEL
+	requestWithURL, close, navigationType                 objc.SEL
+	currentEvent, eventType, timestamp                    objc.SEL
+	systemUptime                                          objc.SEL
+	wkWebViewConfiguration, wkWebsiteDataStore, wkWebView objc.Class
+	nsWindow, nsURLRequest                                objc.Class
+	darkAppearance                                        objc.ID // NSAppearanceNameDarkAqua
+	toolDelegate                                          objc.ID // a KubeTowerToolDelegate, for every tool window
 }
 
 // warmHotPath fills hot before the window is on screen, so before any callback
@@ -1471,6 +1736,36 @@ func warmHotPath() {
 	}
 	if hot.noticeLinkKey == 0 {
 		hot.noticeLinkKey = nsString(noticeLinkKey).Send(sel("retain"))
+	}
+	hot.toolWindows = sel("kubeTowerToolWindows:")
+	hot.object = sel("object")
+	hot.nonPersistentDataStore = sel("nonPersistentDataStore")
+	hot.setWebsiteDataStore = sel("setWebsiteDataStore:")
+	hot.initWithFrameConfiguration = sel("initWithFrame:configuration:")
+	hot.setUIDelegate = sel("setUIDelegate:")
+	hot.setNavigationDelegate = sel("setNavigationDelegate:")
+	hot.initContentRect = sel("initWithContentRect:styleMask:backing:defer:")
+	hot.setContentView = sel("setContentView:")
+	hot.setAppearance = sel("setAppearance:")
+	hot.center = sel("center")
+	hot.loadRequest = sel("loadRequest:")
+	hot.requestWithURL = sel("requestWithURL:")
+	hot.close = sel("close")
+	hot.navigationType = sel("navigationType")
+	hot.currentEvent = sel("currentEvent")
+	hot.eventType = sel("type")
+	hot.timestamp = sel("timestamp")
+	hot.systemUptime = sel("systemUptime")
+	hot.wkWebViewConfiguration = objc.GetClass("WKWebViewConfiguration")
+	hot.wkWebsiteDataStore = objc.GetClass("WKWebsiteDataStore")
+	hot.wkWebView = objc.GetClass("WKWebView")
+	hot.nsWindow = objc.GetClass("NSWindow")
+	hot.nsURLRequest = objc.GetClass("NSURLRequest")
+	if hot.darkAppearance == 0 {
+		hot.darkAppearance = class("NSAppearance").Send(sel("appearanceNamed:"), nsString("NSAppearanceNameDarkAqua")).Send(sel("retain"))
+	}
+	if hot.toolDelegate == 0 && toolDelegateClass != 0 {
+		hot.toolDelegate = objc.ID(toolDelegateClass).Send(sel("alloc")).Send(sel("init"))
 	}
 }
 
