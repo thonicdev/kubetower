@@ -4,10 +4,10 @@ Every release of KubeTower, newest first. Versions are bare semver tags
 (`0.1.0`, never `v0.1.0`); the binaries, packages and image of a version are
 built from its tag.
 
-This file is built into the console, whose What's new banner shows each
+This file is built into the console, whose What's new dialog shows each
 release's highlights: every entry under `### Added`, and an entry under
 `### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
-per release. Keep the bold lead short: it is all the banner draws.
+per release. Keep the bold lead short: it is all the dialog draws.
 
 ## Unreleased
 
@@ -28,6 +28,14 @@ per release. Keep the bold lead short: it is all the banner draws.
   Favorites section beside the favorite kinds, in the order marked, and a
   link to it sits under the cluster's head on the Overview. Kept where the
   favorite kinds are (#111).
+
+### Changed
+
+- **Welcome and What's new open in a dialog**, the one an extra's About
+  uses, instead of a band atop the page. Welcome shows the KubeTower mark and
+  a card per view (Clusters, Overview, Network Inspector, Runtime Inspector,
+  Event Intelligence, Extras), each opening its view. What's new marks each
+  highlight Added or Fixed (#107).
 
 ### Fixed
 

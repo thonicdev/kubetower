@@ -7,7 +7,7 @@ import { useSyncExternalStore } from 'react';
  * `eslint.config.js`.
  *
  * Storage may be refused (a private window, a policy): then nothing was seen
- * that this page can know of, and a closed banner stays closed until reload.
+ * that this page can know of, and a closed dialog stays closed until reload.
  */
 
 const KEY = 'kubetower.seenVersion';

@@ -9,9 +9,15 @@ import changelog from 'virtual:kubetower-changelog';
  * changelog's own short title) and at most MAX_HIGHLIGHTS per release.
  */
 
+/** One highlight: its bold lead, and the section it came from (#107). */
+export interface Highlight {
+  title: string;
+  kind: 'added' | 'fixed';
+}
+
 export interface Release {
   version: string;
-  highlights: string[];
+  highlights: Highlight[];
 }
 
 export const MAX_HIGHLIGHTS = 5;
@@ -32,7 +38,7 @@ export function parseChangelog(text: string): Release[] {
     const counts = section === 'added' || (section === 'fixed' && whole.includes(MARK));
     if (!counts || release.highlights.length >= MAX_HIGHLIGHTS) return;
     const title = titleOf(whole);
-    if (title !== '') release.highlights.push(title);
+    if (title !== '') release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed' });
   };
   for (const line of text.split(/\r?\n/)) {
     const heading = HEADING.exec(line);
@@ -144,7 +150,7 @@ export function highlightsBetween(releases: readonly Release[], seen: string | u
 /** This build's changelog. */
 export let RELEASES: readonly Release[] = parseChangelog(changelog);
 
-/** The layout harness's seam: draws the banner from fake releases. */
+/** The layout harness's seam: draws the dialog from fake releases. */
 export function replaceReleases(releases: readonly Release[]): void {
   RELEASES = releases;
 }
