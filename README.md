@@ -30,6 +30,7 @@ Optional pages for what only some clusters run. All are **off by default** and t
 | <img src="web/app/extras/cnpg/assets/preview.png" alt="Postgres (CNPG)" width="200"> | **Postgres (CNPG)** | CloudNativePG clusters at a glance: primary, replicas, failovers, backups, certificates; its statistics and tables, read-only. |
 | <img src="web/app/extras/redis/assets/preview.png" alt="Redis viewer" width="200"> | **Redis viewer** | Keys, values and memory of Redis and Valkey, read-only, through a reviewed port-forward. |
 | <img src="web/app/extras/security/assets/preview.png" alt="Security Center" width="200"> | **Security Center** | Trivy Operator findings by severity, per workload and pod. |
+| <img src="web/app/extras/storage/assets/preview.png" alt="Storage Inspector" width="200"> | **Storage Inspector** | Volumes, claims and storage classes: orphans, how full each claim is, the last snapshot. Read-only. |
 
 **Planned:** a general Database viewer (MySQL, MariaDB, MongoDB), on the model of the Redis viewer.
 

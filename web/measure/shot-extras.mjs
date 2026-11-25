@@ -66,6 +66,7 @@ const EXTRAS = {
   },
   cnpg: { ready: ['[data-cluster-card]'] },
   security: { ready: ['[data-workload-row]', '[data-namespaces] [data-ns]'] },
+  storage: { ready: ['[data-level-strip]', 'table tbody tr'] },
 };
 
 /**
@@ -78,6 +79,12 @@ const EXTRAS = {
 const MORE = {
   // The Certificate tab of an Ingress with two certificates, issuance chains drawn.
   certmanager: [{ scene: 'extra-certmanager-tab', file: 'chain.png', ready: ['[data-chain]'], element: '[data-shot]' }],
+  // Every orphan by kind; the Storage tab of a claim, alone; the tile on the Overview.
+  storage: [
+    { scene: 'extra-storage-orphans', file: 'orphans.png', ready: ['[data-orphans] [data-volume]'] },
+    { scene: 'extra-storage-claim-tab', file: 'claim-tab.png', ready: ['[data-storage-claim] [data-snapshot]'], element: '[data-shot]' },
+    { scene: 'console-overview-storage', file: 'overview-tile.png', ready: ['[data-extra-tile="storage"]'], element: '[data-extra-tiles]' },
+  ],
   // The Argo CD tab of an OutOfSync Deployment, alone.
   argocd: [{ scene: 'extra-argocd-tab', file: 'tab.png', ready: ['[data-argo-verdict]'], element: '[data-shot]' }],
   // One namespace's suggestions, with the commands opened.

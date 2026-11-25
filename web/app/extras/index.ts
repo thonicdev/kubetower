@@ -12,6 +12,7 @@ import { pending } from './pending';
 import { redis } from './redis';
 import { runtimeInspector } from './runtime';
 import { security } from './security';
+import { storage } from './storage';
 
 /**
  * Every extra this console ships, in the order `createApp` mounts them.
@@ -24,4 +25,4 @@ import { security } from './security';
  * `routes.test.ts` beside it checks this same list, so an extra added here is
  * checked without anyone remembering to add it there.
  */
-export const extras: Extension[] = [certmanager, argocd, events, dns, runtimeInspector, kubeadjust, kubecron, netinspect, pending, cnpg, redis, security];
+export const extras: Extension[] = [certmanager, argocd, events, dns, runtimeInspector, kubeadjust, kubecron, netinspect, pending, cnpg, redis, security, storage];

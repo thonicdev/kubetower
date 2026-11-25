@@ -11,6 +11,14 @@ per release. Keep the bold lead short: it is all the banner draws.
 
 ## Unreleased
 
+### Added
+
+- **Storage Inspector**, a new read-only extra (key `storage`): the
+  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their orphans,
+  how full each claim is (graded at 80 and 90 %), and each claim's last
+  VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
+  Overview. Extras can now draw a tile on the Overview (#90).
+
 ### Changed
 
 - **The JVM Inspector is the Runtime Inspector**, key `runtime`. Nothing to

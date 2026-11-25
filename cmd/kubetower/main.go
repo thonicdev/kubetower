@@ -25,6 +25,7 @@ import (
 	"github.com/thonicdev/kubetower/extras/redis"
 	"github.com/thonicdev/kubetower/extras/runtimeinspect"
 	"github.com/thonicdev/kubetower/extras/security"
+	"github.com/thonicdev/kubetower/extras/storage"
 )
 
 // extras is what this binary carries, in menu order. It names the same keys as
@@ -44,6 +45,7 @@ func extras() []extension.Extension {
 		cnpg.New(),
 		redis.New(),
 		security.New(),
+		storage.New(),
 	}
 }
 
