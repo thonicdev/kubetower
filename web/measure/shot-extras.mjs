@@ -46,7 +46,7 @@ const EXTRAS = {
   runtime: { ready: ['[data-jvm-container]'] },
   netinspect: { ready: ['[data-matrix] [data-cell], [data-mini-graph]', '[data-verdict], [data-direction]'] },
   pending: { ready: ['[data-node-bars]'] },
-  events: { ready: ['[data-timeline] [data-bar]', '[data-cause]'] },
+  events: { ready: ['[data-timeline] [data-strip]', '[data-cause]'] },
   certmanager: { ready: ['[data-strip]', 'table tbody tr'] },
   dns: { ready: ['[data-dns] [data-tile]', '[data-bar]'] },
   redis: {
@@ -203,7 +203,7 @@ const MORE = {
   ],
   // The Activity tab of a crash-looping pod, with the extra on, at a panel's width.
   events: [
-    { scene: 'console-activity-on', file: 'activity.png', ready: ['[data-activity-view] [data-bar]', '[data-activity-view] [data-cause]', '[data-activity="change"]'], viewport: { width: 720, height: 900 } },
+    { scene: 'console-activity-on', file: 'activity.png', ready: ['[data-activity-view] [data-strip]', '[data-activity-view] [data-cause]', '[data-activity="change"]'], viewport: { width: 720, height: 900 } },
   ],
   // The pod view again at the width of a pod's panel, where its tab draws it.
   pending: [

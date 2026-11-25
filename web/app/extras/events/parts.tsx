@@ -1,41 +1,51 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { focusRing, objectPath } from '@kubetower/ui';
+import { btnToggle, focusRing, objectPath } from '@kubetower/ui';
 
 import { WINDOWS, ago, type Answer, type Cause, type Change, type Section, type Tiles as TilesData, type Window } from './data';
+
+export type { Focus } from './model';
 import {
+  BINS,
   CHANGE_TONE,
+  PAGE_WORKLOADS,
   TILE_HINT,
   TILE_KEYS,
   TILE_LABEL,
   axisOf,
-  bars,
+  binOf,
+  binSpan,
   causeKey,
+  causeLit,
   changeLabel,
-  changeShort,
+  changeLit,
   changeOf,
+  changeShort,
   changeTitle,
+  correlations,
+  figure,
+  groupNodes,
+  heldOf,
+  laneLit,
+  lanesOf,
+  nodeGroupLabel,
   objectsWord,
   options,
   pluralOf,
   spot,
   ticks,
   tileWord,
+  workloadsOf,
   type Axis,
-  type Bar,
   type Filters,
+  type Focus,
+  type NodeGroup,
   type TileKey,
 } from './model';
 
 /** How many causes the list draws before "more", and how many objects one cause unfolds to. */
 export const PAGE_CAUSES = 100;
 export const PAGE_OBJECTS = 50;
-const LANE_PX = 18;
-const LABEL_ROW_PX = 16;
-/** Width of a label and of the plot, in pixels, for staggering the labels; an estimate, the layout is fluid. */
-const LABEL_CHAR_PX = 6.5;
-const PLOT_PX = 700;
-const PLOT_COMPACT_PX = 420;
 
 /** The window's words, as the other extras spell a period. */
 const WINDOW_WORD: Readonly<Record<Window, string>> = { '15m': '15 min', '1h': '1 h', '3h': '3 h' };
@@ -111,17 +121,12 @@ export function Sources({ answer }: { answer: Answer }): ReactNode {
     ['Nodes', s.nodes],
   ] as const;
   const shown = notes.filter(([, sec]) => !(sec.state === 'read' && sec.complete));
-  if (shown.length === 0 && !answer.truncated) return null;
+  if (shown.length === 0) return null;
   return (
     <div data-sources="" className="flex flex-wrap gap-x-3 gap-y-1">
       {notes.map(([what, sec]) => (
         <SourceNote key={what} what={what} section={sec} />
       ))}
-      {answer.truncated ? (
-        <span data-truncated="" className="text-xs text-muted" title="The answer was cut at its limits: the busiest are kept">
-          truncated
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -239,9 +244,6 @@ export function Controls({
   );
 }
 
-/** What is lit: a change, or a cause. Nothing lit means nothing dims. */
-export type Focus = { kind: 'change' | 'cause'; id: string } | null;
-
 export interface Highlight {
   focus: Focus;
   hover: (next: Focus) => void;
@@ -269,217 +271,366 @@ export function useHighlight(): Highlight {
   return { focus: hovered ?? pinned, hover: setHovered, pin, clear };
 }
 
-const same = (a: Focus, kind: 'change' | 'cause', id: string): boolean => a !== null && a.kind === kind && a.id === id;
+const same = (a: Focus, kind: NonNullable<Focus>['kind'], id: string): boolean => a !== null && a.kind === kind && a.id === id;
 
-/**
- * Labels in rows, deterministically. A label spans from its dot to its end (to
- * the dot, when flipped), and a change's line runs down from its dot's row. A
- * mark takes the first row where its span meets no other label in that row, no
- * lower mark's line crosses its label, and no line of its own crosses the
- * label of a mark below it.
- */
-export function staggered(marks: readonly { id: string; at: number; width: number; flip: boolean }[]): Map<string, number> {
-  const placed: { at: number; from: number; to: number; row: number }[] = [];
-  const out = new Map<string, number>();
-  for (const m of [...marks].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))) {
-    const from = m.flip ? m.at - m.width : m.at;
-    const to = m.flip ? m.at : m.at + m.width;
-    const overlaps = (row: number): boolean => placed.some((p) => p.row === row && p.from < to && from < p.to);
-    const crosses = (row: number): boolean =>
-      placed.some((p) => (p.row > row && p.from <= m.at && m.at <= p.to) || (p.row < row && from <= p.at && p.at <= to));
-    // A line runs from its label down to the bars, so a label whose span covers an
-    // earlier line may have no clean row at all: past the rows already used, fall
-    // back to the first row where no label overlaps it.
-    let row = 0;
-    while (row <= placed.length && (overlaps(row) || crosses(row))) row++;
-    if (row > placed.length) {
-      row = 0;
-      while (overlaps(row)) row++;
-    }
-    placed.push({ at: m.at, from, to, row });
-    out.set(m.id, row);
-  }
-  return out;
+/** A cell's figure: "<1" for a sliver, "≈ 37" where the spread split an Event. */
+function approx(v: number): string {
+  if (v > 0 && v < 1) return '<1';
+  return Number.isInteger(v) ? figure(v) : `≈ ${figure(v)}`;
 }
 
-function ChangeMark({
-  change,
-  answer,
-  axis,
-  row,
-  flip,
-  dim,
-  lit,
-  highlight,
-}: {
-  change: Change;
-  answer: Answer;
-  axis: Axis;
-  row: number;
-  flip: boolean;
-  dim: boolean;
-  lit: boolean;
-  highlight: Highlight;
-}): ReactNode {
-  const pct = spot(Date.parse(change.time), axis);
-  const id = change.id;
+/** Why a cell holds a fraction: the answer has each object's first and last Event, not each Event's time. */
+const SPREAD = 'Spread evenly from each object’s first to last Event';
+
+/** A row's cells, darker where its Events are more; each cell's hover says how many, and when. */
+function Strip({ bins, max, warning, axis }: { bins: readonly number[]; max: number; warning: boolean; axis: Axis }): ReactNode {
+  return (
+    <div data-strip="" className="flex h-3 min-w-0 flex-1 gap-px">
+      {bins.map((v, i) => (
+        <span
+          key={i}
+          data-cell={i}
+          data-count={v === 0 ? undefined : Math.round(v * 100) / 100}
+          title={v === 0 ? binSpan(i, axis) : `${approx(v)} · ${binSpan(i, axis)}\n${SPREAD}`}
+          className={`h-full min-w-0 flex-1 rounded-xs ${v === 0 ? 'bg-panel-2' : warning ? 'bg-warn' : 'bg-muted'}`}
+          style={v === 0 ? undefined : { opacity: 0.2 + 0.8 * Math.sqrt(v / max) }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** The toggle that adds the Normal Events back, with how many there are. */
+export function NormalToggle({ on, count, onToggle }: { on: boolean; count: number; onToggle: () => void }): ReactNode {
+  if (count === 0) return null;
   return (
     <button
       type="button"
-      data-change={id}
-      data-kind={change.kind}
-      data-dim={dim}
-      data-lit={lit}
-      aria-pressed={same(highlight.focus, 'change', id)}
-      title={changeTitle(change, ago(change.time, answer.generatedAt))}
-      style={{ left: `${String(pct)}%`, top: `${String(row * LABEL_ROW_PX)}px` }}
-      onMouseEnter={() => highlight.hover({ kind: 'change', id })}
-      onMouseLeave={() => highlight.hover(null)}
-      onClick={() => highlight.pin({ kind: 'change', id })}
-      className={`absolute z-10 flex h-4 items-center gap-1 whitespace-nowrap rounded-sm px-1 text-2xs leading-none ${flip ? '-translate-x-full flex-row-reverse' : ''} ${dim ? 'opacity-25' : ''} ${lit ? 'bg-panel-2 text-fg' : 'bg-panel text-muted hover:text-fg'} ${focusRing}`}
+      data-normal-toggle=""
+      aria-pressed={on}
+      onClick={onToggle}
+      className={`${btnToggle(on)} gap-1.5`}
     >
-      <span className={`size-2 shrink-0 rounded-full ${CHANGE_TONE[change.kind]}`} />
-      {changeShort(change)}
+      <span className={`size-2 rounded-full ${on ? 'bg-muted' : 'border border-muted'}`} />
+      Normal
+      <span className="tabular-nums text-muted">{figure(count)}</span>
     </button>
   );
 }
 
 /**
- * The timeline: a row of labeled changes over lanes, one per object and
- * cause, named at the left and as thick as their Events are dense. A change
- * runs down through the lanes as a line; the axis starts where the activity
- * does.
+ * The changes Warnings came after, a card each, most Events first: what
+ * changed, the reason it brought most, and the others. A card lights its rows
+ * and its markers, as a change's marker does.
+ */
+export function Correlations({ answer, causes, highlight, compact = false }: { answer: Answer; causes: readonly Cause[]; highlight: Highlight; compact?: boolean }): ReactNode {
+  const [more, setMore] = useState(false);
+  const list = useMemo(() => correlations(causes, answer.changes, groupNodes(answer.changes).groups), [causes, answer.changes]);
+  if (list.length === 0) return null;
+  const first = compact ? 2 : 3;
+  const shown = more ? list : list.slice(0, first);
+  const { focus } = highlight;
+  return (
+    <section aria-label="Correlations" data-correlations="" className="flex flex-wrap gap-2">
+      {shown.map((c) => {
+        const lead = c.reasons[0];
+        const on = same(focus, 'correlation', c.id);
+        const lit = focus !== null && c.changes.some((id) => changeLit(focus, id, causes));
+        const dim = focus !== null && !lit && !on;
+        const to: NonNullable<Focus> = { kind: 'correlation', id: c.id, ids: c.changes };
+        return (
+          <button
+            key={c.id}
+            type="button"
+            data-correlation={c.id}
+            data-lit={lit || on}
+            aria-pressed={on}
+            title={`${c.label} → ${c.reasons.map((r) => `${r.reason} × ${String(r.count)}`).join(' · ')}`}
+            onMouseEnter={() => highlight.hover(to)}
+            onMouseLeave={() => highlight.hover(null)}
+            onClick={() => highlight.pin(to)}
+            className={`flex min-w-0 grow basis-64 flex-col gap-1 rounded-md border px-3 py-2 text-left ${on || lit ? 'border-accent bg-panel-2' : 'border-line bg-panel hover:bg-panel-2'} ${dim ? 'opacity-50' : ''} ${focusRing}`}
+          >
+            <span className="flex min-w-0 items-center gap-2 text-xs text-muted">
+              <span className={`size-2.5 shrink-0 rounded-full ${CHANGE_TONE[c.kind]}`} />
+              <CutName name={c.label} />
+            </span>
+            {lead === undefined ? null : (
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="text-xl font-semibold tabular-nums text-warn">{figure(lead.count)}</span>
+                <span className="truncate text-sm font-semibold">{lead.reason}</span>
+                <span className="shrink-0 text-xs text-muted">{objectsWord({ objects: c.objects, kinds: [] })}</span>
+              </span>
+            )}
+            {c.reasons.length > 1 ? (
+              <span className="flex flex-wrap gap-1">
+                {c.reasons.slice(1).map((r) => (
+                  <span key={r.reason} className="rounded bg-panel-2 px-1.5 py-0.5 text-2xs tabular-nums text-muted">
+                    {r.reason} {figure(r.count)}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+      {list.length > first && !more ? (
+        <button type="button" className={`self-center text-xs text-accent underline ${focusRing}`} onClick={() => setMore(true)}>
+          +{list.length - first}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+/** A row of the grid: its name at the left, its cells, its total at the right. */
+function Row({ gutter, name, total, children, ...rest }: { gutter: string; name: ReactNode; total: ReactNode; children: ReactNode } & Record<`data-${string}`, string | boolean | undefined> & { className?: string; title?: string }): ReactNode {
+  const { className = '', title, ...data } = rest;
+  return (
+    <div {...data} title={title} className={`flex h-5 items-center ${className}`}>
+      <span className={`${gutter} flex min-w-0 shrink-0 items-center gap-1.5 pr-2 text-xs`}>{name}</span>
+      {children}
+      <span className="w-12 shrink-0 text-right text-xs tabular-nums">{total}</span>
+    </div>
+  );
+}
+
+/**
+ * The timeline: a grid of cells over the window, one row of the nodes that
+ * came and went, one of the other changes, then one row per workload that
+ * unfolds to its reasons, each darker where its Events are dense, with its
+ * total at the end. The axis starts where the activity does.
  */
 export function Timeline({
   answer,
   causes,
   highlight,
+  normal,
   compact = false,
 }: {
   answer: Answer;
   causes: readonly Cause[];
   highlight: Highlight;
-  /** A narrow container, a panel's: a shorter name column and a plot sized for it. */
+  /** The Normal toggle, where the Type filter has not chosen. */
+  normal?: { on: boolean; count: number; onToggle: () => void } | undefined;
+  /** A narrow container, a panel's: a shorter name column. */
   compact?: boolean;
 }): ReactNode {
-  // The names' column: narrower on a phone, so the plot keeps its width.
-  const gutter = compact ? 'w-40' : 'w-36 sm:w-56';
-  // The plot's real width where it has been measured: the labels' rows and
-  // which way each one opens are worked out against it.
-  const plotBox = useRef<HTMLDivElement>(null);
-  const plot = useWidth(plotBox) ?? (compact ? PLOT_COMPACT_PX : PLOT_PX);
-  const { drawn, total } = useMemo(() => bars(causes), [causes]);
-  const shown = useMemo(() => answer.changes.filter((c) => c.kind !== 'config' || c.referenced), [answer.changes]);
-  const axis = useMemo(() => axisOf(drawn, shown, answer.since, answer.generatedAt), [drawn, shown, answer.since, answer.generatedAt]);
-  const marks = useMemo(() => {
-    const list = shown.map((c) => {
-      const at = spot(Date.parse(c.time), axis);
-      return { id: c.id, at, width: ((changeShort(c).length * LABEL_CHAR_PX + 22) / plot) * 100, flip: at + ((changeShort(c).length * LABEL_CHAR_PX + 22) / plot) * 100 > 100 };
-    });
-    return { rows: staggered(list), flip: new Map(list.map((m) => [m.id, m.flip])) };
-  }, [shown, axis, plot]);
-  const rows = marks.rows.size === 0 ? 0 : Math.max(...marks.rows.values()) + 1;
+  const gutter = compact ? 'w-36' : 'w-36 sm:w-56';
+  const changes = useMemo(() => answer.changes.filter((c) => c.kind !== 'config' || c.referenced), [answer.changes]);
+  const axis = useMemo(() => axisOf(causes, changes, answer.since, answer.generatedAt), [causes, changes, answer.since, answer.generatedAt]);
+  const nodes = useMemo(() => groupNodes(changes), [changes]);
+  const lanes = useMemo(() => lanesOf(causes, axis), [causes, axis]);
+  const workloads = useMemo(() => workloadsOf(lanes), [lanes]);
+  const [pages, setPages] = useState(1);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string> | null>(null);
+  const open = unfolded ?? new Set(workloads.slice(0, 1).map((w) => w.key));
+  const toggle = (key: string) => setUnfolded(() => {
+    const next = new Set(open);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
+  const drawn = workloads.slice(0, pages * PAGE_WORKLOADS);
+  const laneMax = Math.max(1, ...lanes.flatMap((l) => l.bins));
+  const rowMax = Math.max(1, ...drawn.flatMap((w) => w.bins));
+  const nodeBins = useMemo(() => {
+    const added = Array.from({ length: BINS }, () => 0);
+    const notReady = Array.from({ length: BINS }, () => 0);
+    for (const g of nodes.groups) for (const c of g.changes) (g.kind === 'node-added' ? added : notReady)[binOf(Date.parse(c.time), axis)]! += 1;
+    return { added, notReady };
+  }, [nodes.groups, axis]);
   const { focus } = highlight;
-  const focusedCause = focus?.kind === 'cause' ? causes.find((c) => causeKey(c) === focus.id) : undefined;
-  const litGroup = (b: Bar): boolean => (focus === null ? true : focus.kind === 'change' ? b.sinces.includes(focus.id) : b.cause === focus.id);
-  const litChange = (id: string): boolean => (focus === null ? false : focus.kind === 'change' ? focus.id === id : focusedCause?.since === id);
+  const held = heldOf(answer);
   const tick = ticks(axis);
+  const addedCount = nodes.groups.filter((g) => g.kind === 'node-added').reduce((n, g) => n + g.changes.length, 0);
+  const notReadyCount = nodes.groups.filter((g) => g.kind === 'node-notready').reduce((n, g) => n + g.changes.length, 0);
+  const hoverable = (to: NonNullable<Focus>) => ({
+    onMouseEnter: () => highlight.hover(to),
+    onMouseLeave: () => highlight.hover(null),
+    onClick: () => highlight.pin(to),
+  });
+  const pct = (bin: number) => `${String((bin / BINS) * 100)}%`;
   return (
-    <section aria-label="Timeline" data-timeline="" data-axis-start={axis.start} className="flex flex-col overflow-hidden rounded-lg border border-line bg-panel px-3.5 py-3">
-      <div className="relative">
-        <div className="relative">
-        <div className={`pointer-events-none absolute inset-y-0 right-0 ${compact ? 'left-40' : 'left-36 sm:left-56'}`}>
-          {tick.map((t) => (
-            <span key={t.at} className="absolute inset-y-0 border-l border-line" style={{ left: `${String(t.at)}%` }} />
-          ))}
-          {shown.map((c) => (
-            <span
-              key={c.id}
-              data-line={c.id}
-              className={`absolute bottom-0 border-l ${litChange(c.id) ? 'border-fg' : 'border-muted'} ${focus !== null && !litChange(c.id) ? 'opacity-20' : 'opacity-60'}`}
-              style={{ left: `${String(spot(Date.parse(c.time), axis))}%`, top: `${String((marks.rows.get(c.id) ?? 0) * LABEL_ROW_PX + 8)}px` }}
-            />
-          ))}
-        </div>
-        <div className="relative flex">
-          <div className={`${gutter} shrink-0`} />
-          <div ref={plotBox} data-changes="" className="relative min-w-0 flex-1" style={{ height: `${String(Math.max(1, rows) * LABEL_ROW_PX + 4)}px` }}>
-            {shown.map((c) => (
-              <ChangeMark
-                key={c.id}
-                change={c}
-                answer={answer}
-                axis={axis}
-                row={marks.rows.get(c.id) ?? 0}
-                flip={marks.flip.get(c.id) === true}
-                dim={focus !== null && !litChange(c.id)}
-                lit={litChange(c.id)}
-                highlight={highlight}
-              />
-            ))}
-          </div>
-        </div>
-        <div data-bars="" className="relative border-t border-line">
-          {drawn.map((b, i) => {
-            const left = spot(b.first, axis);
-            const lit = litGroup(b);
-            const path = b.namespace === '' ? b.name : `${b.namespace}/${b.name}`;
-            const detail = `${path} · ${b.reason} × ${String(b.count)}${b.objects > 1 ? ` · ${String(b.objects)} objects` : ''}`;
-            return (
-              <div
-                key={`${b.cause}/${path}/${String(i)}`}
-                data-lane={`${b.namespace}/${b.name}`}
-                data-lit={focus !== null && lit}
-                data-dim={focus !== null && !lit}
-                title={detail}
-                style={{ height: `${String(LANE_PX)}px` }}
-                className={`flex items-center ${focus !== null && !lit ? 'opacity-25' : ''}`}
-              >
+    <section aria-label="Timeline" data-timeline="" data-axis-start={axis.start} className="flex flex-col gap-1 overflow-hidden rounded-lg border border-line bg-panel px-3.5 py-3">
+      {nodes.groups.length > 0 ? (
+        <Row
+          gutter={gutter}
+          data-nodes-row=""
+          name={
+            <>
+              <span className="size-2 shrink-0 rounded-full bg-plate-green" />
+              <span className="font-semibold">Nodes</span>
+              {addedCount > 0 ? <span className="rounded bg-plate-green/25 px-1 text-2xs tabular-nums text-fg">+{addedCount}</span> : null}
+              {notReadyCount > 0 ? <span className="rounded bg-plate-red/30 px-1 text-2xs tabular-nums text-fg">!{notReadyCount}</span> : null}
+            </>
+          }
+          total={<span className="text-muted">{addedCount + notReadyCount}</span>}
+        >
+          <div className="relative flex h-3 min-w-0 flex-1 gap-px">
+            {nodeBins.added.map((v, i) => {
+              const red = nodeBins.notReady[i] ?? 0;
+              return (
                 <span
-                  data-lane-name=""
-                  title={detail}
-                  className={`${gutter} flex min-w-0 shrink-0 overflow-hidden pr-2 text-xs ${lit && focus !== null ? 'text-fg' : 'text-muted'}`}
-                >
-                  {/* The name gives way in its middle first, the cause beside it last. */}
-                  <CutName name={b.name} className="shrink-[999]" />
-                  <span className="min-w-0 truncate whitespace-pre">{` · ${b.reason}`}</span>
-                </span>
-                <div className="relative h-full min-w-0 flex-1">
-                  <span
-                    data-bar={`${b.namespace}/${b.name}`}
-                    data-since={b.sinces[0]}
-                    title={detail}
-                    style={{ left: `${String(left)}%`, width: `${String(Math.max(0.6, spot(b.last, axis) - left))}%`, height: `${String(b.px)}px`, top: `${String((LANE_PX - b.px) / 2)}px` }}
-                    className={`absolute rounded-full ${b.type === 'Warning' ? 'bg-warn' : 'bg-muted'}`}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        </div>
-        <div className="relative flex border-t border-line pt-1">
-          <div className={`flex ${gutter} shrink-0 items-center pr-2 text-2xs tabular-nums text-muted`}>
-            {total > drawn.length ? (
-              <span title={`The ${String(drawn.length)} busiest of ${String(total)} groups are drawn; the list holds them all`}>
-                {drawn.length} of {total}
-              </span>
-            ) : null}
+                  key={i}
+                  className={`h-full min-w-0 flex-1 rounded-xs ${red > 0 ? 'bg-plate-red-pale' : v > 0 ? 'bg-plate-green-pale' : 'bg-panel-2'}`}
+                  style={v + red === 0 ? undefined : { opacity: 0.4 + 0.6 * ((v + red) / Math.max(1, ...nodeBins.added, ...nodeBins.notReady)) }}
+                />
+              );
+            })}
+            {nodes.groups.map((g) => {
+              const from = binOf(g.first, axis);
+              const to = binOf(g.last, axis) + 1;
+              const lit = focus !== null && g.changes.some((c) => changeLit(focus, c.id, causes));
+              const id = g.changes.length === 1 ? (g.changes[0] as Change).id : g.id;
+              const target: NonNullable<Focus> = g.changes.length === 1 ? { kind: 'change', id } : { kind: 'correlation', id: g.id, ids: g.changes.map((c) => c.id) };
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  data-node-group={g.id}
+                  data-nodes={g.changes.length}
+                  data-lit={lit}
+                  aria-label={nodeGroupLabel(g)}
+                  aria-pressed={same(focus, target.kind, target.id)}
+                  title={[nodeGroupLabel(g), ...g.changes.map((c) => `${c.name} · ${c.kind === 'node-added' ? 'Ready' : 'NotReady'} · ${ago(c.time, answer.generatedAt)}`)].join('\n')}
+                  {...hoverable(target)}
+                  className={`absolute -inset-y-1 rounded-sm ${lit ? 'ring-1 ring-fg' : 'hover:ring-1 hover:ring-muted'} ${focusRing}`}
+                  style={{ left: pct(from), width: pct(to - from) }}
+                />
+              );
+            })}
           </div>
-          <div data-axis="" className="relative h-4 min-w-0 flex-1 text-2xs tabular-nums text-muted">
-            {tick.map((t, i) => (
-              <span
-                key={t.at}
-                data-tick=""
-                // On a phone every other inner tick is left out, or their labels meet.
-                className={`absolute whitespace-nowrap ${i === 0 ? '' : i === tick.length - 1 ? '-translate-x-full' : '-translate-x-1/2'} ${i % 2 === 1 && i < tick.length - 1 ? 'max-sm:hidden' : ''}`}
-                style={{ left: `${String(t.at)}%` }}
+        </Row>
+      ) : null}
+      {nodes.others.length > 0 ? (
+        <Row
+          gutter={gutter}
+          data-changes=""
+          name={
+            <>
+              <span className="size-2 shrink-0 rounded-full bg-plate-blue" />
+              <span className="font-semibold">Changes</span>
+            </>
+          }
+          total={<span className="text-muted">{nodes.others.length}</span>}
+        >
+          <div className="relative h-full min-w-0 flex-1">
+            {nodes.others.map((c) => {
+              const lit = changeLit(focus, c.id, causes);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  data-change={c.id}
+                  data-kind={c.kind}
+                  data-lit={lit}
+                  data-dim={focus !== null && !lit}
+                  aria-label={changeShort(c)}
+                  aria-pressed={same(focus, 'change', c.id)}
+                  title={changeTitle(c, ago(c.time, answer.generatedAt))}
+                  {...hoverable({ kind: 'change', id: c.id })}
+                  className={`absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ${CHANGE_TONE[c.kind]} ${lit ? 'ring-2 ring-fg' : ''} ${focus !== null && !lit ? 'opacity-30' : ''} ${focusRing}`}
+                  style={{ left: `${String(spot(Date.parse(c.time), axis))}%` }}
+                />
+              );
+            })}
+          </div>
+        </Row>
+      ) : null}
+      <div data-rows="" className="flex flex-col gap-1 border-t border-line pt-1.5">
+        {drawn.map((w) => {
+          const lit = focus !== null && w.lanes.some((l) => laneLit(focus, l));
+          const dim = focus !== null && !lit;
+          const unfoldedHere = open.has(w.key);
+          return (
+            <div key={w.key} className="flex flex-col gap-1">
+              <Row
+                gutter={gutter}
+                data-workload={w.key}
+                data-lit={focus !== null && lit}
+                data-dim={dim}
+                className={dim ? 'opacity-35' : ''}
+                title={`${w.namespace === '' ? w.name : `${w.namespace}/${w.name}`} · ${w.lanes.map((l) => `${l.reason} × ${String(l.count)}`).join(' · ')}`}
+                name={
+                  <button type="button" aria-expanded={unfoldedHere} onClick={() => toggle(w.key)} className={`flex min-w-0 items-center gap-1.5 ${focusRing}`}>
+                    <span className="w-3 shrink-0 text-muted">{unfoldedHere ? '▾' : '▸'}</span>
+                    <CutName name={w.name} className="font-semibold" />
+                    {/* The namespace gives way before the name. */}
+                    {w.namespace === '' ? null : <span className="min-w-0 shrink-[999] truncate text-2xs text-muted">{w.namespace}</span>}
+                  </button>
+                }
+                total={<span className="font-semibold">{figure(w.count)}</span>}
               >
-                {t.label}
-              </span>
-            ))}
-          </div>
+                <Strip bins={w.bins} max={rowMax} warning={w.type === 'Warning'} axis={axis} />
+              </Row>
+              {unfoldedHere
+                ? w.lanes.map((l) => {
+                    const laneOn = focus !== null && laneLit(focus, l);
+                    return (
+                      <Row
+                        key={l.key}
+                        gutter={gutter}
+                        data-lane={`${l.namespace}/${l.workload}/${l.reason}`}
+                        data-since={[...l.sinces][0]}
+                        data-lit={laneOn}
+                        data-dim={focus !== null && !laneOn}
+                        className={focus !== null && !laneOn ? 'opacity-35' : ''}
+                        title={`${l.reason} × ${String(l.count)} · ${objectsWord({ objects: l.objects, kinds: [] })}`}
+                        name={
+                          <span data-lane-name="" className="flex min-w-0 items-center gap-1 pl-4.5 text-muted">
+                            <span className={`size-1.5 shrink-0 rounded-full ${l.type === 'Warning' ? 'bg-warn' : 'bg-muted'}`} />
+                            <span className="min-w-0 truncate">{l.reason}</span>
+                            <span className="shrink-0 text-2xs">· {l.objects}</span>
+                          </span>
+                        }
+                        total={<span className="text-muted">{figure(l.count)}</span>}
+                      >
+                        <Strip bins={l.bins} max={laneMax} warning={l.type === 'Warning'} axis={axis} />
+                      </Row>
+                    );
+                  })
+                : null}
+            </div>
+          );
+        })}
+      </div>
+      <div className="relative flex border-t border-line pt-1">
+        <div className={`${gutter} shrink-0`} />
+        <div data-axis="" className="relative h-4 min-w-0 flex-1 text-2xs tabular-nums text-muted">
+          {tick.map((t, i) => (
+            <span
+              key={t.at}
+              data-tick=""
+              // On a phone every other inner tick is left out, or their labels meet.
+              className={`absolute whitespace-nowrap ${i === 0 ? '' : i === tick.length - 1 ? '-translate-x-full' : '-translate-x-1/2'} ${i % 2 === 1 && i < tick.length - 1 ? 'max-sm:hidden' : ''}`}
+              style={{ left: `${String(t.at)}%` }}
+            >
+              {t.label}
+            </span>
+          ))}
         </div>
+        <div className="w-12 shrink-0" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        {normal === undefined ? null : <NormalToggle on={normal.on} count={normal.count} onToggle={normal.onToggle} />}
+        <span className="ml-auto flex items-center gap-2 text-2xs tabular-nums text-muted">
+          {held === undefined ? null : (
+            <span data-held="" title="Warnings in the lists · Warnings counted" className="rounded bg-panel-2 px-1.5 py-0.5">
+              {figure(held.held)} of {figure(held.total)}
+            </span>
+          )}
+          {workloads.length > drawn.length ? (
+            <>
+              <span data-rows-shown="" title="Workloads drawn · Workloads">
+                {drawn.length} of {workloads.length}
+              </span>
+              <button type="button" className={`text-accent underline ${focusRing}`} onClick={() => setPages((p) => p + 1)}>
+                +{Math.min(PAGE_WORKLOADS, workloads.length - drawn.length)}
+              </button>
+            </>
+          ) : null}
+        </span>
       </div>
     </section>
   );
@@ -490,15 +641,18 @@ function objectHref(cluster: string, kind: string, namespace: string, name: stri
   return plural === undefined ? undefined : objectPath({ cluster, kind: plural, namespace, name });
 }
 
-function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answer: Answer; cause: Cause; highlight: Highlight }): ReactNode {
+function CauseRow({ cluster, answer, cause, highlight, nodeGroups }: { cluster: string; answer: Answer; cause: Cause; highlight: Highlight; nodeGroups: ReadonlyMap<string, NodeGroup> }): ReactNode {
   const [open, setOpen] = useState(false);
   const [pages, setPages] = useState(1);
   const since = changeOf(answer, cause.since);
+  // A node of a group that came together is said as the group.
+  const group = since === undefined ? undefined : nodeGroups.get(since.id);
+  const sinceWord = since === undefined ? '' : group !== undefined && group.changes.length > 1 ? nodeGroupLabel(group) : changeLabel(since);
   const age = ago(since === undefined ? cause.lastSeen : since.time, answer.generatedAt);
   const shown = cause.groups.slice(0, pages * PAGE_OBJECTS);
   const key = causeKey(cause);
   const on = same(highlight.focus, 'cause', key);
-  const dim = highlight.focus !== null && !on && !(highlight.focus.kind === 'change' && cause.since === highlight.focus.id);
+  const dim = highlight.focus !== null && !on && !causeLit(highlight.focus, cause);
   return (
     <li data-cause={cause.reason} data-type={cause.type} data-active={on} className={`flex flex-col ${dim ? 'opacity-50' : ''}`}>
       <button
@@ -523,8 +677,8 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
             <span className="shrink-0">last {age}</span>
           ) : (
             <>
-              <span className="min-w-0 truncate" title={`since ${changeLabel(since)}`}>
-                since {changeLabel(since)}
+              <span className="min-w-0 truncate" title={`since ${sinceWord}`}>
+                since {sinceWord}
               </span>
               <span className="shrink-0 whitespace-pre">{` · ${age}`}</span>
             </>
@@ -579,6 +733,7 @@ function CauseRow({ cluster, answer, cause, highlight }: { cluster: string; answ
 /** The causes, most-warned first as the server sorts them, PAGE_CAUSES at a time. */
 export function Causes({ cluster, answer, causes, highlight }: { cluster: string; answer: Answer; causes: readonly Cause[]; highlight: Highlight }): ReactNode {
   const [pages, setPages] = useState(1);
+  const nodeGroups = useMemo(() => new Map(groupNodes(answer.changes).groups.flatMap((g) => g.changes.map((c) => [c.id, g] as const))), [answer.changes]);
   const shown = causes.slice(0, pages * PAGE_CAUSES);
   if (causes.length === 0) {
     // An empty answer over a source that was read is a quiet cluster; over one that was not, there is nothing to call quiet.
@@ -592,7 +747,7 @@ export function Causes({ cluster, answer, causes, highlight }: { cluster: string
     <section aria-label="Causes" className="flex flex-col rounded-lg border border-line bg-panel px-3.5 py-1">
       <ul className="flex flex-col divide-y divide-line">
         {shown.map((c) => (
-          <CauseRow key={causeKey(c)} cluster={cluster} answer={answer} cause={c} highlight={highlight} />
+          <CauseRow key={causeKey(c)} cluster={cluster} answer={answer} cause={c} highlight={highlight} nodeGroups={nodeGroups} />
         ))}
       </ul>
       {causes.length > shown.length ? (
@@ -602,22 +757,4 @@ export function Causes({ cluster, answer, causes, highlight }: { cluster: string
       ) : null}
     </section>
   );
-}
-
-/** An element's width in pixels, followed as it changes; none before it is laid out. */
-function useWidth(box: RefObject<HTMLElement | null>): number | undefined {
-  const [width, setWidth] = useState<number | undefined>(undefined);
-  useEffect(() => {
-    const element = box.current;
-    if (element === null || typeof ResizeObserver === 'undefined') return;
-    const read = (): void => {
-      const next = element.getBoundingClientRect().width;
-      setWidth(next > 0 ? next : undefined);
-    };
-    read();
-    const watch = new ResizeObserver(read);
-    watch.observe(element);
-    return () => watch.disconnect();
-  }, [box]);
-  return width;
 }
