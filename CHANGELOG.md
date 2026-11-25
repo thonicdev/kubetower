@@ -40,6 +40,18 @@ per release. Keep the bold lead short: it is all the banner draws.
   KubeTower is stopped with the install, and logs its steps to
   `update-install.log`. On Windows, a second Install closes the window too,
   and the window goes as soon as the update asks (#101).
+- **Runtime Inspector: a Node.js process that exited is said.** A chosen
+  process that ended before its inspector opened shows `pid N exited` beside
+  the ones left, or one line when none is, instead of an empty choice. A heap
+  snapshot that holds no byte fails instead of saving an empty file (#100,
+  #105).
+- **Event Intelligence: the held count follows the namespace.** Filtered to a
+  namespace, `N of M` counts its Warnings against its own tiles, not the
+  cluster's (#100, #105).
+- **What's new: "Not saved" is announced** to a screen reader, and the
+  tour's tips are reached from the keyboard (#100, #105).
+- **The release notes link the signing key at the release's tag**, as they
+  say, instead of on `main` (#100, #105).
 
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 

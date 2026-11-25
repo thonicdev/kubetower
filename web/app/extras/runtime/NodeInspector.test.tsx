@@ -114,6 +114,26 @@ describe("the Node.js tab's inspector", () => {
     });
   });
 
+  it('says a chosen process exited, beside the ones left to choose', async () => {
+    stub({
+      [`POST ${BASE}`]: { body: closed },
+      [`POST ${BASE}/inspector?confirm=confirm`]: { status: 409, body: { code: 'choose_process', pids: [7, 12], message: 'Choose' } },
+      [`POST ${BASE}/inspector?confirm=confirm&pid=12`]: {
+        status: 409,
+        body: { code: 'choose_process', pids: [7], message: 'Process 12 is no longer running: choose another.' },
+      },
+    });
+    mount(pane);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open inspector' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(document.querySelector('[data-node-gone]')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'pid 12' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(await screen.findByText('pid 12 exited')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'pid 12' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'pid 7' })).toBeDefined();
+  });
+
   it('cannot open a process started with --disable-sigusr1', async () => {
     stub({ [`POST ${BASE}`]: { body: { ...closed, sigusr1Disabled: true } } });
     mount(pane);

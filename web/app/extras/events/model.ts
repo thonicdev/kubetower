@@ -1,4 +1,4 @@
-import type { Answer, Cause, Change, ChangeKind, ObjectGroup, SourceState, Tile } from './data';
+import type { Answer, Cause, Change, ChangeKind, ObjectGroup, SourceState, Tile, Tiles } from './data';
 
 /**
  * The page's pure logic: the filters, the figures a tile shows, the words of a
@@ -480,16 +480,25 @@ export function correlations(causes: readonly Cause[], changes: readonly Change[
 
 /**
  * The Warnings the lists hold against those the tile counted, when the answer
- * was cut: undefined when it was not, or when the tile has no figure.
+ * was cut: undefined when it was not, or when the tile has no figure. With a
+ * namespace, the lists' groups in it against that namespace's tiles, which
+ * the page reads apart (#100).
  */
-export function heldOf(answer: Pick<Answer, 'truncated' | 'causes' | 'tiles'>): { held: number; total: number } | undefined {
-  if (!answer.truncated || answer.tiles.warnings.state !== 'read') return undefined;
+export function heldOf(
+  answer: Pick<Answer, 'truncated' | 'causes' | 'tiles'>,
+  namespace = '',
+  tiles: Pick<Tiles, 'warnings'> = answer.tiles,
+): { held: number; total: number } | undefined {
+  if (!answer.truncated || tiles.warnings.state !== 'read') return undefined;
   // The groups the lists hold, not the causes' counts: the server counts those past the groups it keeps.
   let held = 0;
-  for (const c of answer.causes) if (c.type === 'Warning') for (const g of c.groups) held += g.count;
+  for (const c of answer.causes) {
+    if (c.type !== 'Warning') continue;
+    for (const g of c.groups) if (namespace === '' || g.namespace === namespace) held += g.count;
+  }
   // Nothing missing from the lists: no "N of N".
-  if (held >= answer.tiles.warnings.count) return undefined;
-  return { held, total: answer.tiles.warnings.count };
+  if (held >= tiles.warnings.count) return undefined;
+  return { held, total: tiles.warnings.count };
 }
 
 /** What is lit: a change, a cause, or the changes of a correlation. Nothing lit means nothing dims. */

@@ -14,11 +14,13 @@
 name: security
 
 on:
+  # As ci.yml's: CHANGELOG.md alone still runs, so a changelog-only commit on
+  # main has the security run release.yml's verify asks for (#98).
   pull_request:
-    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+    paths: ['**', '!**/*.md', '!LICENSE', '!.gitignore', 'CHANGELOG.md']
   push:
     branches: [main]
-    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+    paths: ['**', '!**/*.md', '!LICENSE', '!.gitignore', 'CHANGELOG.md']
   schedule:
     # 06:00 UTC, daily, on the default branch: the advisory published overnight.
     - cron: "0 6 * * *"

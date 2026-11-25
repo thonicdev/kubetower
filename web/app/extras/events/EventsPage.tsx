@@ -48,6 +48,7 @@ export function EventsBody({
         causes={causes}
         highlight={highlight}
         normal={filters.type === '' ? { on: normal, count: normalCount(narrowed), onToggle: () => setNormal(!normal) } : undefined}
+        scope={filters.namespace === '' ? undefined : { namespace: filters.namespace, tiles: tilesOf }}
       />
       <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} hidden={normal || filters.type !== '' ? 0 : normalCount(narrowed)} />
     </div>

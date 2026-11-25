@@ -219,6 +219,12 @@ describe('the count in place of truncated', () => {
     // A cut answer whose lists still hold every Warning counted says nothing.
     expect(heldOf({ truncated: true, causes, tiles: { warnings: { count: 2012, state: 'read' } } as never })).toBeUndefined();
     expect(heldOf({ truncated: true, causes, tiles: { warnings: { count: 340, state: 'read' } } as never })).toBeUndefined();
+    // Filtered to a namespace: its groups against its own tiles (#100).
+    const two = [cause('BackOff', 'Warning', [group('a', { namespace: 'shop', count: 30 }), group('b', { namespace: 'batch', count: 7 })])];
+    const batch = { warnings: { count: 40, state: 'read' as const } };
+    expect(heldOf({ truncated: true, causes: two, tiles: tiles as never }, 'batch', batch)).toEqual({ held: 7, total: 40 });
+    expect(heldOf({ truncated: true, causes: two, tiles: tiles as never }, 'batch', { warnings: { count: 7, state: 'read' } })).toBeUndefined();
+    expect(heldOf({ truncated: true, causes: two, tiles: tiles as never })).toEqual({ held: 37, total: 2058 });
     expect(figure(2012)).toBe('2 012');
     expect(figure(999)).toBe('999');
   });
