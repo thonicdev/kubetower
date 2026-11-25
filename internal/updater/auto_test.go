@@ -257,13 +257,16 @@ func TestAFailedInstallOnQuitIsKeptAndNotRepeated(t *testing.T) {
 func TestOnQuitNeverInstallsAPackage(t *testing.T) {
 	f := newFake(t)
 	rec := &recorder{}
-	deb := f.updater(t.TempDir(), rec, func(o *Options) { o.Installation.Kind = LinuxDeb })
+	// A real verified download, so only the password stands in the way.
+	deb := readyOn(t, f, t.TempDir(), rec, nil)
 	deb.mu.Lock()
-	deb.status.Phase, deb.status.Version = Ready, "0.1.3"
-	deb.planned = Plan{Version: "0.1.3", File: "/nowhere", Installation: deb.o.Installation}
+	deb.status.Password = true
 	deb.mu.Unlock()
 	if deb.InstallOnQuit(context.Background()) || len(plans(rec)) != 0 {
 		t.Fatal("a package installed on quit")
+	}
+	if s := deb.Status(); s.Phase != Ready {
+		t.Fatalf("not left ready for Install: %+v", s)
 	}
 }
 
