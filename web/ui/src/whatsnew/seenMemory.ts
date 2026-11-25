@@ -11,7 +11,13 @@ import { useSyncExternalStore } from 'react';
  */
 
 const KEY = 'kubetower.seenVersion';
-const RELEASE = /^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,32})?$/;
+
+/**
+ * A release version, MAJOR.MINOR.PATCH[-pre] with no `v`: `internal/seen`'s
+ * Pattern, which the desktop store, the API's write and cmd/ktbuild share. A
+ * test pins this copy to api/openapi.yaml, and a Go test pins that to the store.
+ */
+export const RELEASE = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/;
 
 let snapshot: string | undefined;
 let read = false;

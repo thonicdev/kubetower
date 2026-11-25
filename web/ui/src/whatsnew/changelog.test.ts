@@ -1,6 +1,10 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { compareVersions, highlightsBetween, MAX_HIGHLIGHTS, parseChangelog, RELEASES } from './changelog';
+import { RELEASE } from './seenMemory';
 
 const SAMPLE = `# Changelog
 
@@ -72,6 +76,13 @@ describe('the changelog', () => {
     expect(compareVersions('0.2.0-rc.1', '0.2.0')).toBeLessThan(0);
     expect(compareVersions('0.2.0', '0.2.0')).toBe(0);
     expect(compareVersions('1.0.0', '0.99.99')).toBeGreaterThan(0);
+    // Pre-releases as semver orders them: numbers by value, before words, and
+    // a shorter list before a longer one it begins.
+    expect(compareVersions('0.2.0-rc.10', '0.2.0-rc.9')).toBeGreaterThan(0);
+    expect(compareVersions('0.2.0-1', '0.2.0-alpha')).toBeLessThan(0);
+    expect(compareVersions('0.2.0-rc.1', '0.2.0-rc.1.1')).toBeLessThan(0);
+    expect(compareVersions('0.2.0-beta', '0.2.0-alpha')).toBeGreaterThan(0);
+    expect(compareVersions('0.2.0-rc.2', '0.2.0-rc.2')).toBe(0);
   });
 
   it("reads this repository's own CHANGELOG.md", () => {
@@ -81,5 +92,15 @@ describe('the changelog', () => {
     expect(released?.highlights.slice(0, 2)).toEqual(['Releases are signed', 'The desktop updates itself']);
     expect(released?.highlights).toHaveLength(MAX_HIGHLIGHTS);
     for (const one of RELEASES) expect(one.highlights.length).toBeLessThanOrEqual(MAX_HIGHLIGHTS);
+  });
+});
+
+describe('the release pattern', () => {
+  it('is the one the API contract spells, which a Go test pins to the store', () => {
+    // The walk to go.mod, as TerminalPane.test.tsx reads a file outside web/.
+    let root = resolve(process.cwd());
+    while (!existsSync(join(root, 'go.mod')) && dirname(root) !== root) root = dirname(root);
+    const contract = readFileSync(join(root, 'api', 'openapi.yaml'), 'utf8');
+    expect(contract).toContain(`pattern: '${RELEASE.source}'`);
   });
 });

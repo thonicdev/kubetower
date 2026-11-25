@@ -87,20 +87,46 @@ function plain(text: string): string {
     .replace(/\s+/g, ' ');
 }
 
+/** A version's numbers, and its pre-release identifiers when it has some. */
+function split(version: string): { core: number[]; pre: string[] | undefined } {
+  const dash = version.indexOf('-');
+  const core = (dash < 0 ? version : version.slice(0, dash)).split('.').map(Number);
+  return { core, pre: dash < 0 ? undefined : version.slice(dash + 1).split('.') };
+}
+
+const NUMERIC = /^[0-9]+$/;
+
+/** Pre-release identifiers as semver orders them: numbers by value, and before words. */
+function comparePre(a: readonly string[], b: readonly string[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const x = a[i] ?? '';
+    const y = b[i] ?? '';
+    const numberX = NUMERIC.test(x);
+    const numberY = NUMERIC.test(y);
+    if (numberX && numberY) {
+      const diff = Number(x) - Number(y);
+      if (diff !== 0) return diff;
+    } else if (numberX !== numberY) {
+      return numberX ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return a.length - b.length;
+}
+
 /** Compares two release versions: negative when a is older than b. */
 export function compareVersions(a: string, b: string): number {
-  const [coreA = '', preA] = a.split('-', 2);
-  const [coreB = '', preB] = b.split('-', 2);
-  const partsA = coreA.split('.').map(Number);
-  const partsB = coreB.split('.').map(Number);
+  const one = split(a);
+  const other = split(b);
   for (let i = 0; i < 3; i++) {
-    const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+    const diff = (one.core[i] ?? 0) - (other.core[i] ?? 0);
     if (diff !== 0) return diff;
   }
   // A pre-release comes before its release.
-  if (preA === undefined) return preB === undefined ? 0 : 1;
-  if (preB === undefined) return -1;
-  return preA < preB ? -1 : preA > preB ? 1 : 0;
+  if (one.pre === undefined) return other.pre === undefined ? 0 : 1;
+  if (other.pre === undefined) return -1;
+  return comparePre(one.pre, other.pre);
 }
 
 /**

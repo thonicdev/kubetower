@@ -35,11 +35,16 @@ type Shown = { kind: 'welcome' } | { kind: 'news'; releases: Release[] } | { kin
 interface Banner {
   /** Opened from Settings › Infos, whatever was seen. */
   reopened: boolean;
+  /** How many times it was opened from Infos: each opening, and only it, takes the focus. */
+  opens: number;
   /** The release closed in this page, before the store has answered. */
   closed: string | undefined;
+  /** Why the release closed could not be kept: the banner is back, saying so. */
+  failed: string | undefined;
 }
 
-let banner: Banner = { reopened: false, closed: undefined };
+const CLOSED: Banner = { reopened: false, opens: 0, closed: undefined, failed: undefined };
+let banner: Banner = CLOSED;
 const listeners = new Set<() => void>();
 function setBanner(next: Banner): void {
   banner = next;
@@ -51,14 +56,18 @@ function subscribe(listener: () => void): () => void {
 }
 const current = (): Banner => banner;
 
+/** The last opening that took the focus, so no later render takes it again. */
+let focused = 0;
+
 /** Opens the banner again, from About. */
 export function openWhatsNew(): void {
-  setBanner({ ...banner, reopened: true });
+  setBanner({ ...banner, reopened: true, opens: banner.opens + 1, failed: undefined });
 }
 
 /** Test seam. */
 export function resetWhatsNew(): void {
-  setBanner({ reopened: false, closed: undefined });
+  focused = 0;
+  setBanner(CLOSED);
 }
 
 /** Automation and an explicit `?welcome=off` show no banner. */
@@ -73,7 +82,14 @@ function suppressed(): boolean {
 const SUPPRESSED = suppressed();
 
 /** What the banner shows now, and how it closes. */
-export function useWhatsNew(): { release: string | undefined; shown: Shown | null; reopened: boolean; close: () => void } {
+export function useWhatsNew(): {
+  release: string | undefined;
+  shown: Shown | null;
+  /** Counts the openings from Infos, so focus is taken once per opening. */
+  opens: number;
+  failed: string | undefined;
+  close: () => void;
+} {
   const capabilities = useCapabilities().data;
   const release = capabilities?.release;
   // The desktop keeps it; a console that keeps no preferences, each browser.
@@ -89,14 +105,20 @@ export function useWhatsNew(): { release: string | undefined; shown: Shown | nul
         was === undefined ? was : { ...was, seenVersion: version },
       );
     },
+    // Not kept: it would come back on the next start unannounced, so it comes back now.
+    onError: (error) => setBanner({ ...banner, closed: undefined, failed: error.message || 'Not saved' }),
   });
+  const seen = keeps ? prefs.data?.seenVersion : here;
   const close = (): void => {
     if (release === undefined || release === '') return;
-    setBanner({ reopened: false, closed: release });
+    setBanner({ ...banner, reopened: false, closed: release, failed: undefined });
+    // An older build, opened from Infos, records nothing: the newer release
+    // seen stays the one What's new counts from.
+    if (seen !== undefined && seen !== '' && compareVersions(release, seen) <= 0) return;
     if (keeps) write.mutate(release);
     else rememberSeen(release);
   };
-  const off = { release, shown: null, reopened: state.reopened, close };
+  const off = { release, shown: null, opens: state.opens, failed: state.failed, close };
   if (release === undefined || release === '' || SUPPRESSED || capabilities === undefined) return off;
   if (state.reopened) {
     const news = highlightsBetween(RELEASES, undefined, release).filter((one) => one.version === release);
@@ -104,7 +126,6 @@ export function useWhatsNew(): { release: string | undefined; shown: Shown | nul
   }
   if (state.closed === release) return off;
   if (keeps && prefs.data === undefined) return off;
-  const seen = keeps ? prefs.data?.seenVersion : here;
   if (seen === undefined || seen === '') return { ...off, shown: { kind: 'welcome' } };
   const news = highlightsBetween(RELEASES, seen, release);
   if (news.length > 0) return { ...off, shown: { kind: 'news', releases: news } };
@@ -113,22 +134,26 @@ export function useWhatsNew(): { release: string | undefined; shown: Shown | nul
   return compareVersions(seen, release) < 0 ? { ...off, shown: { kind: 'tour' } } : off;
 }
 
-/** The main views, as tiles: what each is, in a few words. */
-const TOUR: readonly { icon: IconName; label: string; caption: string }[] = [
-  { icon: 'cluster', label: 'Clusters', caption: 'Every kubeconfig context' },
-  { icon: 'workloads', label: 'Resources', caption: 'Every kind, live' },
-  { icon: 'terminal', label: 'Dock', caption: 'Logs, shells, forwards' },
-  { icon: 'extra', label: 'Extras', caption: 'Argo CD, Redis, Postgres…' },
-  { icon: 'settings', label: 'Settings', caption: 'Extras, updates' },
+/** The main views, as tiles: a label, and what each holds in its tooltip. */
+const TOUR: readonly { icon: IconName; label: string; tip: string }[] = [
+  { icon: 'cluster', label: 'Clusters', tip: 'Every kubeconfig context' },
+  { icon: 'workloads', label: 'Resources', tip: 'Every kind, live' },
+  { icon: 'terminal', label: 'Dock', tip: 'Logs, shells, forwards' },
+  { icon: 'extra', label: 'Extras', tip: 'Argo CD, Redis, Postgres…' },
+  { icon: 'settings', label: 'Settings', tip: 'Extras, updates' },
 ];
 
 export function WhatsNewBanner(): ReactNode {
-  const { release, shown, reopened, close } = useWhatsNew();
+  const { release, shown, opens, failed, close } = useWhatsNew();
   const box = useRef<HTMLElement>(null);
-  // Opened from About: focus moves to it. Shown on its own, it takes nothing.
+  const drawn = shown !== null;
+  // Opened from Infos: focus moves to it, once per opening. Shown on its own,
+  // drawn again by a navigation or mounted again, it takes nothing.
   useEffect(() => {
-    if (reopened && shown !== null) box.current?.focus();
-  }, [reopened, shown]);
+    if (!drawn || opens <= focused) return;
+    focused = opens;
+    box.current?.focus();
+  }, [opens, drawn]);
   if (shown === null || release === undefined) return null;
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
@@ -151,6 +176,11 @@ export function WhatsNewBanner(): ReactNode {
           {title}
         </h2>
         <Pill tone="info">{release}</Pill>
+        {failed !== undefined ? (
+          <span className="text-bad" title={failed} data-whats-new-failed="">
+            Not saved
+          </span>
+        ) : null}
         {shown.kind === 'news' ? <ChangelogLink /> : null}
         <CloseButton onClick={close} size="inline" escape className="ml-auto" />
       </div>
@@ -200,14 +230,13 @@ function Tour(): ReactNode {
   return (
     <ul className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-whats-new-tour="">
       {TOUR.map((tile) => (
-        <li key={tile.label} className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2 py-1.5">
+        <li
+          key={tile.label}
+          title={tile.tip}
+          className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2 py-1.5"
+        >
           <Icon name={tile.icon} className="shrink-0 text-accent" />
-          <span className="min-w-0">
-            <span className="block font-medium text-fg">{tile.label}</span>
-            <span className="block truncate text-muted" title={tile.caption}>
-              {tile.caption}
-            </span>
-          </span>
+          <span className="min-w-0 truncate font-medium text-fg">{tile.label}</span>
         </li>
       ))}
     </ul>

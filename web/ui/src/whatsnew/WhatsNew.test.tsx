@@ -30,7 +30,7 @@ interface Console {
 }
 
 /** A signed-in console on `release`, the desktop (`seen` kept by the server) or a server one. */
-function console(release: string | undefined, where: { desktop: boolean; seen?: string }): Console {
+function console(release: string | undefined, where: { desktop: boolean; seen?: string; refuse?: boolean }): Console {
   const out: Console = { sent: [] };
   let seen = where.seen;
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
@@ -40,7 +40,12 @@ function console(release: string | undefined, where: { desktop: boolean; seen?: 
     if ((init?.method ?? 'GET') !== 'GET') {
       const body: unknown = init?.body === undefined ? undefined : JSON.parse(String(init.body));
       out.sent.push({ method: init?.method ?? '', path, body });
-      if (path === '/api/preferences/seen-version') seen = (body as { version: string }).version;
+      if (path === '/api/preferences/seen-version') {
+        if (where.refuse === true) {
+          return json(500, { status: 500, title: 'Internal Server Error', code: 'not_saved', detail: 'state directory not writable' });
+        }
+        seen = (body as { version: string }).version;
+      }
       return json(204, null);
     }
     switch (path) {
@@ -98,7 +103,10 @@ describe("What's new", () => {
     mountApp('/');
     const box = await shown('welcome');
     expect(box.querySelector('h2')?.textContent).toBe('Welcome to KubeTower');
-    expect(box.querySelectorAll('[data-whats-new-tour] li')).toHaveLength(5);
+    const tiles = [...box.querySelectorAll<HTMLElement>('[data-whats-new-tour] li')];
+    expect(tiles.map((tile) => tile.textContent)).toEqual(['Clusters', 'Resources', 'Dock', 'Extras', 'Settings']);
+    // What each holds is a tooltip, not a line under the label.
+    expect(tiles.every((tile) => (tile.title ?? '') !== '')).toBe(true);
   });
 
   it('aggregates the highlights of every release since the one seen, with the changelog', async () => {
@@ -174,21 +182,53 @@ describe("What's new", () => {
     expect(banner()).toBeNull();
   });
 
-  it('opens again from Settings › Infos, on this release, and takes the focus', async () => {
+  it('opens again from Settings › Infos, on this release, and takes the focus once', async () => {
     localStorage.setItem('kubetower.seenVersion', '0.3.0');
     console('0.3.0', { desktop: false });
-    mountApp('/settings/infos');
-    let open: HTMLElement | null = null;
-    await waitFor(() => {
-      open = document.querySelector<HTMLElement>('[data-whats-new-open]');
-      expect(open).not.toBeNull();
-    });
+    const { router } = mountApp('/settings/infos');
+    const open = await openButton();
     expect(banner()).toBeNull();
-    fireEvent.click(open as unknown as HTMLElement);
+    fireEvent.click(open);
     const box = await shown('news');
     expect([...box.querySelectorAll('li')].map((one) => one.textContent)).toEqual(['Saved views', 'Pod logs across restarts']);
     await waitFor(() => {
       expect(document.activeElement).toBe(box);
     });
+    // Elsewhere, then a navigation: the banner stays drawn and leaves the focus where it is.
+    open.focus();
+    await act(() => router.navigate('/settings/infos?probe=1', { replace: true }));
+    await act(() => router.navigate('/settings/infos?probe=2'));
+    expect(banner()).not.toBeNull();
+    expect(document.activeElement).toBe(open);
+  });
+
+  it('records nothing when an older build, opened from Infos, is closed', async () => {
+    localStorage.setItem('kubetower.seenVersion', '0.3.0');
+    console('0.2.0', { desktop: false });
+    mountApp('/settings/infos');
+    fireEvent.click(await openButton());
+    await shown('news');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(banner()).toBeNull();
+    expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
+  });
+
+  it('comes back saying so when the desktop could not keep it', async () => {
+    console('0.3.0', { desktop: true, seen: '0.2.0', refuse: true });
+    mountApp('/');
+    fireEvent.keyDown(await shown('news'), { key: 'Escape' });
+    const box = await shown('news');
+    await waitFor(() => {
+      expect(box.querySelector('[data-whats-new-failed]')?.textContent).toBe('Not saved');
+    });
   });
 });
+
+async function openButton(): Promise<HTMLElement> {
+  let open: HTMLElement | null = null;
+  await waitFor(() => {
+    open = document.querySelector<HTMLElement>('[data-whats-new-open]');
+    expect(open).not.toBeNull();
+  });
+  return open as unknown as HTMLElement;
+}
