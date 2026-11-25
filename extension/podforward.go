@@ -20,8 +20,10 @@ type PodForwarder interface {
 	//     An unknown cluster is ErrUnknownCluster, wrapped.
 	//   - **Counted with Forward's tunnels**, against the same ceiling and the
 	//     same per-person share. A tunnel that did not open holds no slot.
-	//   - **Not refused on a read-only cluster** (KT_READONLY_CLUSTERS), as
-	//     Forward is not: a tunnel changes nothing in the cluster.
+	//   - **Refused on a cluster marked read-only** (KT_READONLY_CLUSTERS):
+	//     ErrReadOnly, wrapped, before anything is counted, reviewed or dug;
+	//     only the refusal is recorded. A diagnostics port can take a dump or
+	//     attach a debugger.
 	//   - **Closed when r ends, at the latest.** Stop gives the slot back
 	//     sooner, and a page calls it when it is done.
 	//   - **Whether something listens on port is not known when it opens**: a

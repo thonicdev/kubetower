@@ -297,8 +297,9 @@ type Host interface {
 	//     nothing reaches the kubelet; on the desktop a review the console
 	//     could not make lets the command through, as it does a shell;
 	//   - **refused on a cluster marked read-only** (KT_READONLY_CLUSTERS), as
-	//     the console's own pod shell is: ErrDenied, wrapped, before anything
-	//     is counted, reviewed or sent;
+	//     the console's own pod shell is: ErrReadOnly (which is also ErrDenied),
+	//     wrapped, before anything is counted, reviewed or sent; only the
+	//     refusal is recorded;
 	//   - **recorded** as an exec naming the container's pod, **the argv** and
 	//     the extension that asked: the attempt before it runs - an attempt that
 	//     cannot be written refuses it - and the outcome after. The argv is in

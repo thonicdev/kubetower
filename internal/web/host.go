@@ -15,6 +15,7 @@ import (
 	"github.com/thonicdev/kubetower/extension"
 	"github.com/thonicdev/kubetower/internal/access"
 	"github.com/thonicdev/kubetower/internal/actions"
+	"github.com/thonicdev/kubetower/internal/audit"
 	"github.com/thonicdev/kubetower/internal/cluster"
 	"github.com/thonicdev/kubetower/internal/customresources"
 	"github.com/thonicdev/kubetower/internal/kubeletstats"
@@ -89,19 +90,29 @@ func (h host) client(_ *http.Request, name string) (*cluster.Client, error) {
 	return h.s.clusters.Client(resolved)
 }
 
-// refuseReadOnly answers the read-only guardrail for a command an extension
-// would run inside a pod. `exec` is a mutating verb to the console's own pod
-// shell (`internal/terminal/exec.go`), so a cluster named in
-// KT_READONLY_CLUSTERS refuses it through every door, not only the shell's. The
-// error answers errors.Is for extension.ErrDenied, so an extension that maps a
-// refusal already answers it as one, and names the setting so the person can
-// find its cause.
-func (h host) refuseReadOnly(resolved string) error {
-	if h.s != nil && h.s.readOnly != nil && h.s.readOnly(resolved) {
-		return fmt.Errorf("%w: %s is marked read-only in KT_READONLY_CLUSTERS; running a command in a pod is refused there",
-			extension.ErrDenied, resolved)
+// refuseReadOnly answers the read-only guardrail for an act an extension
+// would make in a pod: a command run there (`exec` is a mutating verb to the
+// console's own pod shell, `internal/terminal/exec.go`) or a tunnel to one of
+// its ports (the console's own forwards are refused there too,
+// internal/forward's refuseOnReadOnlyClusters). A cluster named in
+// KT_READONLY_CLUSTERS refuses both through every door, before anything is
+// counted, reviewed or sent.
+//
+// The refusal is recorded, and is the only record: the act attrs names, with
+// the decision access.ReadOnly and the outcome refused, carrying the note ctx
+// holds (the extension, the argv). A record that cannot be written changes
+// nothing, the act being refused already; the gate logs it.
+//
+// The error answers errors.Is for extension.ErrReadOnly and so for
+// extension.ErrDenied, and names the setting so the person can find its cause.
+func (h host) refuseReadOnly(ctx context.Context, resolved, act string, attrs access.Attributes, what string) error {
+	if h.s == nil || h.s.readOnly == nil || !h.s.readOnly(resolved) {
+		return nil
 	}
-	return nil
+	pending, _ := h.s.gate.Begin(ctx, h.s.gate.Record(ctx, act, resolved, attrs, access.ReadOnly))
+	h.s.gate.End(ctx, pending, audit.Refused, "")
+	return fmt.Errorf("%w: %s is marked read-only in KT_READONLY_CLUSTERS; %s is refused there",
+		extension.ErrReadOnly, resolved, what)
 }
 
 // Client hands an extension the cluster's clients **for discovery only**

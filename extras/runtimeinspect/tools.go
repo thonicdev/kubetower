@@ -7,7 +7,7 @@ import (
 	"github.com/thonicdev/kubetower/extension"
 )
 
-// toolsAnswer is `GET /pod/{namespace}/{name}/{container}/tools`.
+// toolsAnswer is `POST /pod/{namespace}/{name}/{container}/tools`.
 type toolsAnswer struct {
 	// JCmd is true when jcmd ran in the container. Whether it listed a JVM
 	// does not matter: the tool is there.

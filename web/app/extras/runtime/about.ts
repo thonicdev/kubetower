@@ -31,7 +31,8 @@ export const about: ExtensionAbout = {
     'dump on a click: the deadlocks first, the threads by state, a filter and a download. A Memory history button there reads the last seven days of the pod’s containers’ ' +
     'memory from the cluster’s Prometheus, against their limits, on a click. A Class histogram button counts the live objects by class, after a ' +
     'confirmation that it runs a full GC and pauses the application. A Flight recorder control records the JVM for 30 seconds to 5 minutes, after a ' +
-    'confirmation, and downloads the file for JDK Mission Control; the file is removed from the container.',
+    'confirmation, and downloads the file for JDK Mission Control; the file is removed from the container. ' +
+    'On a cluster marked read-only (KT_READONLY_CLUSTERS) it runs nothing in a container and opens no tunnel.',
   reads: [
     'On a Node.js pod’s tab: whether its inspector answers, once when the tab opens; once it is open, on a click, a heap snapshot (confirmed), a CPU profile, and the diagnostic report with its secret-looking environment values masked',
     'On a Go pod’s tab: whether net/http/pprof answers, once when the tab opens; on a click, its goroutines and profiles (the port from kubetower.io/pprof-port, a port named pprof, or 6060)',

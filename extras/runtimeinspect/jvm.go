@@ -103,32 +103,35 @@ func (JVM) Needs() string {
 // Legacy is the JVM Inspector's key, which this page replaced.
 func (JVM) Legacy() []string { return []string{legacyKey} }
 
-// Routes are three reads from the spec, all GETs, which run nothing in a
-// container, one GET that only asks whether jcmd is there (tools.go), and the JVM tab's four POSTs, which run jcmd through Host.Exec
-// on the person's click (inspect.go, threads.go, histogram.go), and the heap
-// dump, whose POST answers the file itself (heapdump.go); and Go's pprof
-// through a tunnel to the pod (pprof.go): one GET that asks whether it answers,
-// and POSTs that read it; and Node.js's inspector through the same tunnel
-// (node.go): one GET, the confirmed POST that opens it with a fixed script
-// through Host.Exec, and POSTs that read through it. Nothing here changes a
-// cluster; opening the inspector changes the process, until it restarts.
+// Routes are four reads from the spec and from metrics, all GETs, which run
+// nothing in a container; every route under a container is a POST, so the
+// console's request header and origin check hold it and a link from another
+// site reaches none of them (#82): the probe that asks whether jcmd is there
+// (tools.go), the JVM tab's four, which run jcmd through Host.Exec on the
+// person's click (inspect.go, threads.go, histogram.go), and the heap dump,
+// whose POST answers the file itself (heapdump.go); Go's pprof through a
+// tunnel to the pod (pprof.go): one probe that asks whether it answers, and
+// the reads; and Node.js's inspector through the same tunnel (node.go): one
+// probe, the confirmed open with a fixed script through Host.Exec, and the
+// reads through it. Nothing here changes a cluster; opening the inspector
+// changes the process, until it restarts.
 func (x JVM) Routes(h extension.Host) []extension.Route {
 	return []extension.Route{
 		{Method: http.MethodGet, Pattern: "/{$}", Handler: x.inventory(h)},
 		{Method: http.MethodGet, Pattern: "/column", Handler: x.column(h)},
 		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}", Handler: x.pod(h)},
 		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/history", Handler: x.history(h)},
-		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/tools", Handler: x.tools(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/tools", Handler: x.tools(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/inspect", Handler: x.inspect(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/inspect/reveal", Handler: x.reveal(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/threads", Handler: x.threads(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/histogram", Handler: x.histogram(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/heapdump", Handler: x.heapDump(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/recording", Handler: x.flightRecording(h)},
-		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/pprof", Handler: x.pprofState(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof", Handler: x.pprofState(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/goroutines", Handler: x.pprofGoroutines(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/{profile}", Handler: x.pprofDownload(h)},
-		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/node", Handler: x.nodeState(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node", Handler: x.nodeState(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/inspector", Handler: x.nodeOpen(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/{read}", Handler: x.nodeRead(h)},
 	}

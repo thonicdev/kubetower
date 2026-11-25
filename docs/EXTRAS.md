@@ -169,6 +169,10 @@ The Runtime column names each runtime a pod or workload runs (`Java · Go`),
 toned by the worst Java container's heap risk where there is one. A pod gets a
 tab per runtime: JVM, Go, Node.js, Python.
 
+On a cluster in `KT_READONLY_CLUSTERS` the tabs run nothing and open no tunnel:
+jcmd, pprof, the Node.js inspector and its snapshot answer `read_only`, and the
+audit log holds only the refusal.
+
 ## The Runtime Inspector’s Go tab
 
 A Go container's tab reads `net/http/pprof` where the application serves it,

@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -160,12 +163,12 @@ func TestTheInspectorFlagsAreReadFromTheSpec(t *testing.T) {
 func TestTheNodeStateSaysWhetherTheInspectorIsOpen(t *testing.T) {
 	in := newInspector(t, false)
 	h := newNodeHost(t, in, nodeContainer())
-	got := decode[nodeAnswer](t, serve(t, h, nodeBase))
+	got := decode[nodeAnswer](t, post(t, h, nodeBase, ""))
 	if got.Open || got.Port != 9229 || !strings.Contains(got.Detail, "404") || len(h.ran) != 0 {
 		t.Errorf("closed = %+v, ran %v", got, h.ran)
 	}
 	in.setOpen()
-	got = decode[nodeAnswer](t, serve(t, h, nodeBase))
+	got = decode[nodeAnswer](t, post(t, h, nodeBase, ""))
 	if !got.Open || h.opened[len(h.opened)-1] != "kind/shop/web-0:9229" || h.stopped != 2 {
 		t.Errorf("open = %+v, opened %v, stopped %d", got, h.opened, h.stopped)
 	}
@@ -305,7 +308,7 @@ func TestTheInspectorReadsNeedItOpen(t *testing.T) {
 		!strings.Contains(rec.Body.String(), CodeInspectorClosed) {
 		t.Errorf("closed: %d %s", rec.Code, rec.Body)
 	}
-	if rec := serve(t, h, "/x/kind/runtime/pod/shop/web-0/proxy/node"); rec.Code != http.StatusUnprocessableEntity ||
+	if rec := post(t, h, "/x/kind/runtime/pod/shop/web-0/proxy/node", ""); rec.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(rec.Body.String(), CodeNotNode) {
 		t.Errorf("not node: %d %s", rec.Code, rec.Body)
 	}
@@ -425,5 +428,78 @@ func TestOpeningTheInspectorEdges(t *testing.T) {
 	rec := post(t, h, nodeBase+"/inspector?confirm=confirm", "")
 	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "jcmd") || !strings.Contains(rec.Body.String(), "inspector") {
 		t.Errorf("denied: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// procHarness stands a fake /proc in front of the opening script: the
+// processes PROCS names (pid -> [comm, exe]), the script's own pid and its
+// parent's as node, and process._debugProcess saying which pid it was handed.
+const procHarness = `const fs=require('fs');const procs=JSON.parse(process.env.PROCS);` +
+	`procs[process.pid]=['node','/usr/local/bin/node'];procs[process.ppid]=['node','/usr/local/bin/node'];` +
+	`const rd=fs.readdirSync,rf=fs.readFileSync,rl=fs.readlinkSync;` +
+	`const at=(f,i)=>{const m=/^\/proc\/([0-9]+)\//.exec(String(f));if(!m)return undefined;` +
+	`const e=procs[m[1]];if(!e||e[i]===''){const x=new Error('ENOENT');x.code='ENOENT';throw x}return e[i]};` +
+	`fs.readdirSync=(d,...a)=>d==='/proc'?Object.keys(procs).concat(['self','cpuinfo']):rd(d,...a);` +
+	`fs.readFileSync=(f,...a)=>{const v=at(f,0);return v===undefined?rf(f,...a):v+'\n'};` +
+	`fs.readlinkSync=(f,...a)=>{const v=at(f,1);return v===undefined?rl(f,...a):v};` +
+	`process._debugProcess=p=>{process.stderr.write('debugged '+p)};`
+
+// runOpenScript runs nodeOpenScript under node against procs, and answers
+// what it printed and which pid it opened, "" for none.
+func runOpenScript(t *testing.T, procs map[string][2]string, pid int) (string, string) {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node on PATH to run the opening script")
+	}
+	harness := filepath.Join(t.TempDir(), "harness.js")
+	if err := os.WriteFile(harness, []byte(procHarness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	table, _ := json.Marshal(procs)
+	argv := nodeOpenArgv([]string{node, "-r", harness}, pid)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "PROCS="+string(table))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("the script failed: %v\n%s", err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), strings.TrimPrefix(stderr.String(), "debugged ")
+}
+
+// The script finds Node.js by comm, or by exe when the title was changed,
+// never itself nor its parent, and never a package manager that runs on node:
+// with CMD ["npm","start"] the application is opened without a choice.
+func TestTheOpeningScriptPicksTheApplication(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		procs  map[string][2]string
+		pid    int
+		out    string
+		opened string
+	}{
+		{"by comm", map[string][2]string{"1": {"node", "/usr/local/bin/node"}, "7": {"sh", "/bin/sh"}}, 0,
+			`{"state":"signalled","pid":1}`, "1"},
+		{"by exe, the title changed", map[string][2]string{"1": {"next-server (v1", "/usr/local/bin/node"}}, 0,
+			`{"state":"signalled","pid":1}`, "1"},
+		{"npm start beside its app", map[string][2]string{"1": {"npm start", "/usr/local/bin/node"},
+			"18": {"node", "/usr/local/bin/node"}}, 0, `{"state":"signalled","pid":18}`, "18"},
+		{"npx, pnpm and yarn too", map[string][2]string{"1": {"npx", "/usr/local/bin/node"},
+			"2": {"pnpm", "/usr/local/bin/node"}, "3": {"yarn", "/usr/local/bin/node"},
+			"9": {"server", "/usr/local/bin/node"}}, 0, `{"state":"signalled","pid":9}`, "9"},
+		{"two apps", map[string][2]string{"1": {"node", "/usr/local/bin/node"}, "2": {"node", "/usr/local/bin/node"}}, 0,
+			`{"state":"choose","pids":[1,2]}`, ""},
+		{"the chosen one", map[string][2]string{"1": {"node", "/usr/local/bin/node"}, "2": {"node", "/usr/local/bin/node"}}, 2,
+			`{"state":"signalled","pid":2}`, "2"},
+		{"none", map[string][2]string{"1": {"java", "/opt/java/bin/java"}, "4": {"", ""}}, 0,
+			`{"state":"choose","pids":[]}`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, opened := runOpenScript(t, c.procs, c.pid)
+			if out != c.out || opened != c.opened {
+				t.Errorf("printed %s and opened %q, want %s and %q", out, opened, c.out, c.opened)
+			}
+		})
 	}
 }

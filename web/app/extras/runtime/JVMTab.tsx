@@ -201,6 +201,7 @@ const FAILURE_TITLE: Record<string, string> = {
   attach_disabled: 'Attach disabled',
   no_jvm: 'No JVM found',
   exec_forbidden: 'You may not run commands in this pod',
+  read_only: 'Read-only cluster',
   exec_unreviewed: 'Your access could not be checked',
   exec_busy: 'Too many commands running',
   exec_timed_out: 'jcmd timed out',

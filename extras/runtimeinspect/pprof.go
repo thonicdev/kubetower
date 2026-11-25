@@ -29,7 +29,7 @@ import (
 // is ever sent (SIGQUIT ends a Go program after its dump) and no debugger
 // attaches (delve stops it).
 //
-//   - `GET …/{container}/pprof` finds the port and asks `/debug/pprof/`: the
+//   - `POST …/{container}/pprof` finds the port and asks `/debug/pprof/`: the
 //     state the tab draws its buttons from;
 //   - `POST …/{container}/pprof/goroutines` reads `goroutine?debug=2` and
 //     answers it grouped by state and stack;
@@ -113,7 +113,7 @@ func pprofPort(p *corev1.Pod, c corev1.Container) (int, string) {
 	return pprofDefaultPort, "default"
 }
 
-// pprofAnswer is `GET …/pprof`.
+// pprofAnswer is `POST …/pprof`.
 type pprofAnswer struct {
 	Port int `json:"port"`
 	// Source is what named the port: `annotation`, `port` or `default`.
@@ -205,6 +205,8 @@ func writeTunnelFailure(w http.ResponseWriter, cluster string, err error) {
 	case errors.Is(err, extension.ErrUnknownCluster):
 		writeProblem(w, http.StatusNotFound, CodeUnknownCluster, extension.UnknownClusterText(cluster), err)
 	case errors.Is(err, context.Canceled):
+	case errors.Is(err, extension.ErrReadOnly):
+		writeReadOnly(w, cluster, err)
 	case errors.Is(err, extension.ErrDenied):
 		writeProblem(w, http.StatusForbidden, CodeTunnelForbidden,
 			"The cluster says you may not port-forward to this pod.", err)

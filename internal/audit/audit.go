@@ -126,7 +126,8 @@ type Record struct {
 	Force bool `json:"force,omitempty"`
 
 	// Decision is the review's answer: allowed, denied or unreviewable; or
-	// not_in_profile, a request the profile does not make, refused unasked.
+	// not_in_profile, a request the profile does not make, refused unasked; or
+	// read_only, an act refused unasked on a cluster in KT_READONLY_CLUSTERS.
 	Decision string `json:"decision"`
 	// Outcome and Reason are on the outcome record only.
 	Outcome string `json:"outcome,omitempty"`

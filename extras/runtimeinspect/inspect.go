@@ -39,7 +39,10 @@ const (
 	CodeAttachDisabled = "attach_disabled"
 	// The exec was refused for the person: 403, or 503 when it could not be
 	// asked.
-	CodeExecForbidden  = "exec_forbidden"
+	CodeExecForbidden = "exec_forbidden"
+	// CodeReadOnly: the cluster is marked read-only (KT_READONLY_CLUSTERS),
+	// so nothing is run in its pods nor tunnelled to them (extension.ErrReadOnly).
+	CodeReadOnly       = "read_only"
 	CodeExecUnreviewed = "exec_unreviewed"
 	CodeExecBusy       = "exec_busy"
 	CodeExecTimedOut   = "exec_timed_out"
@@ -239,6 +242,8 @@ func writeExecFailure(w http.ResponseWriter, cluster string, err error) {
 	case errors.Is(err, extension.ErrUnknownCluster):
 		writeProblem(w, http.StatusNotFound, CodeUnknownCluster, extension.UnknownClusterText(cluster), err)
 	case errors.Is(err, context.Canceled):
+	case errors.Is(err, extension.ErrReadOnly):
+		writeReadOnly(w, cluster, err)
 	case errors.Is(err, extension.ErrDenied):
 		writeProblem(w, http.StatusForbidden, CodeExecForbidden, execDeniedText, err)
 	case errors.Is(err, extension.ErrUnreviewable):
@@ -257,6 +262,11 @@ func writeExecFailure(w http.ResponseWriter, cluster string, err error) {
 	}
 }
 
+// writeReadOnly answers an act the read-only marking refused, in one line.
+func writeReadOnly(w http.ResponseWriter, cluster string, err error) {
+	writeProblem(w, http.StatusForbidden, CodeReadOnly, cluster+" is read-only: no command, tunnel or dump.", err)
+}
+
 // execSentence is a command's failure inside an inspection that had begun.
 func execSentence(err error) string {
 	switch {
@@ -264,6 +274,8 @@ func execSentence(err error) string {
 		return "Not run: too many commands run by extensions were already running."
 	case errors.Is(err, extension.ErrExecTimedOut):
 		return "It did not answer within its deadline and was stopped."
+	case errors.Is(err, extension.ErrReadOnly):
+		return "Not run: the cluster is read-only."
 	case errors.Is(err, extension.ErrDenied):
 		return execDeniedText
 	}
