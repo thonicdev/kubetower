@@ -197,6 +197,17 @@ Nothing is read with the console's rights.
 
 Nothing is read with the console's rights.
 
+### Storage Inspector (`storage`)
+
+| What | Whose rights | How the person is narrowed |
+|---|---|---|
+| PersistentVolumeClaims, Pods, StatefulSets, VolumeSnapshots | for the person | to the namespaces where they may `list` them |
+| PersistentVolumes, StorageClasses, VolumeSnapshotContents, VolumeSnapshotClasses | for the person | `list`, cluster-wide; a volume names only a claim that was read |
+| How full each claim is (kubelet summary) | for the person | `list nodes`, then the pods on each node narrowed to the namespaces where they may `list pods` |
+| Secrets | not read | |
+
+Nothing is read with the console's rights.
+
 ### What Settings › Extra holds
 
 Per extra, on each cluster: whether it is on, who may turn it on (`use`,

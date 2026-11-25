@@ -62,6 +62,7 @@ on:
       - 'extras/runtimeinspect/**'
       - 'extras/certmanager/**'
       - 'extras/security/**'
+      - 'extras/storage/**'
       - 'internal/access/**'
       - 'internal/actions/**'
       - 'internal/api/**'

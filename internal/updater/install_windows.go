@@ -4,12 +4,32 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 )
 
 func init() {
 	installers[WindowsSetup] = installSetup
 	installers[WindowsZip] = installZip
+	abandonHelper = stopHelper
+}
+
+// helperProcess is the hidden PowerShell started last, kept so a console that
+// did not stop can stop it rather than leave it waiting (abandonHelper).
+var helperProcess struct {
+	sync.Mutex
+	p *os.Process
+}
+
+// stopHelper kills the waiting helper, if one was started.
+func stopHelper() {
+	helperProcess.Lock()
+	defer helperProcess.Unlock()
+	if helperProcess.p != nil {
+		_ = helperProcess.p.Kill()
+		_ = helperProcess.p.Release()
+		helperProcess.p = nil
+	}
 }
 
 // createNoWindow is CREATE_NO_WINDOW: the helper shows no console.
@@ -27,13 +47,15 @@ func startPowerShell(script string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	_ = cmd.Process.Release()
+	helperProcess.Lock()
+	helperProcess.p = cmd.Process
+	helperProcess.Unlock()
 	return nil
 }
 
 // installSetup runs the downloaded setup silently once the console has exited.
 func installSetup(_ context.Context, plan Plan) error {
-	return helper(setupScript(os.Getpid(), plan.File, plan.Installation.Path, os.Args[1:]))
+	return helper(setupScript(os.Getpid(), plan.File, plan.Installation.Path, os.Args[1:], plan.Log))
 }
 
 // installZip writes the zip's kubetower.exe beside the running one, and has it
@@ -43,7 +65,7 @@ func installZip(_ context.Context, plan Plan) error {
 	if err != nil {
 		return err
 	}
-	if err := helper(swapScript(os.Getpid(), next, plan.Installation.Path, os.Args[1:])); err != nil {
+	if err := helper(swapScript(os.Getpid(), next, plan.Installation.Path, os.Args[1:], plan.Log)); err != nil {
 		_ = os.Remove(next)
 		return err
 	}

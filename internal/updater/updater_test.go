@@ -456,3 +456,91 @@ func TestTheRealHostsAreHTTPSOnGitHubOnly(t *testing.T) {
 		}
 	}
 }
+
+// The installer handed over and asked the console to stop, and the console
+// did not stop - the Windows window that ignored the interrupt (#96). Within
+// ExitWait the helper is stopped and the install goes back to ready with its
+// reason, the verified file kept, rather than "Installing…" for ever; every
+// step is in the log, with no URL in it.
+func TestAConsoleThatDoesNotStopFailsTheInstallInBoundedTime(t *testing.T) {
+	stopped := 0
+	was := abandonHelper
+	abandonHelper = func() { stopped++ }
+	t.Cleanup(func() { abandonHelper = was })
+
+	f := newFake(t)
+	dir := t.TempDir()
+	rec := &recorder{}
+	u := f.updater(dir, rec, func(o *Options) { o.ExitWait = 50 * time.Millisecond })
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, u)
+	if _, err := u.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for u.Status().Phase == Installing && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s := u.Status(); s.Phase != Ready || s.Reason != errNotStopped.Error() || s.Version != "0.1.3" {
+		t.Fatalf("after ExitWait: %+v, want ready again with the reason: the verified file is kept", s)
+	}
+	if stopped != 1 {
+		t.Errorf("the helper was stopped %d times, want 1: left waiting, it would install later, unasked", stopped)
+	}
+	rec.mu.Lock()
+	logPath := rec.plans[0].Log
+	rec.mu.Unlock()
+	if logPath != filepath.Join(dir, installLog) {
+		t.Errorf("the installer was handed the log %q", logPath)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	for _, want := range []string{"install 0.1.3 from " + f.asset, "staged ", "installer handed over", "still running after 50ms", "the verified file is kept"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log lacks %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "http") {
+		t.Errorf("the log names a URL:\n%s", log)
+	}
+
+	// Install again, with no new download, and a new install starts a new log.
+	if s, err := u.Install(context.Background()); err != nil || s.Reason != "" {
+		t.Fatalf("install again: %+v %v", s, err)
+	}
+	raw, _ = os.ReadFile(logPath)
+	if strings.Contains(string(raw), "still running") {
+		t.Errorf("a new install kept the last one's log:\n%s", raw)
+	} // Its own wait ends before the test does: abandonHelper is a global.
+	deadline = time.Now().Add(3 * time.Second)
+	for u.Status().Phase == Installing && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// An installer that ended the process leaves nothing to fail: the wait only
+// fails an install still in progress.
+func TestAnInstallThatMovedOnIsNotFailedByTheWait(t *testing.T) {
+	was := abandonHelper
+	abandonHelper = func() { t.Error("the helper was stopped") }
+	t.Cleanup(func() { abandonHelper = was })
+	f := newFake(t)
+	rec := &recorder{err: ErrNotRestarted}
+	u := f.updater(t.TempDir(), rec, func(o *Options) { o.ExitWait = 20 * time.Millisecond })
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, u)
+	if _, err := u.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if s := u.Status(); s.Phase != Idle {
+		t.Errorf("%+v, want idle: installed, not restarted", s)
+	}
+}

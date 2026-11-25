@@ -37,16 +37,33 @@ func psArgs(args []string) string {
 	return " -ArgumentList " + strings.Join(quoted, ",")
 }
 
+// psLog opens a helper script: its steps are appended, stamped, to the
+// install log (Plan.Log). A log that cannot be written never stops the update.
+// What it writes is the script's own words, paths and exit codes.
+func psLog(log string) string {
+	return "$ErrorActionPreference='Continue'; $kt_log=" + psQuote(log) + "; " +
+		"function L($m) { try { Add-Content -LiteralPath $kt_log -Value ((Get-Date).ToUniversalTime().ToString('o') + ' helper: ' + $m) } catch {} }; "
+}
+
 // setupScript waits for pid, runs the per-user setup silently into the folder
 // this KubeTower runs from, and waits for it, then starts KubeTower again from
 // there. `/D=` names that folder, last and unquoted as NSIS wants it (Windows
 // PowerShell joins -ArgumentList with spaces): otherwise the setup installs
 // where the registry says, the old exe starts again and the update is offered
 // forever. A setup that failed leaves the old install, started again all the same.
-func setupScript(pid int, setup, exe string, args []string) string {
-	return fmt.Sprintf("$ErrorActionPreference='Continue'; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
-		"Start-Process -FilePath %s -ArgumentList '/S',%s -Wait; Start-Process -FilePath %s%s",
-		pid, psQuote(setup), psQuote("/D="+windowsDir(exe)), psQuote(exe), psArgs(args))
+//
+// Every step goes to the install log: the wait, the setup's arguments and its
+// exit code, the restart - so a real run that did not update says where it
+// stopped (#96).
+func setupScript(pid int, setup, exe string, args []string, log string) string {
+	dir := "/D=" + windowsDir(exe)
+	return psLog(log) + fmt.Sprintf("L %s; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
+		"L %s; try { $p = Start-Process -FilePath %s -ArgumentList '/S',%s -Wait -PassThru; L ('setup exit code ' + $p.ExitCode) } "+
+		"catch { L ('setup did not run: ' + $_.Exception.Message) }; "+
+		"L %s; try { Start-Process -FilePath %s%s } catch { L ('restart failed: ' + $_.Exception.Message) }",
+		psQuote(fmt.Sprintf("waiting for KubeTower (pid %d) to exit", pid)), pid,
+		psQuote("KubeTower exited; running "+setup+" /S "+dir), psQuote(setup), psQuote(dir),
+		psQuote("starting "+exe), psQuote(exe), psArgs(args))
 }
 
 // windowsDir is the folder of a Windows path, composed on any platform (the
@@ -82,8 +99,12 @@ func finish(script string, start func(string) error, stop func()) error {
 
 // swapScript waits for pid, moves the new executable over the old one, then
 // starts it. The new file was written beside the old one, on its volume.
-func swapScript(pid int, next, exe string, args []string) string {
-	return fmt.Sprintf("$ErrorActionPreference='Continue'; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
-		"Move-Item -LiteralPath %s -Destination %s -Force; Start-Process -FilePath %s%s",
-		pid, psQuote(next), psQuote(exe), psQuote(exe), psArgs(args))
+func swapScript(pid int, next, exe string, args []string, log string) string {
+	return psLog(log) + fmt.Sprintf("L %s; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
+		"L %s; try { Move-Item -LiteralPath %s -Destination %s -Force -ErrorAction Stop; L 'moved' } "+
+		"catch { L ('move failed: ' + $_.Exception.Message) }; "+
+		"L %s; try { Start-Process -FilePath %s%s } catch { L ('restart failed: ' + $_.Exception.Message) }",
+		psQuote(fmt.Sprintf("waiting for KubeTower (pid %d) to exit", pid)), pid,
+		psQuote("KubeTower exited; moving "+next+" over "+exe), psQuote(next), psQuote(exe),
+		psQuote("starting "+exe), psQuote(exe), psArgs(args))
 }

@@ -9,7 +9,7 @@ type UpdateInstall = components['schemas']['UpdateInstall'];
 
 const MB = 1024 * 1024;
 
-type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'failed' | 'manual';
+type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'stalled' | 'failed' | 'manual';
 
 export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
   idle: { phase: 'idle', enabled: true, supported: true, installation: 'linux-appimage', ends: { terminals: 0, forwards: 0 } },
@@ -29,6 +29,12 @@ export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
   installing: {
     phase: 'installing', enabled: true, supported: true, installation: 'linux-appimage',
     version: '0.1.3', ends: { terminals: 2, forwards: 1 },
+  },
+  // The console did not stop for the setup (#96): ready again, with why.
+  stalled: {
+    phase: 'ready', enabled: true, supported: true, installation: 'windows-setup',
+    version: '0.1.3', asset: 'kubetower-0.1.3-setup.exe', ends: { terminals: 0, forwards: 0 },
+    reason: 'KubeTower did not stop to install the update; nothing was installed',
   },
   failed: {
     phase: 'failed', enabled: true, supported: true, installation: 'linux-appimage',

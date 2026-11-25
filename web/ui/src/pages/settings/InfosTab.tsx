@@ -151,6 +151,11 @@ function Update({ update }: { update: Settings['info']['update'] }): ReactNode {
   return (
     <>
       <UpdateLine update={update} />
+      {/* The action on a line of its own, never run into the version line's
+          link (#96). */}
+      <div className="mt-1" data-update-action="">
+        <UpdateControl />
+      </div>
       {ASKABLE.has(update.state) ? <CheckNow checking={update.checking} /> : null}
       <InstallUpdatesSetting />
     </>
@@ -176,9 +181,14 @@ function CheckNow({ checking }: { checking: boolean }): ReactNode {
   const check = useMutation({
     mutationFn: checkUpdates,
     onSuccess: (next) => {
-      cache.setQueryData<Settings>(settingsKey, (was) =>
-        was === undefined ? was : { ...was, info: { ...was.info, update: next } },
-      );
+      // An answer without `install` (an older server) keeps the one the page
+      // holds: a ready download, its Install and the checkbox survive a check
+      // (#96).
+      cache.setQueryData<Settings>(settingsKey, (was) => {
+        if (was === undefined) return was;
+        const install = next.install ?? was.info.update?.install;
+        return { ...was, info: { ...was.info, update: install === undefined ? next : { ...next, install } } };
+      });
     },
   });
   const running = check.isPending || checking;
@@ -236,7 +246,6 @@ function UpdateLine({ update }: { update: NonNullable<Settings['info']['update']
             {update.releaseUrl}
           </span>
         )}
-        <UpdateControl />
       </p>
     );
   }
