@@ -274,6 +274,9 @@ run "pnpm run check:api" web run check:api
 # core beside another suite turns its 5 s timeouts and time ceilings red on a
 # loaded machine without any test being wrong. KT_CI_WEB_WORKERS changes it.
 run "pnpm run test" web run test --maxWorkers="${KT_CI_WEB_WORKERS:-2}"
+# step: ci/web: pnpm run test:perf
+# One file at a time already: the ceilings, measured with nothing of the suite beside them.
+run "pnpm run test:perf" web run test:perf
 # step: ci/web: pnpm run build
 run "pnpm run build" web run build
 

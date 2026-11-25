@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PAGE_ROWS, type Category, type PageAnswer, type Preemption, type PodView, type Row } from './data';
 import { PendingPage } from './PendingPage';
 import { PodBody } from './PodView';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -120,14 +121,14 @@ describe('Pending', () => {
     expect(screen.queryByText(message)).toBeNull();
   });
 
-  it('draws one screen of rows from five thousand, and reads once', async () => {
+  it('draws one screen of rows from five thousand within a time ceiling, and reads once', async () => {
     const rows = Array.from({ length: 5000 }, (_, i) => row(`p-${String(i).padStart(5, '0')}`, i % 3 === 0 ? 'taints' : 'resources'));
     const fetch = stub(page(rows));
     const started = performance.now();
     mount();
     await screen.findByRole('button', { name: /Taints/ });
     expect(document.querySelectorAll('[data-row]')).toHaveLength(PAGE_ROWS);
-    expect(performance.now() - started).toBeLessThan(5000);
+    withinCeiling(performance.now() - started, 5000);
     fireEvent.click(screen.getByRole('button', { name: /Show 200 more of 4800/ }));
     await waitFor(() => expect(document.querySelectorAll('[data-row]')).toHaveLength(2 * PAGE_ROWS));
     // Settled: no read loop and no re-render storm asking again.

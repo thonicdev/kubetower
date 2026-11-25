@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JavaThread, PodAnswer, ThreadDump, ThreadState } from './data';
 import JVMTab from './JVMTab';
 import { DumpView, THREAD_STEP, dumpFileName } from './ThreadDump';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   cleanup();
@@ -247,7 +248,7 @@ describe('the thread dump', () => {
     expect(dumpFileName(untimed)).toBe('threads-a_b_c-app.txt');
   });
 
-  it('draws a 2,000-thread dump without drawing every thread, and opens a group quickly', () => {
+  it('draws a 2,000-thread dump without drawing every thread, and opens a group within a time ceiling', () => {
     const dump = big(2000);
     const start = performance.now();
     render(<DumpView dump={dump} />);
@@ -255,7 +256,7 @@ describe('the thread dump', () => {
     // BLOCKED is open, at most one step of it; the other groups draw nothing.
     expect(document.querySelectorAll('[data-jvm-thread]')).toHaveLength(Math.min(250, THREAD_STEP));
     expect(document.querySelectorAll('[data-jvm-stack]')).toHaveLength(0);
-    expect(drawn).toBeLessThan(3000);
+    withinCeiling(drawn, 3000);
 
     const runnable = document.querySelector('[data-jvm-group="RUNNABLE"] > button');
     if (runnable === null) throw new Error('no group');
@@ -263,14 +264,14 @@ describe('the thread dump', () => {
     fireEvent.click(runnable);
     const took = performance.now() - opened;
     expect(document.querySelectorAll('[data-jvm-group="RUNNABLE"] [data-jvm-thread]')).toHaveLength(THREAD_STEP);
-    expect(took).toBeLessThan(1500);
+    withinCeiling(took, 1500);
     fireEvent.click(within(document.querySelector('[data-jvm-group="RUNNABLE"]') as HTMLElement).getByRole('button', { name: /Show 200 more of 550/ }));
     expect(document.querySelectorAll('[data-jvm-group="RUNNABLE"] [data-jvm-thread]')).toHaveLength(2 * THREAD_STEP);
 
     // A filter over every thread's frames answers quickly too.
     const filtering = performance.now();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'exec-1999' } });
-    expect(performance.now() - filtering).toBeLessThan(1500);
+    withinCeiling(performance.now() - filtering, 1500);
     expect(Array.from(document.querySelectorAll('[data-jvm-thread]')).map((t) => t.getAttribute('data-jvm-thread'))).toEqual(['http-nio-8080-exec-1999']);
     // The bounds above are the check; building 2,000 threads of fixture on a
     // loaded runner can take longer than the default five seconds.

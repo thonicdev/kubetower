@@ -7,6 +7,7 @@ import { KEEP_MS, STALE_MS, type Counts, type Detail, type Overview, type Source
 import { security } from './index';
 import { securityShortcut } from './panel';
 import { filterComponents, sbomQuery, verdictMark, type Component, type Sbom, type Signature } from './supply';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   cleanup();
@@ -272,12 +273,12 @@ describe("a workload's SBOM tab", () => {
     expect(asked.filter((u) => u === SBOM)).toHaveLength(1);
   });
 
-  it('draws 5 000 components with 100 rows in the DOM, the cut, the images, the types and the ten licenses', async () => {
+  it('draws 5 000 components with 100 rows in the DOM, the cut, the images, the types and the ten licenses, within a time ceiling', async () => {
     stub({ [DETAIL]: { body: detail() }, [SBOM]: { body: sbom(5000, 6000) } });
     const started = performance.now();
     mount('x/security/shop/Deployment/web?tab=sbom');
     await waitFor(() => expect(componentRows()).toBe(100));
-    expect(performance.now() - started).toBeLessThan(3000);
+    withinCeiling(performance.now() - started, 3000);
     expect(document.querySelector('[data-cut]')?.textContent).toBe('5,000 / 6,000');
     expect(document.querySelector('[data-range]')?.textContent).toBe('1–100 / 5,000');
     expect(document.querySelector('[data-sbom-image="app"]')?.textContent).toContain(`sha256:${'ab'.repeat(32)}`);

@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:perf": "vitest run --mode perf -t \"time ceiling\"",
     "test:watch": "vitest",
     "check:styles": "node scripts/check-styles.mjs",
     "gen:api": "openapi-typescript ../api/openapi.yaml -o ui/src/api/schema.ts",

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DataGrid, type GridColumn, type GridSort } from './DataGrid';
 import { WINDOW_AFTER } from './useRowWindow';
+import { withinCeiling } from '../testing/ceiling';
 
 /**
  * A long list is drawn through a window: every row is in the list, the ones in
@@ -148,14 +149,14 @@ describe('a long list drawn through a window', () => {
     expect(document.querySelector('[data-spacer]')).toBeNull();
   });
 
-  it('draws a bounded number of rows of 5000, and measures the time', async () => {
+  it('draws a bounded number of rows of 5000, within a time ceiling', async () => {
     const started = performance.now();
     await mount(5000);
     const took = performance.now() - started;
     console.log(`5000 rows: ${String(bodyRows().length)} <tr> drawn, ${took.toFixed(0)} ms`);
     expect(bodyRows().length).toBeLessThan(100);
     expect(bodyRows().length).toBeGreaterThan(20);
-    expect(took).toBeLessThan(3000);
+    withinCeiling(took, 3000);
     expect(document.querySelector('[data-count]')?.textContent).toBe('5000');
     expect(document.querySelector('[data-more]')).toBeNull();
   });
