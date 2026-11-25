@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { KEEP_MS, PAGE_ROWS, STALE_MS, detailQuery, filterWorkloads, overviewQuery, type Counts, type Detail, type Overview, type Workload } from './data';
 import { security } from './index';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   cleanup();
@@ -497,14 +498,14 @@ describe('the Security Center page', () => {
     const drawn = performance.now() - started;
     expect(document.querySelectorAll('[data-workload-row]')).toHaveLength(100);
     expect(document.querySelectorAll('tr')).toHaveLength(101);
-    expect(drawn).toBeLessThan(3000);
+    withinCeiling(drawn, 3000);
 
     // A filter over the whole set redraws the first page, and stays as light.
     const again = performance.now();
     act(() => {
       fireEvent.click(document.querySelector('[data-tile="critical"]')!);
     });
-    expect(performance.now() - again).toBeLessThan(1000);
+    withinCeiling(performance.now() - again, 1000);
     expect(document.querySelectorAll('[data-workload-row]')).toHaveLength(100);
   });
 

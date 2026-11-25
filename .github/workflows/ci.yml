@@ -783,6 +783,11 @@ jobs:
       # build worked is worth more than one that does not know.
       - run: pnpm run test
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+      # The time ceilings (#109): the tests named "time ceiling" again, one file
+      # at a time, where withinCeiling asserts. Apart from the suite, so a
+      # ceiling measures the console rather than the suite running beside it.
+      - run: pnpm run test:perf
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
       - id: build
         run: pnpm run build
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}

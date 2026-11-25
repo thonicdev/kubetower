@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import tailwindcss from '@tailwindcss/vite';
@@ -14,7 +16,7 @@ import { thirdPartyNotices } from './scripts/third-party-notices.ts';
  * files the styling rules allow to be hand-written (the theme is the other), and it holds a
  * `<div id="root">` and the module script Vite requires.
  */
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
@@ -98,5 +100,38 @@ export default defineConfig({
     include: ['ui/src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
     // One setup file: the Testing Library wait ceiling. Its comment says why.
     setupFiles: ['ui/src/testing/setup.ts'],
+    // Thirty seconds a test, not vitest's five (#109). The full suite runs on a
+    // machine other work shares, and at a load around 20 a page that mounts in
+    // half a second alone takes several: five seconds measured the machine,
+    // not the console. A hung test still fails the run.
+    testTimeout: 30_000,
+    // **Time ceilings are the perf check's, not the suite's** (#109). A test
+    // states one with `withinCeiling` (ui/src/testing/ceiling.ts), which
+    // asserts only under `--mode perf`: `pnpm run test:perf` runs those tests,
+    // one file at a time, so a ceiling measures the console and not whatever
+    // else the machine was doing.
+    provide: { perf: mode === 'perf' },
+    // Only the files that state a ceiling, found by reading them: loading all
+    // 250 one at a time to skip their tests took eight minutes.
+    ...(mode === 'perf' ? { fileParallelism: false, include: ceilingFiles() } : {}),
   },
-});
+}));
+
+/** The test files that call `withinCeiling`, for `--mode perf` (#109). */
+function ceilingFiles(): string[] {
+  const root = fileURLToPath(new URL('.', import.meta.url));
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules') walk(path);
+      } else if (/\.test\.tsx?$/.test(entry.name) && readFileSync(join(root, path), 'utf8').includes('withinCeiling(')) {
+        found.push(path);
+      }
+    }
+  };
+  walk('ui/src');
+  walk('app');
+  return found;
+}

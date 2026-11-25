@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POLL_MS, pageQuery, type Answer, type Cause, type Change, type ObjectGroup, type Section } from './data';
 import { EventsPage } from './EventsPage';
 import { PAGE_CAUSES } from './parts';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -513,7 +514,7 @@ describe('Event Intelligence', () => {
     expect(document.querySelector('[data-rows-shown]')?.textContent).toBe('24 of 1330');
     fireEvent.click(screen.getByRole('button', { name: '+24' }));
     expect(document.querySelectorAll('[data-workload]')).toHaveLength(48);
-    expect(performance.now() - started).toBeLessThan(5000);
+    withinCeiling(performance.now() - started, 5000);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(fetch).toHaveBeenCalledTimes(1);
   });

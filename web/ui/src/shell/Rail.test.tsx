@@ -1385,7 +1385,7 @@ describe('right-click on a tile edits that cluster', () => {
       },
       { timeout: 10_000 },
     );
-  }, 20_000);
+  });
 
   it('saves a style picked from the gallery, reads it back, and the tile draws it', async () => {
     const { routes, posted } = mountedEditable();
@@ -1412,7 +1412,7 @@ describe('right-click on a tile edits that cluster', () => {
     const again = await customise('prod');
     expect(within(again).getByRole('radio', { name: 'Server' }).getAttribute('aria-checked')).toBe('true');
     expect(again.querySelector('[data-chosen-style]')?.textContent).toBe('Server');
-  }, 20_000);
+  });
 
   it('saves a style seeded from the context name', async () => {
     const { posted } = mountedEditable();
@@ -1431,7 +1431,7 @@ describe('right-click on a tile edits that cluster', () => {
         },
       ]);
     });
-  }, 20_000);
+  });
 
   it('seeds a long context name with as much of it as a recipe holds', async () => {
     const long = `arn:aws:eks:eu-central-1:123456789012:cluster/${'x'.repeat(40)}`;
@@ -1461,7 +1461,7 @@ describe('right-click on a tile edits that cluster', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize icon…' }));
     const dialog = await screen.findByRole('dialog', { name: /^Icon for / });
     expect((within(dialog).getByRole('textbox', { name: /^Seed/ }) as HTMLInputElement).value).toBe(long.slice(0, 64));
-  }, 20_000);
+  });
 
   it('draws the default icon for a stored recipe it cannot read', async () => {
     mountedEditable({ prod: { icon: '{"v":9,"style":"unknown"}' } });
@@ -1485,7 +1485,7 @@ describe('right-click on a tile edits that cluster', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(posted).toEqual([]);
-  }, 20_000);
+  });
 
   it('closes on Escape and gives the keyboard back to the tile', async () => {
     mountedEditable();
@@ -1579,7 +1579,7 @@ describe('right-click on a tile edits that cluster', () => {
     // ...and staging's editor is still the one open.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByRole('dialog', { name: /staging/ })).toBeTruthy();
-  }, 20_000);
+  });
 
   it('keeps Save pressable for the keyboard while a save is pending, and does not send it twice', async () => {
     const { posted } = mountedEditable();
@@ -1608,7 +1608,7 @@ describe('right-click on a tile edits that cluster', () => {
     // A beat, so a second request would have started by now.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(posted).toHaveLength(1);
-  }, 20_000);
+  });
 
   it('opens on F2 as well, the rename key a Mac keyboard has', async () => {
     mountedEditable();
@@ -1876,7 +1876,7 @@ describe('a cluster seen with no icon is given one drawn at random', () => {
     });
     expect(posted[1]?.body.cluster).toBe('staging');
     expect(parseIcon(posted[1]?.body.icon)).toEqual({ ...drawn, style: 'kt-server' });
-  }, 20_000);
+  });
 
   it('does not draw again for a cluster reset to its default icon', async () => {
     const { posted } = mounted({ prod: { icon: stored }, staging: { icon: stored }, edge: { icon: stored } });

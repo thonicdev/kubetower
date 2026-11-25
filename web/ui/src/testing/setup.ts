@@ -15,14 +15,17 @@ import { resetNamespaceMemory } from '../shell/namespaceMemory';
 import { resetNavMemory } from '../shell/navMemory';
 import { resetViewMemory } from '../shell/viewMemory';
 
-// Three seconds for every `findBy*` and `waitFor`, not the library's one.
+// Ten seconds for every `findBy*` and `waitFor`, not the library's one.
 //
 // Every page is a lazy chunk, which adds a tick between a navigation and the
 // page's first render, and under the load of the full suite a one-second
-// ceiling measures the machine, not the console. Three seconds is still short
-// enough that a hung wait fails a run. The tests themselves are untouched: a
-// timeout that lives in one file is one that can be revisited with one edit.
-configure({ asyncUtilTimeout: 3000 });
+// ceiling measures the machine, not the console. Three seconds held until the
+// suite shared the machine with other work: at a load around 20 a first render
+// took longer (#109). Ten is still well inside the test's own thirty
+// (vite.config.ts), so a hung wait fails a run. The tests themselves are
+// untouched: a timeout that lives in one file is one that can be revisited
+// with one edit.
+configure({ asyncUtilTimeout: 10_000 });
 
 /*
  * jsdom has no layout, and its `Range` has neither `getClientRects` nor

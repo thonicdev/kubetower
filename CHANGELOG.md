@@ -70,6 +70,9 @@ per release. Keep the bold lead short: it is all the dialog draws.
   tour's tips are reached from the keyboard (#100, #105).
 - **The release notes link the signing key at the release's tag**, as they
   say, instead of on `main` (#100, #105).
+- **Updates: an install that never came back is said after a sleep.** Once
+  the machine wakes, "Installing…" turns to Failed on the next read rather
+  than up to three minutes later (#99, #108).
 
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 

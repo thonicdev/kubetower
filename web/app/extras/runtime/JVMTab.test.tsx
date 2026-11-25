@@ -8,6 +8,7 @@ import type { Container, Inspection, PodAnswer } from './data';
 import { podQuery } from './data';
 import { runtimeInspector as jvm } from './index';
 import JVMTab from './JVMTab';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   cleanup();
@@ -319,7 +320,7 @@ describe('the JVM tab holds nothing open', () => {
     expect(asked.filter((a) => a.method === 'POST' && a.url.endsWith('/tools'))).toHaveLength(1);
   });
 
-  it('draws a large answer without hanging', async () => {
+  it('draws a large answer within a time ceiling', async () => {
     const memory = inspection.memory;
     if (memory === undefined) throw new Error('the fixture has a memory bar');
     const big: Inspection = {
@@ -336,7 +337,7 @@ describe('the JVM tab holds nothing open', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect' }));
     const start = performance.now();
     await screen.findByText('JDK 21.0.13', undefined, { timeout: 10_000 });
-    expect(performance.now() - start).toBeLessThan(8_000);
+    withinCeiling(performance.now() - start, 8_000);
     expect(document.querySelectorAll('[data-jvm-tab] tr').length).toBe(1000 + 64);
   });
 });

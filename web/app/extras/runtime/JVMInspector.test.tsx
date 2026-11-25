@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Container, Inventory, Pod } from './data';
 import { POLL_MS, ROW_STEP, groupPods, heapBar, inventoryPath, javaColumn, matches, riskTone, riskWord, worstLevel } from './data';
 import { runtimeInspector as jvm } from './index';
+import { withinCeiling } from '../../../ui/src/testing/ceiling';
 
 afterEach(() => {
   cleanup();
@@ -234,7 +235,7 @@ describe('the Runtime Inspector page', () => {
   // A thousand Java pods draw a bounded number of rows, quickly, and the
   // page stays usable: the tiles count all of them, a filter narrows them,
   // and Show more adds a step at a time.
-  it('draws a thousand Java pods a step at a time', async () => {
+  it('draws a thousand Java pods a step at a time, within a time ceiling', async () => {
     stub(200, inventory({ pods: many(1000), read: 5000 }));
     const started = performance.now();
     mount();
@@ -242,7 +243,7 @@ describe('the Runtime Inspector page', () => {
     const took = performance.now() - started;
     const rows = () => document.querySelectorAll('[data-jvm-container]').length;
     expect(rows()).toBe(ROW_STEP);
-    expect(took).toBeLessThan(5000);
+    withinCeiling(took, 5000);
     expect(document.querySelector('[data-jvm-tile="all"]')?.getAttribute('data-count')).toBe('1000');
     expect(screen.getByText(`${String(ROW_STEP)} of 1000 containers shown`)).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: `Show ${String(ROW_STEP)} more` }));
