@@ -66,6 +66,10 @@ type Plan struct {
 	SHA256       string
 	Version      string
 	Installation Installation
+	// Log is the install's step log (installLog), which a helper that outlives
+	// the console appends to. Paths and exit codes only: never a token or a
+	// URL.
+	Log string
 }
 
 // Installer replaces the running KubeTower with plan.File and restarts it.
@@ -125,7 +129,21 @@ const (
 	// settingsFile holds the "Install updates" setting.
 	settingsFile = "updater.json"
 	workDir      = "update"
+	// installLog is the last install's steps, in the state directory beside
+	// the work folder rather than in it: forget removes the folder, and the
+	// log is read after a failed install (#96).
+	installLog = "update-install.log"
 )
+
+// ExitWait is how long Install waits, once the installer asked the console to
+// stop, before it decides the console did not stop: the helper is stopped and
+// the install fails, so "Installing…" never spins for ever (#96).
+const ExitWait = 90 * time.Second
+
+// abandonHelper stops a helper still waiting on this process, after ExitWait:
+// left waiting, it would run the setup whenever the console exits later,
+// unasked. The Windows installers set it.
+var abandonHelper = func() {}
 
 // hosts a download may be redirected to: GitHub serves release assets from
 // its own storage hosts.
@@ -152,7 +170,9 @@ type Options struct {
 	Verify func(sums, sig []byte) (releasesig.Sums, error)
 	// Install overrides the platform's installer, for tests.
 	Install Installer
-	Logf    func(string, ...any)
+	// ExitWait overrides ExitWait, for tests.
+	ExitWait time.Duration
+	Logf     func(string, ...any)
 }
 
 // Updater holds one update at a time.
@@ -242,9 +262,12 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 	}
 	plan := u.planned
 	u.status.Phase = Installing
+	u.status.Reason = ""
 	out := u.status
 	u.mu.Unlock()
 
+	plan.Log = u.startLog()
+	u.step("install %s from %s into %s (%s)", plan.Version, filepath.Base(plan.File), plan.Installation.Path, plan.Installation.Kind)
 	if !update.IsNewer(plan.Version, u.o.Version) {
 		return u.fail(ErrNotNewer.Error()), ErrNotNewer
 	}
@@ -256,12 +279,17 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 		return u.fail(textutil.FirstLine(err.Error())), err
 	}
 	plan.File = staged
+	u.step("staged %s", staged)
 	install := u.installer()
 	safego.Go("update install", func() error {
 		return install(context.WithoutCancel(ctx), plan)
 	}, func(err error) {
 		switch {
 		case err == nil:
+			// The installer handed over and asked the console to stop. Either
+			// the process exits within ExitWait, or the install failed.
+			u.step("installer handed over; waiting for KubeTower to stop")
+			u.awaitExit()
 		case errors.Is(err, ErrNotRestarted):
 			u.installed(err)
 		case errors.Is(err, ErrNotWritable):
@@ -271,6 +299,67 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 		}
 	})
 	return out, nil
+}
+
+// errNotStopped is the reason an install fails when the console did not stop
+// for its helper within ExitWait.
+var errNotStopped = errors.New("KubeTower did not stop to install the update; nothing was installed")
+
+// awaitExit fails the install, and stops the helper, when this process is
+// still running ExitWait after the installer asked it to stop: an install
+// that cannot finish leaves "Installing…" in bounded time, with Retry.
+func (u *Updater) awaitExit() {
+	wait := u.o.ExitWait
+	if wait <= 0 {
+		wait = ExitWait
+	}
+	safego.Go("update exit wait", func() error {
+		time.Sleep(wait)
+		if u.Status().Phase != Installing {
+			return nil
+		}
+		abandonHelper()
+		u.step("still running after %s: helper stopped; the verified file is kept", wait)
+		u.notStopped()
+		return nil
+	}, nil)
+}
+
+// notStopped puts the install back to ready, with the reason: the verified
+// file is still there, so Install is offered again rather than a new download
+// (#96: Check now and a failure must never lose a ready update).
+func (u *Updater) notStopped() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.status.Phase != Installing {
+		return
+	}
+	u.status.Phase = Ready
+	u.status.Reason = errNotStopped.Error()
+	if u.o.Logf != nil {
+		u.o.Logf("update: %s", errNotStopped)
+	}
+}
+
+// startLog empties the install log for a new install and returns its path.
+func (u *Updater) startLog() string {
+	path := filepath.Join(u.dir(), installLog)
+	if err := os.WriteFile(path, nil, 0o600); err != nil && u.o.Logf != nil {
+		u.o.Logf("update: the install log could not be written: %s", textutil.FirstLine(err.Error()))
+	}
+	return path
+}
+
+// step appends one line to the install log, stamped. Only what is written
+// here and by the helper scripts goes in: versions, paths, process ids and
+// exit codes - never a URL or a token.
+func (u *Updater) step(format string, args ...any) {
+	f, err := os.OpenFile(filepath.Join(u.dir(), installLog), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
 // stage copies the verified file into a folder made for this install, from
@@ -651,6 +740,9 @@ func (u *Updater) forget() {
 func (u *Updater) fail(reason string) Status {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.status.Phase == Installing {
+		u.step("failed: %s", reason)
+	}
 	u.status.Phase = Failed
 	u.status.Reason = reason
 	if u.o.Logf != nil {
