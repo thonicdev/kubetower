@@ -22,19 +22,8 @@ import { act, fireEvent, screen } from '@testing-library/react';
  * `textbox` role and the accessible name - the same query the textarea answered.
  */
 
-/*
- * jsdom has no layout, and its `Range` has neither `getClientRects` nor
- * `getBoundingClientRect`. CodeMirror asks a range where a character is drawn
- * whenever it measures - the caret, the selection, a scroll into view - and
- * logs a TypeError from its measure loop when the answer is missing. An empty
- * answer is the truthful one here: nothing is drawn anywhere.
- */
-if (typeof Range !== 'undefined' && !('getClientRects' in Range.prototype)) {
-  Object.assign(Range.prototype, {
-    getClientRects: () => document.createElement('div').getClientRects(),
-    getBoundingClientRect: () => document.createElement('div').getBoundingClientRect(),
-  });
-}
+// The `Range` layout stub CodeMirror's measure loop needs is installed for
+// every test file by `setup.ts`.
 
 /** The editor named `name`, once its lazily loaded chunk has drawn it. */
 export async function findCode(name: string): Promise<EditorView> {
