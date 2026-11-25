@@ -47,6 +47,7 @@ module.exports = {
         'extra',
         'release',
         'security',
+        'storage',
         'settings',
         'state',
         'ui',

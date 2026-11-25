@@ -99,6 +99,15 @@ export interface Extension {
    */
   activity?: ExtensionActivity;
   /**
+   * Its tile on the cluster's Overview, in an Extras panel under Workloads.
+   * **Optional**, and drawn under the same rule as tabs: only while the
+   * extension is on for the cluster, as the server's menu says. `resolve` is
+   * asked once per cluster and cached for a minute; `null` or a rejection
+   * draws no tile, as for a shortcut - the extension's page is where "could
+   * not read" is said.
+   */
+  overview?: ExtensionOverviewTile;
+  /**
    * What Settings → Extra says about it before anyone turns it on: the
    * preview a click on its tile opens, beside the button that turns it on.
    *
@@ -131,6 +140,13 @@ export interface ExtensionActivity {
   /** Drawn with the object's identity. Wrap it in `lazy`; the panel provides
    *  the `Suspense`. */
   Component: ComponentType<ExtensionTabProps>;
+}
+
+/** An extension's tile on the Overview; see `Extension.overview`. */
+export interface ExtensionOverviewTile {
+  /** What the tile shows and where it leads, as a shortcut's target: the
+   *  title is the tile's large figure, the badges its chips. */
+  resolve: (cluster: string, signal: AbortSignal) => Promise<ExtensionShortcutTarget | null>;
 }
 
 /** What an extra's preview in Settings → Extra says about it. */

@@ -28,6 +28,7 @@ import { ClusterDown } from './ClusterDown';
 import { ReadingText } from './Reading';
 import { CapacityDonut } from './Donut';
 import { Paged } from './Paged';
+import { ExtraTiles } from './ExtraTiles';
 import { Panel, PanelList, PanelMark, PANEL_FRAME, PANEL_HEAD } from './Panel';
 import { PanelValue } from './PanelValue';
 import { RefLink } from './RefLink';
@@ -164,7 +165,7 @@ export function Overview(): ReactNode {
         `ClusterHead`'s, drawn below, on the page composed from the refusal.
       */}
       <ValueView query={overview} what="the dashboard">
-        {(page) => <Dashboard key={cluster} page={page} onRetry={() => void overview.refetch()} />}
+        {(page) => <Dashboard key={cluster} page={page} cluster={cluster} onRetry={() => void overview.refetch()} />}
       </ValueView>
 
       {refused === undefined ? null : (
@@ -210,12 +211,15 @@ function RefusalNote(): ReactNode {
  *  offers its one retry in the notice above it. */
 type Retry = (() => void) | undefined;
 
-function Dashboard({ page, onRetry }: { page: OverviewPage; onRetry: Retry }): ReactNode {
+/** `cluster` is set on the page the cluster answered, never on the one
+ *  composed from its refusal: the extensions' tiles read the cluster too. */
+function Dashboard({ page, cluster, onRetry }: { page: OverviewPage; cluster?: string | undefined; onRetry: Retry }): ReactNode {
   return (
     <div className="flex flex-col gap-4">
       <ClusterHead page={page} onRetry={onRetry} />
       <AccessNote page={page} />
       <Workloads page={page} onRetry={onRetry} />
+      {cluster === undefined ? null : <ExtraTiles cluster={cluster} />}
       <Trouble page={page} onRetry={onRetry} />
       <Restarting page={page} onRetry={onRetry} />
       <Leaderboards page={page} onRetry={onRetry} />
