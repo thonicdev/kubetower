@@ -314,17 +314,23 @@ func (JVM) nodeOpen(h extension.Host) http.Handler {
 				errors.New(firstLine(strings.TrimSpace(string(res.Stderr)+" "+string(res.Stdout)))))
 			return
 		}
-		if said.State == "choose" && len(said.Pids) == 0 && pid == 0 {
-			writeProblem(w, http.StatusUnprocessableEntity, CodeNoNodeProcess,
-				"No Node.js process was found in this container.", nil)
+		// A chosen pid the script did not find has exited: said in one line,
+		// with the processes left to choose from when there are any.
+		if said.State == "choose" && len(said.Pids) == 0 {
+			message := "No Node.js process was found in this container."
+			if pid != 0 {
+				message = "Process " + strconv.Itoa(pid) + " is no longer running, and no other Node.js process was found in this container."
+			}
+			writeProblem(w, http.StatusUnprocessableEntity, CodeNoNodeProcess, message, nil)
 			return
 		}
 		if said.State == "choose" {
-			if said.Pids == nil {
-				said.Pids = []int{}
+			message := "Choose the Node.js process whose inspector to open."
+			if pid != 0 {
+				message = "Process " + strconv.Itoa(pid) + " is no longer running: choose another."
 			}
 			writeJSON(w, http.StatusConflict, map[string]any{"code": CodeChooseProcess, "pids": said.Pids,
-				"message": "Choose the Node.js process whose inspector to open."})
+				"message": message})
 			return
 		}
 		tunnel, ok := tunnelTo(w, r, h, n.cluster, n.namespace, n.name, n.flags.port)
@@ -528,9 +534,10 @@ func attachment(w http.ResponseWriter, filename string) {
 }
 
 // nodeSnapshot streams the snapshot's chunks as they arrive. A failure
-// before the first chunk is a problem; past it the response is ended broken,
+// before the first byte is a problem; past it the response is ended broken,
 // so the browser fails the download rather than save a cut snapshot that
-// DevTools cannot load.
+// DevTools cannot load. An empty chunk writes nothing, so it commits no 200,
+// and a snapshot that ends with no byte at all is a problem too.
 func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, filename string) {
 	written := int64(0)
 	_, err := session.call(ctx, "HeapProfiler.takeHeapSnapshot", map[string]any{"reportProgress": false},
@@ -544,6 +551,9 @@ func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, file
 			if err := json.Unmarshal(m.Params, &p); err != nil {
 				return err
 			}
+			if p.Chunk == "" {
+				return nil
+			}
 			if written+int64(len(p.Chunk)) > nodeSnapshotLimit {
 				return fmt.Errorf("the heap snapshot is larger than %d bytes", nodeSnapshotLimit)
 			}
@@ -555,7 +565,9 @@ func nodeSnapshot(ctx context.Context, w http.ResponseWriter, session *cdp, file
 			return err
 		})
 	switch {
+	case err == nil && written > 0:
 	case err == nil:
+		writeProblem(w, http.StatusBadGateway, CodeInspectorFailed, "The heap snapshot came back empty.", nil)
 	case written == 0:
 		writeProblem(w, http.StatusBadGateway, CodeInspectorFailed, "The heap snapshot could not be taken.", err)
 	default:

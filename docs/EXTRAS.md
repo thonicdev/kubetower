@@ -205,7 +205,9 @@ that calls `process._debugProcess(pid)` on the container's Node.js process, as
 restarts**, on the pod's loopback, and anyone who reaches that port can run
 code in the process. A process started with `--disable-sigusr1` cannot be
 opened, and the button is greyed. No `SIGUSR2` is ever sent: without
-`--report-on-signal` it ends the process.
+`--report-on-signal` it ends the process. With several Node.js processes the
+tab offers each pid; one that exited before it was opened is marked
+`pid N exited` beside those left, or said in one line when none is.
 
 Once open, each a fixed DevTools method:
 

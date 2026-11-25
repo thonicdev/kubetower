@@ -176,11 +176,14 @@ export function WhatsNewBanner(): ReactNode {
           {title}
         </h2>
         <Pill tone="info">{release}</Pill>
-        {failed !== undefined ? (
-          <span className="text-bad" title={failed} data-whats-new-failed="">
-            Not saved
-          </span>
-        ) : null}
+        {/* Always in the page, so a screen reader announces "Not saved" as it arrives. */}
+        <span role="status" data-whats-new-status="">
+          {failed !== undefined ? (
+            <span className="text-bad" title={failed} data-whats-new-failed="">
+              Not saved
+            </span>
+          ) : null}
+        </span>
         {shown.kind === 'news' ? <ChangelogLink /> : null}
         <CloseButton onClick={close} size="inline" escape className="ml-auto" />
       </div>
@@ -230,13 +233,16 @@ function Tour(): ReactNode {
   return (
     <ul className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-whats-new-tour="">
       {TOUR.map((tile) => (
+        // Focusable, so a keyboard reaches the tooltip; the tip is read out too.
         <li
           key={tile.label}
           title={tile.tip}
-          className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2 py-1.5"
+          tabIndex={0}
+          className={`flex min-w-0 items-center gap-2 rounded-md border border-line px-2 py-1.5 ${focusRing}`}
         >
           <Icon name={tile.icon} className="shrink-0 text-accent" />
           <span className="min-w-0 truncate font-medium text-fg">{tile.label}</span>
+          <span className="sr-only">{tile.tip}</span>
         </li>
       ))}
     </ul>

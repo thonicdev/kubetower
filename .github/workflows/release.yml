@@ -1462,6 +1462,8 @@ jobs:
             echo "::error::could not read packaging/release-notes/unsigned.md at $TAG; the draft's notes open with it"
             exit 1
           fi
+          # Its links name the tag (@TAG@): the key it points at is this release's.
+          sed -i "s/@TAG@/$TAG/g" "$notes"
           if state=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft 2>&1); then
             if [ "$state" != true ]; then
               echo "::error::$TAG is already a published release; a workflow does not rewrite one"
