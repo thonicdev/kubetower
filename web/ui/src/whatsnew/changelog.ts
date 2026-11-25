@@ -6,13 +6,17 @@ import changelog from 'virtual:kubetower-changelog';
  *
  * A highlight is an entry of a release's `### Added`, or of its `### Fixed`
  * when it carries `<!-- highlight -->`. It is drawn as its bold lead (the
- * changelog's own short title) and at most MAX_HIGHLIGHTS per release.
+ * changelog's own short sentence) and at most MAX_HIGHLIGHTS per release. An
+ * entry carrying `<!-- extra: <key> -->` introduces that extra: the dialog
+ * draws it with the extra's own picture (#121).
  */
 
-/** One highlight: its bold lead, and the section it came from (#107). */
+/** One highlight: its bold lead, the section it came from (#107), and the
+ *  extra it introduces, by key (#121). */
 export interface Highlight {
   title: string;
   kind: 'added' | 'fixed';
+  extra?: string | undefined;
 }
 
 export interface Release {
@@ -24,6 +28,9 @@ export const MAX_HIGHLIGHTS = 5;
 
 const HEADING = /^## +([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/;
 const MARK = '<!-- highlight -->';
+const EXTRA = /<!--\s*extra:\s*([a-z0-9-]+)\s*-->/;
+/** Any HTML comment: a marker, never a word of the title. */
+const COMMENT = /<!--[\s\S]*?-->/g;
 
 /** The releases of a changelog, newest first as it lists them. */
 export function parseChangelog(text: string): Release[] {
@@ -38,7 +45,10 @@ export function parseChangelog(text: string): Release[] {
     const counts = section === 'added' || (section === 'fixed' && whole.includes(MARK));
     if (!counts || release.highlights.length >= MAX_HIGHLIGHTS) return;
     const title = titleOf(whole);
-    if (title !== '') release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed' });
+    const extra = EXTRA.exec(whole)?.[1];
+    if (title !== '') {
+      release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed', ...(extra === undefined ? {} : { extra }) });
+    }
   };
   for (const line of text.split(/\r?\n/)) {
     const heading = HEADING.exec(line);
@@ -76,7 +86,7 @@ export function parseChangelog(text: string): Release[] {
 
 /** An entry's short title: its bold lead, else its first sentence, as text. */
 function titleOf(entry: string): string {
-  const text = entry.replace(MARK, '').trim();
+  const text = entry.replace(COMMENT, '').trim();
   const bold = /^\*\*(.+?)\*\*/.exec(text);
   const lead = bold?.[1] ?? text.split(/(?<=\.)\s/)[0] ?? text;
   return plain(lead)
