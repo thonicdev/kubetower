@@ -314,6 +314,7 @@ describe("a cluster page's replication lag", () => {
 
   it.each([
     [403, 'exec_forbidden', 'Refused: no exec on the primary'],
+    [403, 'read_only', 'Read-only cluster'],
     [422, 'no_psql', 'No psql in the image'],
     [504, 'exec_timed_out', 'Timed out'],
     [502, 'lag_truncated', 'Answer cut'],
