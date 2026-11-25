@@ -977,7 +977,8 @@ describe('in a cluster, Extra lists every extra with a button, as the server say
     expect(bravo?.getAttribute('aria-describedby')).toBe(reason?.id);
     // No `use`: the button is not offered, and the reason says why.
     // (Edit and About are still drawn: About offers no switch either.)
-    expect(tile('charlie')?.querySelector('[role="switch"], button:not([data-extra-about]):not([data-extra-edit])')).toBeNull();
+    // The star writes a person's favourite, not the cluster (#111): it stays.
+    expect(tile('charlie')?.querySelector('[role="switch"], button:not([data-extra-about]):not([data-extra-edit]):not([data-extra-favourite])')).toBeNull();
     expect(tile('charlie')?.querySelector('[data-extra-reason="use"]')?.textContent).toBe(noUse);
     // Nothing says "per cluster", and no tile carries a hover.
     expect(page().querySelector('[data-extras]')?.textContent).not.toMatch(/per cluster/i);
@@ -1063,7 +1064,7 @@ describe('in a cluster, Extra lists every extra with a button, as the server say
     expect(switches.every((one) => one.disabled)).toBe(true);
     // (Bar each card's Edit and About, which write nothing by themselves.)
     expect(
-      tab?.querySelectorAll('button:not([disabled]):not([data-extra-about]):not([data-extra-edit]), input:not([disabled]), select, textarea').length,
+      tab?.querySelectorAll('button:not([disabled]):not([data-extra-about]):not([data-extra-edit]):not([data-extra-favourite]), input:not([disabled]), select, textarea').length,
     ).toBe(0);
     expect(tab?.querySelectorAll('[data-extra-reason="unregistered"]').length).toBe(2);
     expect(tile('alfa')?.textContent).toContain(replicas);
@@ -1420,7 +1421,7 @@ describe('on the desktop, Extra has a tile per extension with a switch and its s
     const tab = page().querySelector('[data-extras]');
     expect(tab?.querySelectorAll('[role="switch"]').length).toBe(2);
     // Bar each card's Edit and About, which write nothing by themselves.
-    expect(tab?.querySelectorAll('input:not([disabled]), button:not([disabled]):not([data-extra-about]):not([data-extra-edit])').length).toBe(0);
+    expect(tab?.querySelectorAll('input:not([disabled]), button:not([disabled]):not([data-extra-about]):not([data-extra-edit]):not([data-extra-favourite])').length).toBe(0);
   });
 });
 
