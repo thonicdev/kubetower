@@ -148,15 +148,23 @@ interface Card {
   page?: string;
 }
 
-/** The product, as cards: each opens its view (#107). */
+/**
+ * The product, as cards: each opens its view (#107). Their lines are the
+ * site's (kubetower-site, `src/config/landing.ts` and `extras.ts`) where it has
+ * one; Overview, Runtime Inspector and Event Intelligence have their own.
+ */
 const CARDS: readonly Card[] = [
-  { key: 'clusters', icon: 'cluster', label: 'Clusters', tip: 'Every kubeconfig context' },
-  { key: 'overview', icon: 'overview', label: 'Overview', tip: 'Nodes, workloads, capacity', page: '' },
-  { key: 'netinspect', icon: 'topology', label: 'Network Inspector', tip: 'Policies, flows, verdicts', extra: 'netinspect', page: 'x/netinspect' },
-  { key: 'runtime', icon: 'coffee', label: 'Runtime Inspector', tip: 'Java, Go, Node.js, Python', extra: 'runtime', page: 'x/runtime' },
-  { key: 'events', icon: 'pulse', label: 'Event Intelligence', tip: 'Events by cause, on a timeline', extra: 'events', page: 'x/events' },
-  { key: 'extras', icon: 'extra', label: 'Extras', tip: 'Argo CD, Redis, Postgres, Storage…' },
+  { key: 'clusters', icon: 'cluster', label: 'Clusters', tip: 'Every cluster your kubeconfig names, in one window.' },
+  { key: 'overview', icon: 'overview', label: 'Overview', tip: 'Nodes, workloads and capacity at a glance.', page: '' },
+  { key: 'netinspect', icon: 'topology', label: 'Network Inspector', tip: 'Would one pod reach another? Read from the rules.', extra: 'netinspect', page: 'x/netinspect' },
+  { key: 'runtime', icon: 'coffee', label: 'Runtime Inspector', tip: 'Java, Go and Node.js, inspected on a click.', extra: 'runtime', page: 'x/runtime' },
+  { key: 'events', icon: 'pulse', label: 'Event Intelligence', tip: 'Events grouped by cause, under what changed.', extra: 'events', page: 'x/events' },
+  { key: 'extras', icon: 'extra', label: 'Extras', tip: 'Pages for what only some clusters run, switched on per cluster.' },
 ];
+
+/** The welcome's words, the site's hero (#107): the one screen with a sentence. */
+const TAGLINE = 'The free Kubernetes console.';
+const INTRO = 'Every cluster in your kubeconfig in one window, from a single binary on your machine or a Helm chart in your cluster.';
 
 /** Where a card leads, on the cluster in the address when there is one. */
 function cardHref(card: Card, cluster: string | undefined, on: ReadonlySet<string>): string {
@@ -261,6 +269,14 @@ function Welcome({ onOpen }: { onOpen: () => void }): ReactNode {
   return (
     <div className="flex flex-col items-center gap-4" data-whats-new-welcome="">
       <Mark className="size-16" />
+      <div className="flex flex-col items-center gap-1 text-center">
+        <p className="text-base font-medium text-fg" data-whats-new-tagline="">
+          {TAGLINE}
+        </p>
+        <p className="max-w-xl text-muted" data-whats-new-intro="">
+          {INTRO}
+        </p>
+      </div>
       <ul className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-whats-new-cards="">
         {CARDS.map((card) => (
           <WelcomeCard key={card.key} card={card} href={cardHref(card, cluster, on)} onOpen={onOpen} />
@@ -271,9 +287,9 @@ function Welcome({ onOpen }: { onOpen: () => void }): ReactNode {
 }
 
 /**
- * One card. Its tip is drawn on hover and on keyboard focus, and is the link's
- * description (`aria-describedby`): a `title` reaches neither a keyboard nor a
- * touch screen.
+ * One card: its icon, its label and its line, which is also the link's
+ * description (`aria-describedby`), never a `title` that reaches neither a
+ * keyboard nor a touch screen.
  */
 function WelcomeCard({ card, href, onOpen }: { card: Card; href: string; onOpen: () => void }): ReactNode {
   const tip = useId();
@@ -284,13 +300,13 @@ function WelcomeCard({ card, href, onOpen }: { card: Card; href: string; onOpen:
         onClick={onOpen}
         aria-describedby={tip}
         data-whats-new-card={card.key}
-        className={`group flex h-full min-w-0 flex-col items-center gap-2 rounded-lg border border-line px-2 py-3 text-center hover:border-accent/60 hover:bg-white/5 ${focusRing}`}
+        className={`flex h-full min-w-0 flex-col items-center gap-2 rounded-lg border border-line px-2 py-3 text-center hover:border-accent/60 hover:bg-white/5 ${focusRing}`}
       >
         <span aria-hidden="true" className="grid size-10 place-items-center rounded-lg border border-accent/40 bg-accent/10 text-accent [--icon:calc(var(--spacing)*5)]">
           <Icon name={card.icon} />
         </span>
         <span className="min-w-0 truncate font-medium text-fg">{card.label}</span>
-        <span id={tip} data-whats-new-tip="" className="sr-only text-2xs text-muted group-hover:not-sr-only group-focus-visible:not-sr-only">
+        <span id={tip} data-whats-new-tip="" className="text-2xs text-muted">
           {card.tip}
         </span>
       </Link>

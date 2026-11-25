@@ -78,16 +78,6 @@ try {
       // Nothing wider than the window: no horizontal scroll at 390 px.
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       console.log(`${file} overflow=${overflow}`);
-      // The cards' tips, as a keyboard reaches them: Tab onto the first card.
-      if (scene.endsWith('-welcome')) {
-        await page.focus('[data-whats-new-card]');
-        await page.keyboard.press('Tab');
-        await page.keyboard.press('Shift+Tab');
-        await page.waitForTimeout(200);
-        const focused = join(out, `welcome-keyboard-${viewport.name}.png`);
-        await page.screenshot({ path: focused, animations: 'disabled', caret: 'hide' });
-        console.log(focused);
-      }
       await context.close();
     }
   }

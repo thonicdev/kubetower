@@ -129,12 +129,15 @@ describe("What's new", () => {
       'Event Intelligence',
       'Extras',
     ]);
-    // What each holds is its description, shown on hover and keyboard focus: no title.
+    // Under the mark, the site's tagline and intro.
+    expect(box.querySelector('[data-whats-new-tagline]')?.textContent).toBe('The free Kubernetes console.');
+    expect(box.querySelector('[data-whats-new-intro]')?.textContent).not.toBe('');
+    // What each holds is its line, drawn and describing the link: no title.
     for (const card of cards) {
       const tip = document.getElementById(card.getAttribute('aria-describedby') ?? '');
       expect(tip?.textContent).not.toBe('');
       expect(card.contains(tip)).toBe(true);
-      expect(tip?.className).toContain('group-focus-visible:not-sr-only');
+      expect(tip?.className).not.toContain('sr-only');
       expect(card.hasAttribute('title')).toBe(false);
     }
     expect(screen.getByRole('button', { name: 'Get started' })).toBeDefined();
