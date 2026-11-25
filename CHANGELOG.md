@@ -18,6 +18,11 @@ per release. Keep the bold lead short: it is all the banner draws.
   how full each claim is (graded at 80 and 90 %), and each claim's last
   VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
   Overview. Extras can now draw a tile on the Overview (#90).
+- **Favorite extras.** A star on each extra, in Settings › Extra and on its
+  row of the menu, marks it a favorite of that cluster: it joins the menu's
+  Favorites section beside the favorite kinds, in the order marked, and a
+  link to it sits under the cluster's head on the Overview. Kept where the
+  favorite kinds are (#111).
 
 ### Fixed
 

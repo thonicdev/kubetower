@@ -13,6 +13,8 @@ import { Pill } from '../../components/Pill';
 import { TileGrid } from '../../components/Tile';
 import type { Extension } from '../../extension';
 import { focusRingTight } from '../../focus';
+import { extraFavourite } from '../../shell/favouriteExtras';
+import { useKindsChoice } from '../../shell/kindsMemory';
 import { useShellIfPresent } from '../../shell/ShellContext';
 import { ExtraPreview } from './ExtraPreview';
 import { ExtraSettingsModal } from './ExtraSettingsModal';
@@ -58,6 +60,8 @@ export function ExtraTab({
   // The extras this build carries, for their glyph and what each says about
   // itself. Absent outside a Shell (a test that renders the page alone).
   const shipped = useShellIfPresent()?.extensions;
+  // Favourites are per cluster, kept with the favourite kinds (#111).
+  const choice = useKindsChoice(cluster);
   const own = (key: string): Extension | undefined => shipped?.find((extension) => extension.key === key);
   // Which window is open, and on which cluster: one opened on another cluster
   // is not reopened by coming back to it.
@@ -101,6 +105,8 @@ export function ExtraTab({
             suggested={suggested.get(item.key)}
             onEdit={() => setOpen({ cluster, key: item.key, what: 'edit' })}
             onAbout={() => setOpen({ cluster, key: item.key, what: 'about' })}
+            favourite={choice.isFavourite(extraFavourite(item.key))}
+            onFavourite={choice.ready ? () => choice.toggleFavourite(extraFavourite(item.key)) : undefined}
           />
         ))}
       </TileGrid>
@@ -230,6 +236,8 @@ function ExtensionCard({
   suggested,
   onEdit,
   onAbout,
+  favourite,
+  onFavourite,
 }: {
   cluster: string;
   item: ExtensionInfo;
@@ -241,6 +249,10 @@ function ExtensionCard({
   suggested: string | undefined;
   onEdit: () => void;
   onAbout: () => void;
+  /** Marked as a favourite of this cluster (#111). */
+  favourite: boolean;
+  /** Mark or unmark it; undefined until the choice has been read. */
+  onFavourite: (() => void) | undefined;
 }): ReactNode {
   const reread = useExtraReread(cluster);
   const toggle = useMutation({
@@ -306,6 +318,18 @@ function ExtensionCard({
             ))}
           </div>
         </div>
+        <button
+          type="button"
+          aria-pressed={favourite}
+          aria-label={`Favorite: ${item.label}`}
+          title={favourite ? 'A favorite. Press to unmark it.' : 'Mark as a favorite'}
+          data-extra-favourite={item.key}
+          disabled={onFavourite === undefined}
+          onClick={onFavourite}
+          className={`flex size-6 shrink-0 items-center justify-center rounded-md hover:text-fg ${favourite ? 'text-accent' : 'text-muted'} ${focusRingTight}`}
+        >
+          <Icon name={favourite ? 'starred' : 'star'} />
+        </button>
         {writable || shownDisabled ? (
           <ExtraSwitch
             on={item.enabled}
