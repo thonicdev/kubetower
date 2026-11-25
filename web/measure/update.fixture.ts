@@ -9,42 +9,56 @@ type UpdateInstall = components['schemas']['UpdateInstall'];
 
 const MB = 1024 * 1024;
 
-type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'stalled' | 'failed' | 'manual';
+type Step = 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'stalled' | 'failed' | 'manual' | 'auto-quit' | 'auto-open' | 'auto-password';
 
 export const UPDATE_STEPS: Readonly<Record<Step, UpdateInstall>> = {
-  idle: { phase: 'idle', enabled: true, supported: true, installation: 'linux-appimage', ends: { terminals: 0, forwards: 0 } },
+  idle: { phase: 'idle', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage', ends: { terminals: 0, forwards: 0 } },
   downloading: {
-    phase: 'downloading', enabled: true, supported: true, installation: 'linux-appimage',
+    phase: 'downloading', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
     version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage', done: 14.2 * MB, total: 38 * MB,
     ends: { terminals: 0, forwards: 0 },
   },
   verifying: {
-    phase: 'verifying', enabled: true, supported: true, installation: 'linux-appimage',
+    phase: 'verifying', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
     version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage', ends: { terminals: 0, forwards: 0 },
   },
   ready: {
-    phase: 'ready', enabled: true, supported: true, installation: 'linux-appimage',
+    phase: 'ready', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
     version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage', ends: { terminals: 2, forwards: 1 },
   },
   installing: {
-    phase: 'installing', enabled: true, supported: true, installation: 'linux-appimage',
+    phase: 'installing', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
     version: '0.1.3', ends: { terminals: 2, forwards: 1 },
   },
   // The console did not stop for the setup (#96): ready again, with why.
   stalled: {
-    phase: 'ready', enabled: true, supported: true, installation: 'windows-setup',
+    phase: 'ready', enabled: false, when: 'quit', password: false, supported: true, installation: 'windows-setup',
     version: '0.1.3', asset: 'kubetower-0.1.3-setup.exe', ends: { terminals: 0, forwards: 0 },
     reason: 'KubeTower did not stop to install the update; nothing was installed',
   },
   failed: {
-    phase: 'failed', enabled: true, supported: true, installation: 'linux-appimage',
+    phase: 'failed', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
     reason: 'kubetower-0.1.3-x86_64.AppImage does not match its signed sha256', ends: { terminals: 0, forwards: 0 },
   },
   manual: {
-    phase: 'manual', enabled: true, supported: true, installation: 'linux-tar',
+    phase: 'manual', enabled: false, when: 'quit', password: false, supported: true, installation: 'linux-tar',
     version: '0.1.3', asset: 'kubetower_0.1.3_linux_amd64.tar.gz',
     folder: '/home/user/.local/state/kubetower/update/install-1', ends: { terminals: 0, forwards: 0 },
+  },  // "Install updates automatically" (#122), verified: on quit; now, waiting
+  // on what a restart closes; and a .deb, which asks for a password.
+  'auto-quit': {
+    phase: 'ready', enabled: true, when: 'quit', password: false, supported: true, installation: 'linux-appimage',
+    version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage', ends: { terminals: 2, forwards: 1 },
   },
+  'auto-open': {
+    phase: 'ready', enabled: true, when: 'now', password: false, supported: true, installation: 'linux-appimage',
+    version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage', ends: { terminals: 2, forwards: 1 },
+  },
+  'auto-password': {
+    phase: 'ready', enabled: true, when: 'quit', password: true, supported: true, installation: 'linux-deb',
+    version: '0.1.3', asset: 'kubetower_0.1.3_amd64.deb', ends: { terminals: 0, forwards: 0 },
+  },
+
 };
 
 export function updateSettings(install: UpdateInstall): Readonly<Record<string, unknown>> {

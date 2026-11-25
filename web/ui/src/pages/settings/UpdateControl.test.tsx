@@ -17,9 +17,12 @@ afterEach(() => {
   resetKeyboardStack();
 });
 
+/** By hand: "Install updates automatically" off (#122). */
 const idle: UpdateInstall = {
   phase: 'idle',
-  enabled: true,
+  enabled: false,
+  when: 'quit',
+  password: false,
   supported: true,
   installation: 'linux-appimage',
   ends: { terminals: 0, forwards: 0 },
@@ -126,6 +129,8 @@ async function pastTheTimeout(): Promise<void> {
 }
 
 const banner = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-update-banner]');
+/** "Install updates automatically" (#122). */
+const switchOf = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-install-updates] [role="switch"]');
 const control = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-update-banner] [data-update-control]');
 
 describe('the badge on Settings', () => {
@@ -143,7 +148,7 @@ describe('the badge on Settings', () => {
   });
 
   for (const [name, install, state] of [
-    ['installing turned off', { ...idle, enabled: false }, 'newer'],
+    ['an automatic update that needs nobody', { ...idle, enabled: true }, 'newer'],
     ['an installation that cannot be updated', { ...idle, supported: false }, 'newer'],
     ['the latest release', idle, 'current'],
     ['no installer at all', undefined, 'newer'],
@@ -267,7 +272,7 @@ describe('the banner and its two clicks', () => {
 });
 
 describe('Settings › Infos', () => {
-  it('draws Download beside View release and Check now, and the Install updates setting', async () => {
+  it('draws Download beside View release and Check now, and the automatic setting off', async () => {
     console(idle);
     mountApp('/settings/infos');
     await waitFor(() => {
@@ -278,22 +283,42 @@ describe('Settings › Infos', () => {
     // The action is on its own line, never run into the link (#96).
     expect(line?.querySelector('[data-update-control]')).toBeNull();
     expect(document.querySelector('[data-update-check] button')?.textContent).toBe('Check now');
-    expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(true);
+    const setting = document.querySelector<HTMLElement>('[data-install-updates]');
+    expect(setting?.dataset['installUpdates']).toBe('off');
+    expect(screen.getByRole('switch', { name: 'Install updates automatically' }).getAttribute('aria-checked')).toBe('false');
+    // Off, when it would install is drawn and not offered.
+    const choices = [...(setting?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? [])];
+    expect(choices.map((one) => [one.textContent, one.getAttribute('aria-checked'), one.disabled])).toEqual([
+      ['On quit', 'true', true],
+      ['At once', 'false', true],
+    ]);
   });
 
-  it('turns installing off: the banner and Download go, the check stays', async () => {
-    const c = console(idle, (_m, _p, body) => ({ status: 200, body: { ...idle, enabled: (body as { enabled: boolean }).enabled } }));
+  it('turns automatic on, then picks At once: the banner and Download go, the check stays', async () => {
+    const c = console(idle, (_m, _p, body) => ({ status: 200, body: { ...idle, ...(body as Partial<UpdateInstall>) } }));
     mountApp('/settings/infos');
+    const toggle = await screen.findByRole('switch', { name: 'Install updates automatically' });
     await waitFor(() => {
-      expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+      expect(banner()).not.toBeNull();
     });
-    fireEvent.click(document.querySelector('[data-install-updates] input') as Element);
+    fireEvent.click(toggle);
     await waitFor(() => {
       expect(banner()).toBeNull();
     });
-    expect(c.sent).toEqual([{ method: 'PUT', path: '/api/settings/update', body: { enabled: false } }]);
     expect(document.querySelector('[data-update-download]')).toBeNull();
     expect(document.querySelector('[data-update-check] button')?.textContent).toBe('Check now');
+    const now = document.querySelector<HTMLButtonElement>('[data-install-when="now"]');
+    await waitFor(() => {
+      expect(now?.disabled).toBe(false);
+    });
+    fireEvent.click(now as Element);
+    await waitFor(() => {
+      expect(document.querySelector('[data-install-when="now"]')?.getAttribute('aria-checked')).toBe('true');
+    });
+    expect(c.sent).toEqual([
+      { method: 'PUT', path: '/api/settings/update', body: { enabled: true } },
+      { method: 'PUT', path: '/api/settings/update', body: { enabled: true, when: 'now' } },
+    ]);
   });
 
   it('draws no setting where nothing installs', async () => {
@@ -458,19 +483,19 @@ describe('what is drawn for odd states', () => {
   });
 
   it('reads the setting back when the server applied it but could not save it', async () => {
-    const off: UpdateInstall = { ...idle, enabled: false };
+    const on: UpdateInstall = { ...idle, enabled: true };
     console(idle, () => ({
       status: 500,
       body: { type: 'about:blank', title: 'Internal Server Error', status: 500, code: 'not_saved', detail: 'not_saved: read-only state' },
-      now: off,
+      now: on,
     }));
     mountApp('/settings/infos');
     await waitFor(() => {
-      expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(true);
+      expect(switchOf()?.getAttribute('aria-checked')).toBe('false');
     });
-    fireEvent.click(document.querySelector('[data-install-updates] input') as Element);
+    fireEvent.click(switchOf() as Element);
     await waitFor(() => {
-      expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(false);
+      expect(switchOf()?.getAttribute('aria-checked')).toBe('true');
     });
     expect(banner()).toBeNull();
     expect(document.querySelector('[data-update-download]')).toBeNull();
@@ -567,10 +592,11 @@ describe('the install timeout, once the console answers', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
       });
-      const box = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('[data-install-updates] input');
+      // On, then off again: by hand, Restart to update is in the banner.
+      const box = switchOf;
       fireEvent.click(box() as Element);
       await waitFor(() => {
-        expect(box()?.checked).toBe(false);
+        expect(box()?.getAttribute('aria-checked')).toBe('true');
       });
       fireEvent.click(box() as Element);
       await waitFor(() => {
@@ -703,11 +729,11 @@ describe('the update through Check now (#96)', () => {
     });
     mountApp('/settings/infos');
 
-    // idle: Download, on its own line, the checkbox beside the check.
+    // idle: Download, on its own line, the setting beside the check.
     await waitFor(() => {
       expect(action()?.querySelector('[data-update-download]') ?? null).not.toBeNull();
     });
-    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+    expect(switchOf()).not.toBeNull();
     fireEvent.click(action()?.querySelector('[data-update-download]') as Element);
 
     // downloading, then ready: Restart to update.
@@ -715,7 +741,7 @@ describe('the update through Check now (#96)', () => {
       expect(action()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
     });
 
-    // Check now, answered without install: Install and the checkbox stay.
+    // Check now, answered without install: Install and the setting stay.
     checkNow();
     await waitFor(() => {
       expect(c.sent.filter((s) => s.path === '/api/settings/update-check')).toHaveLength(1);
@@ -725,7 +751,7 @@ describe('the update through Check now (#96)', () => {
     });
     expect(action()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
     expect(banner()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
-    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+    expect(switchOf()).not.toBeNull();
 
     // install: Installing…, on the banner and on Infos' line.
     fireEvent.click(action()?.querySelector('[data-update-restart]') as Element);
@@ -740,7 +766,7 @@ describe('the update through Check now (#96)', () => {
       expect(c.sent.filter((s) => s.path === '/api/settings/update-check')).toHaveLength(2);
     });
     expect(action()?.querySelector('[data-update-step="installing"]') ?? null).not.toBeNull();
-    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+    expect(switchOf()).not.toBeNull();
 
     // The console did not stop: back to ready, the reason drawn, Install again.
     c.now.install = { ...ready, reason: 'KubeTower did not stop to install the update; nothing was installed' };
@@ -756,5 +782,58 @@ describe('the update through Check now (#96)', () => {
       expect(c.sent.filter((s) => s.path === '/api/settings/update/install')).toHaveLength(2);
     });
     expect(c.sent.filter((s) => s.path === '/api/settings/update/download')).toHaveLength(1);
+  });
+});
+
+describe('automatic updates (#122)', () => {
+  const ready: UpdateInstall = { ...idle, phase: 'ready', enabled: true, version: '0.1.3', asset: 'kubetower-0.1.3-x86_64.AppImage' };
+  const infosControl = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-update-action] [data-update-control]');
+
+  it('on quit: ready and On quit, Restart now beside them, and no banner or badge', async () => {
+    console({ ...ready, ends: { terminals: 2, forwards: 0 } });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(infosControl()?.querySelector('[data-update-on-quit]')?.textContent).toBe('On quit');
+    });
+    const restart = infosControl()?.querySelector<HTMLButtonElement>('[data-update-restart]');
+    expect(restart?.textContent).toBe('Restart now');
+    // What it closes, in its tooltip rather than a badge.
+    expect(restart?.title).toBe('Closes 2 terminals');
+    expect(infosControl()?.querySelector('[data-update-ends]')).toBeNull();
+    expect(banner()).toBeNull();
+    expect(document.querySelector('[data-count-badge]')).toBeNull();
+  });
+
+  it('now, with work open: the wait as a badge, in the banner and on the badge', async () => {
+    const c = console({ ...ready, when: 'now', ends: { terminals: 2, forwards: 1 } });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(control()?.querySelector('[data-update-waits="open"]')?.textContent).toBe('2 terminals · 1 forward');
+    });
+    expect(infosControl()?.querySelector('[data-update-on-quit]')).toBeNull();
+    expect(document.querySelector('a[href^="/settings"] [data-count-badge]')).not.toBeNull();
+    fireEvent.click(control()?.querySelector('[data-update-restart]') as Element);
+    await waitFor(() => {
+      expect(c.sent).toEqual([{ method: 'POST', path: '/api/settings/update/install', body: undefined }]);
+    });
+  });
+
+  it('a password: never asked unprompted, Install offered in the banner', async () => {
+    console({ ...ready, installation: 'linux-deb', password: true });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(control()?.querySelector('[data-update-waits="password"]')?.textContent).toBe('Password');
+    });
+    expect(control()?.querySelector('[data-update-restart]')?.textContent).toBe('Install');
+    expect(infosControl()?.querySelector('[data-update-on-quit]')).toBeNull();
+  });
+
+  it('a running automatic download is drawn in Infos and not in a banner', async () => {
+    console({ ...ready, phase: 'downloading', done: 1024 * 1024, total: 4 * 1024 * 1024 });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(infosControl()?.querySelector('[role="progressbar"]')).not.toBeNull();
+    });
+    expect(banner()).toBeNull();
   });
 });

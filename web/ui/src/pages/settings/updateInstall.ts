@@ -30,8 +30,34 @@ export function openUpdateFolder(): Promise<UpdateInstall> {
   return request<UpdateInstall>(path('/api/settings/update/open-folder'), { method: 'POST' });
 }
 
-export function setInstallUpdates(enabled: boolean): Promise<UpdateInstall> {
-  return request<UpdateInstall>(path('/api/settings/update'), { method: 'PUT', body: { enabled } });
+/** "Install updates automatically", and when it installs (#122). */
+export type InstallUpdatesWrite = components['schemas']['UpdateInstallWrite'];
+
+export function setInstallUpdates(write: InstallUpdatesWrite): Promise<UpdateInstall> {
+  return request<UpdateInstall>(path('/api/settings/update'), { method: 'PUT', body: write });
+}
+
+/**
+ * What a verified automatic update waits on a person for (#122): a password
+ * (a .deb or .rpm, never asked unprompted), or, set to install now, what a
+ * restart would close. Nothing when it installs on its own.
+ */
+export function waitsOn(install: UpdateInstall): 'password' | 'open' | undefined {
+  if (!install.enabled || install.phase !== 'ready') return undefined;
+  if (install.password) return 'password';
+  if (install.when === 'now' && (install.ends.terminals > 0 || install.ends.forwards > 0)) return 'open';
+  return undefined;
+}
+
+/**
+ * Whether the update needs a person: by hand, a newer release to download or
+ * a step to take; automatic, only a wait on them, a failure or the manual
+ * phase. The badge on Settings and its banner follow it.
+ */
+export function needsPerson(install: UpdateInstall, newer: boolean): boolean {
+  if (!install.supported) return false;
+  if (!install.enabled) return newer || install.phase !== 'idle';
+  return waitsOn(install) !== undefined || install.phase === 'failed' || install.phase === 'manual';
 }
 
 export function getUpdateInstall(signal?: AbortSignal): Promise<UpdateInstall> {
@@ -165,8 +191,8 @@ function useInstallClock(installing: boolean): { timedOut: boolean; reset: () =>
 
 /**
  * The update as the page draws it: the check's answer, the install state, and
- * the three writes. `offered` is the badge's and the banner's condition: a
- * newer release, installing allowed, and this installation supported.
+ * the writes. `offered` is the badge's condition: a newer release this
+ * installation can take that needs a person (needsPerson).
  */
 export function useUpdateInstall(): {
   running: string | undefined;
@@ -188,7 +214,7 @@ export function useUpdateInstall(): {
   restart: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
   /** Show the verified file, where the installation's folder is not writable. */
   openFolder: ReturnType<typeof useMutation<UpdateInstall, Error, void>>;
-  allow: ReturnType<typeof useMutation<UpdateInstall, Error, boolean>>;
+  allow: ReturnType<typeof useMutation<UpdateInstall, Error, InstallUpdatesWrite>>;
 } {
   const settings = useSettings();
   const update = settings.data?.info.update;
@@ -237,7 +263,7 @@ export function useUpdateInstall(): {
   });
   // The server applies the setting even when it cannot save it (500
   // not_saved): read it back rather than keep the box where it was.
-  const allow = useMutation<UpdateInstall, Error, boolean>({
+  const allow = useMutation<UpdateInstall, Error, InstallUpdatesWrite>({
     mutationFn: setInstallUpdates,
     onSuccess: keep,
     onError: reread,
@@ -248,8 +274,7 @@ export function useUpdateInstall(): {
   const asked = useMutationState({ filters: { mutationKey: ['update'] }, select: (one) => one.state });
   const last = asked[asked.length - 1];
   const refused = last?.status === 'error' && last.error instanceof Error ? last.error : null;
-  const offered =
-    update?.state === 'newer' && install !== undefined && install.enabled && install.supported;
+  const offered = update?.state === 'newer' && install !== undefined && needsPerson(install, true);
   return {
     running: settings.data?.info.version,
     latest: update?.latest,

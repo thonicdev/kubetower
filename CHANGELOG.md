@@ -11,6 +11,15 @@ per release. Keep the bold lead short: it is all the dialog draws.
 
 ## Unreleased
 
+### Added
+
+- **Updates install themselves.** Settings › Infos' "Install updates"
+  becomes "Install updates automatically", on by default: a newer release is
+  downloaded and verified on its own, then installed as KubeTower quits, so
+  nothing open is interrupted, or, set to At once, as soon as no terminal and
+  no port-forward is open. A .deb or .rpm, which asks for a password, stops at
+  Ready with Install. Off, Download and Install stay by hand (#122).
+
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 
 ### Added
