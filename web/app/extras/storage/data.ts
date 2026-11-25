@@ -118,6 +118,8 @@ export interface Counts {
   orphanClasses: number;
   retainedOrphans: number;
   measured: number;
+  /** Claims on a share: measured, with no percentage. */
+  shared: number;
   warn: number;
   bad: number;
   snapshotted: number;
@@ -283,6 +285,15 @@ export type Show = (typeof SHOWS)[number];
 
 export function showOf(raw: string | null): Show {
   return (SHOWS as readonly string[]).includes(raw ?? '') ? (raw as Show) : 'all';
+}
+
+/**
+ * Whether how full the claims are is known: once one claim was measured. A
+ * kubelet that answered with no claim's figure - a driver reporting no volume
+ * stats - knows nothing either, and nothing is graded on it.
+ */
+export function fillKnown(data: Pick<Overview, 'counts'>): boolean {
+  return data.counts.measured + data.counts.shared > 0;
 }
 
 export function passes(c: Claim, show: Show): boolean {

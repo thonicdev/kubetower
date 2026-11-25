@@ -89,8 +89,10 @@ type Counts struct {
 	OrphanClasses int `json:"orphanClasses"`
 	// RetainedOrphans counts the orphaned volumes whose policy is Retain: the
 	// disk is kept, and billed, until somebody deletes it.
-	RetainedOrphans  int   `json:"retainedOrphans"`
-	Measured         int   `json:"measured"`
+	RetainedOrphans int `json:"retainedOrphans"`
+	Measured        int `json:"measured"`
+	// Shared counts the claims on a share: measured, with no percentage.
+	Shared           int   `json:"shared"`
 	Warn             int   `json:"warn"`
 	Bad              int   `json:"bad"`
 	Snapshotted      int   `json:"snapshotted"`
@@ -120,10 +122,18 @@ type Answer struct {
 // podInfo is what a pod tells this page: where it runs and what it mounts.
 type podInfo struct {
 	namespace, name, node string
+	uid                   string
 	running               bool
-	claims                []string
-	workload              *Workload
+	// claims are the claims its persistentVolumeClaim volumes name, and the
+	// `<pod>-<volume>` claims of its generic ephemeral volumes; ephemeral says
+	// which are the latter, mounted only by the pod that owns them.
+	claims    []string
+	ephemeral map[string]bool
+	workload  *Workload
 }
+
+// podOwner is the pod a claim's ownerReference names.
+type podOwner struct{ name, uid string }
 
 // set is a StatefulSet, reduced to what names its claims.
 type set struct {
@@ -196,7 +206,7 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 	claims := make([]Claim, 0, len(page.Items))
 	labelled := map[string]bool{}
 	ownedBySet := map[string]string{}
-	ownedByPod := map[string]string{}
+	ownedByPod := map[string]podOwner{}
 	for i := range page.Items {
 		var c corev1.PersistentVolumeClaim
 		if runtime.DefaultUnstructuredConverter.FromUnstructured(page.Items[i].Object, &c) != nil {
@@ -211,7 +221,7 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 				ownedBySet[key] = owner.Name
 			case "Pod":
 				// A generic ephemeral volume's claim, owned by its pod.
-				ownedByPod[key] = owner.Name
+				ownedByPod[key] = podOwner{name: owner.Name, uid: string(owner.UID)}
 			}
 		}
 		claims = append(claims, claim)
@@ -282,7 +292,14 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 	mounting := map[string][]podInfo{}
 	for _, p := range pods {
 		for _, c := range p.claims {
-			mounting[p.namespace+"/"+c] = append(mounting[p.namespace+"/"+c], p)
+			key := p.namespace + "/" + c
+			// An ephemeral volume's claim is the one Kubernetes made for this
+			// pod: owned by it, UID and all. A claim that only shares the name is
+			// somebody else's, and the pod cannot start on it.
+			if p.ephemeral[c] && ownedByPod[key] != (podOwner{name: p.name, uid: p.uid}) {
+				continue
+			}
+			mounting[key] = append(mounting[key], p)
 		}
 	}
 	sets, setsKnown := readSets(r, h, cluster, ns, incomplete)
@@ -291,10 +308,6 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 		c := &claims[i]
 		key := c.Namespace + "/" + c.Name
 		users := mounting[key]
-		if p, ok := pods[c.Namespace+"/"+ownedByPod[key]]; ok && len(users) == 0 && ownedByPod[key] != "" {
-			users = []podInfo{p}
-			mounting[key] = users
-		}
 		switch {
 		case !mountsKnown:
 			c.Mount = MountUnknown
@@ -378,6 +391,9 @@ func tally(a *Answer, claims []Claim, volumes []Volume, classes []Class) {
 		if c.Orphan != "" {
 			n.OrphanClaims++
 		}
+		if c.Fill.State == FillShared {
+			n.Shared++
+		}
 		if c.Fill.State == FillMeasured {
 			n.Measured++
 			switch c.Fill.Level {
@@ -418,14 +434,18 @@ func readPods(r *http.Request, h extension.Host, cluster, ns string, a *Answer, 
 		if runtime.DefaultUnstructuredConverter.FromUnstructured(o.Object, &p) != nil {
 			return nil
 		}
-		info := podInfo{namespace: p.Namespace, name: p.Name, node: p.Spec.NodeName,
+		info := podInfo{namespace: p.Namespace, name: p.Name, node: p.Spec.NodeName, uid: string(p.UID),
 			running: p.Status.Phase == corev1.PodRunning, workload: workloadOf(&p)}
 		for _, v := range p.Spec.Volumes {
 			switch {
 			case v.PersistentVolumeClaim != nil:
 				info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
 			case v.Ephemeral != nil:
+				if info.ephemeral == nil {
+					info.ephemeral = map[string]bool{}
+				}
 				info.claims = append(info.claims, p.Name+"-"+v.Name)
+				info.ephemeral[p.Name+"-"+v.Name] = true
 			}
 		}
 		if len(info.claims) > 0 {

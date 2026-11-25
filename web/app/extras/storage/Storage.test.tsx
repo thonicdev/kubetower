@@ -233,6 +233,21 @@ describe('the Overview tile', () => {
     expect(tile.badges).not.toContain(expect.stringContaining('snapshotted'));
   });
 
+  it('carries no grade when the kubelets answered and measured no claim', async () => {
+    // A driver reporting no volume stats: the source read, every claim unread.
+    const counts = { ...STORAGE_BARE.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0 };
+    const answered = { ...STORAGE_BARE, counts, fill: { state: 'read' as const, asked: 2, answered: 2 } };
+    stub({ [ROUTE]: { body: answered } });
+    const tile = await storageTile('prod', new AbortController().signal);
+    expect(tile.status).toBeUndefined();
+    expect(tile.badges).toContain('fill unread');
+    cleanup();
+    stub({ [ROUTE]: { body: answered } });
+    mount();
+    await screen.findByRole('table');
+    expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
+  });
+
   it('carries no grade, never a green OK, when no kubelet was read and nothing is orphaned', async () => {
     const counts = { ...STORAGE_BARE.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0 };
     stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts } } });

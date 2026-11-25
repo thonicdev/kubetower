@@ -10,7 +10,9 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/thonicdev/kubetower/extension"
 )
@@ -438,37 +440,46 @@ func TestItReadsOnlyWhatItDeclares(t *testing.T) {
 
 // A generic ephemeral volume's claim is named `<pod>-<volume>` and owned by
 // its pod: the pod mounts it, so it is no orphan, and its kubelet's figure is
-// drawn.
+// drawn. The name alone is not enough, nor the owner alone.
 func TestAnEphemeralVolumesClaimIsMountedByItsPod(t *testing.T) {
 	at(t)
 	h := shop(t)
-	scratch := claim(t, "shop", "job-x-scratch", "gp3", "10Gi", "pv-scratch", nil)
-	scratch.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "job-x", UID: "u-job-x"}})
-	h.add("persistentvolumeclaims", scratch)
-	h.add("pods", obj(t, map[string]any{
-		"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "shop", "name": "job-x"},
-		"spec": map[string]any{"nodeName": "node-a", "containers": []any{map[string]any{"name": "app", "image": "app:1"}},
-			"volumes": []any{map[string]any{"name": "scratch", "ephemeral": map[string]any{"volumeClaimTemplate": map[string]any{
-				"spec": map[string]any{"accessModes": []any{"ReadWriteOnce"}, "resources": map[string]any{"requests": map[string]any{"storage": "10Gi"}}}}}}}},
-		"status": map[string]any{"phase": "Running"},
-	}))
+	ownedBy := func(c unstructured.Unstructured, uid string) unstructured.Unstructured {
+		c.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "job-x", UID: types.UID(uid)}})
+		return c
+	}
+	ephemeralPod := func(name, uid, phase string, volumes ...string) unstructured.Unstructured {
+		var vs []any
+		for _, v := range volumes {
+			vs = append(vs, map[string]any{"name": v, "ephemeral": map[string]any{"volumeClaimTemplate": map[string]any{
+				"spec": map[string]any{"accessModes": []any{"ReadWriteOnce"}, "resources": map[string]any{"requests": map[string]any{"storage": "10Gi"}}}}}})
+		}
+		return obj(t, map[string]any{
+			"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "shop", "name": name, "uid": uid},
+			"spec":   map[string]any{"nodeName": "node-a", "containers": []any{map[string]any{"name": "app", "image": "app:1"}}, "volumes": vs},
+			"status": map[string]any{"phase": phase},
+		})
+	}
+	h.add("persistentvolumeclaims",
+		ownedBy(claim(t, "shop", "job-x-scratch", "gp3", "10Gi", "pv-scratch", nil), "u-job-x"),
+		// Owned by job-x, which has no volume for it.
+		ownedBy(claim(t, "shop", "job-x-cache", "gp3", "1Gi", "pv-c", nil), "u-job-x"),
+		// Named like job-x's, owned by an earlier job-x: another pod's claim.
+		ownedBy(claim(t, "shop", "job-x-old", "gp3", "1Gi", "pv-o", nil), "u-earlier"),
+		// Named like web's, and nobody's.
+		claim(t, "shop", "web-data", "gp3", "1Gi", "pv-w", nil),
+	)
+	h.add("pods", ephemeralPod("job-x", "u-job-x", "Running", "scratch", "old"), ephemeralPod("web", "u-web", "Pending", "data"))
 	h.measured("node-a", "shop/job-x-scratch", 2*gi, 10*gi)
 	a := overview(t, h, "")
 	c := claimNamed(t, a, "shop", "job-x-scratch")
 	if c.Mount != MountMounted || c.Orphan != "" || len(c.Pods) != 1 || c.Pods[0] != "job-x" || c.Fill.State != FillMeasured {
 		t.Errorf("an ephemeral claim = mount %q orphan %q pods %v fill %+v, want mounted by job-x and measured", c.Mount, c.Orphan, c.Pods, c.Fill)
 	}
-	if a.Counts.OrphanClaims != 3 {
-		t.Errorf("orphan claims = %d, want the 3 of shop: the ephemeral claim is not one", a.Counts.OrphanClaims)
-	}
-
-	// Owned by its pod alone, without the volume in the pod's spec, it is
-	// mounted all the same.
-	owned := claim(t, "shop", "job-x-cache", "gp3", "1Gi", "pv-c", nil)
-	owned.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "job-x", UID: "u-job-x"}})
-	h.add("persistentvolumeclaims", owned)
-	if c := claimNamed(t, overview(t, h, ""), "shop", "job-x-cache"); c.Mount != MountMounted || c.Orphan != "" {
-		t.Errorf("a claim its live pod owns = %q %q, want mounted", c.Mount, c.Orphan)
+	for _, name := range []string{"job-x-cache", "job-x-old", "web-data"} {
+		if c := claimNamed(t, a, "shop", name); c.Mount != MountUnmounted || c.Orphan != OrphanUnmounted {
+			t.Errorf("%s = mount %q orphan %q pods %v, want an unmounted orphan", name, c.Mount, c.Orphan, c.Pods)
+		}
 	}
 }
 
