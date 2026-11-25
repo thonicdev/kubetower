@@ -9,7 +9,43 @@ release's highlights: every entry under `### Added`, and an entry under
 `### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
 per release. Keep the bold lead short: it is all the banner draws.
 
-## Unreleased
+## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
+
+### Added
+
+- **The Runtime Inspector reads Go, Node.js and Python**, beside Java,
+  from the pod's spec: the command line, then the environment,
+  then the image. The pod annotation `kubetower.io/runtime` decides when the
+  spec does not (`python`, or `app=go,metrics=none` per container). The
+  Runtime column names each runtime (`Java · Go`), and a pod gets one tab per
+  runtime it runs, with the hints as badges (#19, #31, #81). The Python tab
+  shows the detection only.
+- **Go: goroutines and profiles through pprof**, on a click: goroutines grouped by state and stack, and the heap profile, a CPU
+  profile (10, 30 or 60 s) and a trace (5 or 10 s) as downloads. The port is
+  the `kubetower.io/pprof-port` annotation, a container port named `pprof`,
+  or 6060. It goes through a tunnel to the pod, reviewed and recorded as
+  `create pods/portforward`; no signal is sent and nothing attaches (#20,
+  #21, #33, #35).
+- **Node.js: the inspector on a confirmed click.** Opening it runs one fixed `node -e` script in the container (reviewed as
+  `create pods/exec`, recorded), which calls `process._debugProcess`; the
+  inspector then stays open until the process restarts. Through it: a heap
+  snapshot (confirmed, at most 1 GiB), a CPU profile and the diagnostic
+  report, with secret-looking environment values masked. A process started
+  with `--disable-sigusr1` is never opened (#22, #36).
+- **Event Intelligence: a readable timeline when many nodes join.** Node
+  changes close in time are one marker (`+17`, `!1`), each workload is
+  one row of density cells unfolding by reason, Warnings are shown first
+  (`Normal` on a toggle), and the changes Warnings came after are cards
+  above the timeline that light what they relate to. A cut answer shows a
+  count (`2 012 of 2 058`) (#86, #89).
+- **Hubble UI and Whisker in a window of their own**, in the desktop on Windows and macOS, with no console session in it;
+  **↗** still opens the default browser. The window stays on the tunnel's
+  address, closes the tunnel it opened, and closes with the console. Linux,
+  a browser and a console in a cluster are unchanged (#65, #79). Not tried
+  on a real Windows or macOS machine yet.
+- **A welcome tour, and what's new after an upgrade.** A banner atop the console shows a tour of the main views, or the highlights
+  of every release since the last one seen, read from this file built into
+  the console. **Settings › Infos › What's new** opens it again (#80, #83).
 
 ### Changed
 
@@ -18,7 +54,22 @@ per release. Keep the bold lead short: it is all the banner draws.
   and the chart's `extras`, the stored switch, bookmarks and tab links, API
   addresses under `/x/<cluster>/jvm/` (a 308 to `runtime`), and a ClusterRole
   granting `use` on `extras.kubetower.dev/jvm`. Grant `runtime` in new roles
-  (#18).
+  (#18, #27).
+- **A cluster in `KT_READONLY_CLUSTERS` runs no diagnostic.** jcmd, pprof,
+  the Node.js inspector and its snapshot answer `read_only` ("Read-only
+  cluster") before any tunnel opens or command runs, and the refusal is now
+  written to the audit log (#85, #87).
+
+### Fixed
+
+- **Runtime Inspector: a link from another site runs nothing.** The routes
+  that run jcmd, open a tunnel or take a dump answer a POST from the console
+  only; the JVM tab's tools list was a GET in 0.1.2 (#82, #87).
+- **Runtime Inspector: `npm start` and a Python server are not read as
+  Java** when `JAVA_HOME` is set or the image is a JDK, and npm's own
+  process is not offered beside the application (#11, #19, #81, #87).
+- **Postgres (CNPG): Read lag names a read-only cluster as one**, instead
+  of "you may not run commands in this pod" (#11, #88).
 
 ## 0.1.2 — signed updates, Redis viewer and Network Inspector fixes
 
