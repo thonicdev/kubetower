@@ -168,6 +168,10 @@ const (
 	// (rbacChange). It refuses on every answer, like a denial, and is
 	// nobody's denial.
 	NotInProfile Decision = "not_in_profile"
+	// ReadOnly is a request refused because its cluster is marked read-only
+	// (KT_READONLY_CLUSTERS), so no review was asked. It refuses on every
+	// answer and is nobody's denial.
+	ReadOnly Decision = "read_only"
 )
 
 // Subject says whose rights an answer is about.

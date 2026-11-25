@@ -2,6 +2,7 @@ package extension
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +38,14 @@ var (
 	// the read through, so a page there rarely sees it.
 	ErrUnreviewable = access.ErrUnreviewable
 )
+
+// ErrReadOnly: the cluster is marked read-only (KT_READONLY_CLUSTERS), so the
+// console refuses an act there that runs a command in a pod or opens a tunnel
+// to one (Exec, ExecStream, ForwardPod), before it is counted, reviewed or
+// sent; only the refusal is recorded. It answers errors.Is for ErrDenied too,
+// so a page that maps a denial already answers it as one; a page that asks
+// ErrReadOnly first can say why in the marking's words.
+var ErrReadOnly = fmt.Errorf("%w: the cluster is marked read-only", ErrDenied)
 
 // ErrChanged: a write the console refused because the object changed, or was
 // created again, after the console read it. RefreshApplication answers it

@@ -251,6 +251,19 @@ describe('the JVM tab', () => {
     expect(failure?.querySelector('[title]')?.getAttribute('title')).toContain('a JRE or a distroless image');
   });
 
+  it('titles a read-only cluster\'s refusal, the line in its tooltip', async () => {
+    const line = 'kind is read-only: no command, tunnel or dump.';
+    stub({
+      [`GET ${POD}`]: { body: pod(true) },
+      [`POST ${INSPECT}`]: { status: 403, body: { code: 'read_only', message: line } },
+    });
+    mount(<JVMTab cluster="kind" kind="pods" namespace="shop" name="billing-0" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect' }));
+    const title = await screen.findByText('Read-only cluster');
+    expect(title.closest('[data-jvm-failure="read_only"]')).not.toBeNull();
+    expect(title.getAttribute('title')).toBe(line);
+  });
+
   it('draws an Attach disabled badge with the cause in its tooltip and greys the actions', async () => {
     const cause = 'The JVM does not support the attach mechanism.';
     stub({

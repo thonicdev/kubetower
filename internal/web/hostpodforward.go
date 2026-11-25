@@ -9,6 +9,7 @@ import (
 
 	"github.com/thonicdev/kubetower/extension"
 	"github.com/thonicdev/kubetower/internal/access"
+	"github.com/thonicdev/kubetower/internal/audit"
 	"github.com/thonicdev/kubetower/internal/metrics"
 )
 
@@ -21,8 +22,9 @@ var _ extension.PodForwarder = host{}
 // port of a pod reaches about as far. Counted with Forward's tunnels
 // (tunnelcap.go), and closed when r ends at the latest.
 //
-// KT_READONLY_CLUSTERS does not refuse it, as it does not refuse Forward: a
-// tunnel reads what a port answers and changes nothing in the cluster.
+// A cluster in KT_READONLY_CLUSTERS refuses it (refuseReadOnly), as the
+// console's own forward is refused there: a tunnel to a pod's diagnostics port
+// can take a dump or attach a debugger, which the marking is about.
 func (h host) ForwardPod(r *http.Request, name, namespace, pod string, port int) (extension.Tunnel, error) {
 	if h.ext == "" {
 		return extension.Tunnel{}, errors.New("ForwardPod is answered only to a mounted extension, so the record " +
@@ -49,13 +51,21 @@ func (h host) ForwardPod(r *http.Request, name, namespace, pod string, port int)
 	if pods == nil {
 		return extension.Tunnel{}, errors.New("this build has no port forwarder, so nothing inside a cluster can be reached")
 	}
+	resolved := name
 	if h.s.clusters != nil {
-		if _, ok := h.s.clusters.Resolve(name); !ok {
+		var ok bool
+		if resolved, ok = h.s.clusters.Resolve(name); !ok {
 			return extension.Tunnel{}, fmt.Errorf("%w: %q is not a context in the kubeconfig", extension.ErrUnknownCluster, name)
 		}
 	}
 	ctx := r.Context()
-	tunnel, err := pods.OpenPod(access.WithNote(ctx, access.Note{Extension: h.ext}), name, namespace, pod, port)
+	noted := access.WithNote(ctx, access.Note{Extension: h.ext})
+	attrs := access.Attributes{Verb: "create", Version: "v1", Resource: "pods", Subresource: "portforward",
+		Namespace: namespace, Name: pod}
+	if err := h.refuseReadOnly(noted, resolved, audit.PortForward, attrs, "opening a tunnel to a pod"); err != nil {
+		return extension.Tunnel{}, err
+	}
+	tunnel, err := pods.OpenPod(noted, name, namespace, pod, port)
 	if err != nil {
 		return extension.Tunnel{}, err
 	}

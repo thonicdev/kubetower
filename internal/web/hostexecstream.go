@@ -9,6 +9,7 @@ import (
 
 	"github.com/thonicdev/kubetower/extension"
 	"github.com/thonicdev/kubetower/internal/access"
+	"github.com/thonicdev/kubetower/internal/audit"
 	"github.com/thonicdev/kubetower/internal/terminal"
 )
 
@@ -38,7 +39,9 @@ func (h host) ExecStream(r *http.Request, name string, q extension.ExecQuery, st
 	if err != nil {
 		return extension.ExecStreamResult{}, err
 	}
-	if err := h.refuseReadOnly(client.Context); err != nil {
+	attrs := execAttributes(q.Namespace, q.Pod)
+	noted := access.WithNote(r.Context(), access.Note{Extension: h.ext, Command: quoteArgv(q.Command)})
+	if err := h.refuseReadOnly(noted, client.Context, audit.Exec, attrs, "running a command in a pod"); err != nil {
 		return extension.ExecStreamResult{}, err
 	}
 	release, err := h.s.execShare().take(r.Context())
@@ -50,7 +53,6 @@ func (h host) ExecStream(r *http.Request, name string, q extension.ExecQuery, st
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	ctx = access.WithNote(ctx, access.Note{Extension: h.ext, Command: quoteArgv(q.Command)})
-	attrs := execAttributes(q.Namespace, q.Pod)
 
 	var out terminal.StreamOutput
 	_, err = h.s.gate.Perform(ctx, client.Context, attrs, func(ctx context.Context) error {

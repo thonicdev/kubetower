@@ -205,6 +205,8 @@ func writeTunnelFailure(w http.ResponseWriter, cluster string, err error) {
 	case errors.Is(err, extension.ErrUnknownCluster):
 		writeProblem(w, http.StatusNotFound, CodeUnknownCluster, extension.UnknownClusterText(cluster), err)
 	case errors.Is(err, context.Canceled):
+	case errors.Is(err, extension.ErrReadOnly):
+		writeReadOnly(w, cluster, err)
 	case errors.Is(err, extension.ErrDenied):
 		writeProblem(w, http.StatusForbidden, CodeTunnelForbidden,
 			"The cluster says you may not port-forward to this pod.", err)
