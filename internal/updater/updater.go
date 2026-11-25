@@ -141,9 +141,45 @@ const (
 const ExitWait = 90 * time.Second
 
 // abandonHelper stops a helper still waiting on this process, after ExitWait:
-// left waiting, it would run the setup whenever the console exits later,
-// unasked. The Windows installers set it.
-var abandonHelper = func() {}
+// left waiting, it would run the setup or a relaunch whenever the console
+// exits later, unasked, and a second Install would start a second one. It
+// also removes what that helper was to move into place. Each platform's
+// installers set it; an error is a helper that could not be stopped.
+var abandonHelper = func() error { return nil }
+
+// helperLog is the running install's log, for a helper started deep in an
+// installer (the Unix relaunch) that is not handed the plan.
+var helperLog struct {
+	sync.Mutex
+	path string
+}
+
+func useLog(path string) {
+	helperLog.Lock()
+	helperLog.path = path
+	helperLog.Unlock()
+}
+
+func currentLog() string {
+	helperLog.Lock()
+	defer helperLog.Unlock()
+	return helperLog.path
+}
+
+// installsAfterExit says the helper, not this process, does the install, once
+// the console has exited: Windows' setup and zip swap. Elsewhere the new build
+// is already in place when the console is asked to stop, and only the restart
+// waits.
+var installsAfterExit = false
+
+// errInstalledNotRestarted is the reason an install ends with when the new
+// build is in place and the console did not stop to run it (#101).
+var errInstalledNotRestarted = errors.New("the update is installed; quit KubeTower and start it again to run it")
+
+// errBackToReady marks an installer's failure that installed nothing and left
+// the verified file usable: the update goes back to ready with the reason,
+// and Install is offered again without a new download (#101).
+var errBackToReady = errors.New("nothing was installed")
 
 // hosts a download may be redirected to: GitHub serves release assets from
 // its own storage hosts.
@@ -280,6 +316,7 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 	}
 	plan.File = staged
 	u.step("staged %s", staged)
+	useLog(plan.Log)
 	install := u.installer()
 	safego.Go("update install", func() error {
 		return install(context.WithoutCancel(ctx), plan)
@@ -289,7 +326,10 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 			// The installer handed over and asked the console to stop. Either
 			// the process exits within ExitWait, or the install failed.
 			u.step("installer handed over; waiting for KubeTower to stop")
-			u.awaitExit()
+			u.awaitExit(plan.File)
+		case errors.Is(err, errBackToReady):
+			u.step("nothing installed: %s", textutil.FirstLine(err.Error()))
+			u.backToReady(plan.File, textutil.FirstLine(err.Error()))
 		case errors.Is(err, ErrNotRestarted):
 			u.installed(err)
 		case errors.Is(err, ErrNotWritable):
@@ -308,7 +348,7 @@ var errNotStopped = errors.New("KubeTower did not stop to install the update; no
 // awaitExit fails the install, and stops the helper, when this process is
 // still running ExitWait after the installer asked it to stop: an install
 // that cannot finish leaves "Installing…" in bounded time, with Retry.
-func (u *Updater) awaitExit() {
+func (u *Updater) awaitExit(staged string) {
 	wait := u.o.ExitWait
 	if wait <= 0 {
 		wait = ExitWait
@@ -318,26 +358,49 @@ func (u *Updater) awaitExit() {
 		if u.Status().Phase != Installing {
 			return nil
 		}
-		abandonHelper()
-		u.step("still running after %s: helper stopped; the verified file is kept", wait)
-		u.notStopped()
+		if err := abandonHelper(); err != nil {
+			u.step("still running after %s; the helper could not be stopped: %s", wait, textutil.FirstLine(err.Error()))
+			if u.o.Logf != nil {
+				u.o.Logf("update: the helper could not be stopped: %s", textutil.FirstLine(err.Error()))
+			}
+		} else {
+			u.step("still running after %s: helper stopped", wait)
+		}
+		if installsAfterExit {
+			// The helper never ran the install: the verified file is good.
+			u.backToReady(staged, errNotStopped.Error())
+			return nil
+		}
+		// The new build is already in place: only the restart did not happen.
+		u.mu.Lock()
+		if u.status.Phase == Installing {
+			u.status.Phase = Failed
+			u.status.Reason = errInstalledNotRestarted.Error()
+		}
+		u.mu.Unlock()
+		u.step("installed in place; KubeTower did not stop to run it")
 		return nil
 	}, nil)
 }
 
-// notStopped puts the install back to ready, with the reason: the verified
+// backToReady puts the install back to ready, with the reason: the verified
 // file is still there, so Install is offered again rather than a new download
-// (#96: Check now and a failure must never lose a ready update).
-func (u *Updater) notStopped() {
+// (#96: Check now and a failure must never lose a ready update). The copy
+// staged for this install is removed; the next Install stages its own.
+func (u *Updater) backToReady(staged, reason string) {
+	if dir := filepath.Dir(staged); strings.HasPrefix(filepath.Base(dir), "install-") && filepath.Dir(dir) == filepath.Join(u.dir(), workDir) {
+		_ = os.RemoveAll(dir)
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.status.Phase != Installing {
 		return
 	}
 	u.status.Phase = Ready
-	u.status.Reason = errNotStopped.Error()
+	u.status.Reason = reason
+	u.step("back to ready, the verified file kept")
 	if u.o.Logf != nil {
-		u.o.Logf("update: %s", errNotStopped)
+		u.o.Logf("update: %s", reason)
 	}
 }
 
@@ -421,6 +484,7 @@ func (u *Updater) manual(file string, err error) {
 	if u.o.Logf != nil {
 		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
 	}
+	u.step("not writable: the verified file waits in %s", filepath.Dir(file))
 	u.status.Phase = Manual
 	u.status.Folder = filepath.Dir(file)
 	u.status.Reason = ""
@@ -446,6 +510,7 @@ func (u *Updater) installed(err error) {
 	if u.o.Logf != nil {
 		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
 	}
+	u.step("installed; not restarted: %s", textutil.FirstLine(err.Error()))
 	u.forget()
 }
 

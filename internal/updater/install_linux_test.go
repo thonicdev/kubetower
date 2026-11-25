@@ -172,12 +172,13 @@ func TestAPackageWithoutPkexecIsNotSupported(t *testing.T) {
 
 func TestTheRelaunchWaitGivesUp(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "ran")
+	logPath := filepath.Join(t.TempDir(), "update-install.log")
 	run := func(pid int, checks string) (time.Duration, error) {
 		start := time.Now()
 		// Without the bound the wait never ends: the context ends it, as a failure.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := exec.CommandContext(ctx, "/bin/sh", "-c", waitThenRun, "sh", strconv.Itoa(pid), checks, "/bin/sh", "-c", "touch "+out).Run()
+		err := exec.CommandContext(ctx, "/bin/sh", "-c", waitThenRun, "sh", strconv.Itoa(pid), checks, logPath, "/bin/sh", "-c", "touch "+out+" # --token=s3cr3t").Run()
 		return time.Since(start), err
 	}
 	// This test's own pid never exits during the wait: it gives up, runs nothing.
@@ -196,5 +197,24 @@ func TestTheRelaunchWaitGivesUp(t *testing.T) {
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Fatal("did not run the command once the process was gone")
+	}
+	// Every step is in the install log, the program started by its path and
+	// never with its arguments (#101).
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	for _, want := range []string{
+		"helper: waiting for KubeTower (pid " + strconv.Itoa(os.Getpid()) + ") to exit",
+		"helper: gave up after 3 checks; nothing started",
+		"helper: KubeTower exited; starting /bin/sh",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the helper's log lacks %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "s3cr3t") || strings.Contains(log, "touch") {
+		t.Errorf("the helper logged the started program's arguments:\n%s", log)
 	}
 }

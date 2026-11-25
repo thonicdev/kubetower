@@ -31,6 +31,15 @@ per release. Keep the bold lead short: it is all the banner draws.
   steps are written to `update-install.log` in the state folder (#96).
   From 0.2.0 on Windows: close the window after Install; the setup then
   runs. <!-- highlight -->
+- **Updates on Linux and macOS say what happened.** A console that did not
+  stop after the new build was in place says the update is installed and
+  KubeTower must be started again, rather than that nothing was installed. A
+  password prompt for a .deb or .rpm left open is given up after 5 minutes.
+  A refused or unanswered prompt goes back to Ready with the verified file
+  kept, so Install needs no new download. A helper waiting to restart
+  KubeTower is stopped with the install, and logs its steps to
+  `update-install.log`. On Windows, a second Install closes the window too,
+  and the window goes as soon as the update asks (#101).
 
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 

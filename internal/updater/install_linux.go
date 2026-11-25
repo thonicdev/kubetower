@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -45,6 +46,12 @@ func installTar(_ context.Context, plan Plan) error {
 	return startAgain(plan.Installation.Path)
 }
 
+// PromptWait bounds the password prompt and the package install behind it: a
+// polkit dialog left open, or hidden on another desktop, must not hold
+// "Installing…" for ever (#101). Past it pkexec is stopped, nothing is
+// installed, and the update goes back to ready.
+var PromptWait = 5 * time.Minute
+
 // installPackage installs the .deb or the .rpm through pkexec, which asks for
 // the password through polkit, then starts the packaged binary again.
 func installPackage(ctx context.Context, plan Plan) error {
@@ -52,21 +59,28 @@ func installPackage(ctx context.Context, plan Plan) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, PromptWait)
+	defer cancel()
 	if out, err := runPrivileged(ctx, argv); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("no answer to the password prompt within %s: %w", PromptWait, errBackToReady)
+		}
 		return pkexecFailure(err, out)
 	}
 	return startAgain(plan.Installation.Path)
 }
 
 // pkexecFailure says why pkexec or the package manager refused, in one line.
+// A password not given or an identity not authorized installed nothing and
+// leaves the verified file good: back to ready, Install offered again.
 func pkexecFailure(err error, out []byte) error {
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		switch exit.ExitCode() {
 		case 126:
-			return errors.New("the password was not given: nothing was installed")
+			return fmt.Errorf("the password was not given: %w", errBackToReady)
 		case 127:
-			return errors.New("not authorized to install packages: nothing was installed")
+			return fmt.Errorf("not authorized to install packages: %w", errBackToReady)
 		}
 	}
 	return fmt.Errorf("the package manager refused: %s", refusal(string(out)))
