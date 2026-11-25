@@ -332,7 +332,7 @@ describe('the page’s arithmetic', () => {
   });
 });
 
-describe('the Java column', () => {
+describe('the Runtime column', () => {
   it('is declared on pods and the workloads that own them, one read per list', async () => {
     const column = jvm.columns?.[0];
     expect(column?.label).toBe('Runtime');
