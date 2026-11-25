@@ -148,9 +148,10 @@ func podHandler(h extension.Host) http.Handler {
 			writeProblem(w, status, code, "The pods could not be read.", errors.New(sec.Detail))
 			return
 		}
-		pod, found := got.pods[ns+"/"+name]
-		if found {
-			for _, claim := range pod.claims {
+		// The claims this pod mounts, by the rule the claims' Mount follows: a
+		// claim that only shares an ephemeral volume's name is not the pod's.
+		if _, found := got.pods[ns+"/"+name]; found {
+			for _, claim := range got.mounts[ns+"/"+name] {
 				for _, c := range a.Claims {
 					if c.Namespace == ns && c.Name == claim {
 						out.Claims = append(out.Claims, c)

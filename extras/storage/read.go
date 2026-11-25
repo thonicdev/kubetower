@@ -92,7 +92,9 @@ type Counts struct {
 	RetainedOrphans int `json:"retainedOrphans"`
 	Measured        int `json:"measured"`
 	// Shared counts the claims on a share: measured, with no percentage.
-	Shared           int   `json:"shared"`
+	Shared int `json:"shared"`
+	// Unread counts the mounted claims no kubelet gave a figure for.
+	Unread           int   `json:"unread"`
 	Warn             int   `json:"warn"`
 	Bad              int   `json:"bad"`
 	Snapshotted      int   `json:"snapshotted"`
@@ -144,8 +146,12 @@ type set struct {
 // reading is one read's whole result, the parts the tabs need beside the
 // answer.
 type reading struct {
-	answer  Answer
-	pods    map[string]podInfo // by namespace/name; nil when not read
+	answer Answer
+	pods   map[string]podInfo // by namespace/name; nil when not read
+	// mounts are the claims each pod mounts, by namespace/name of the pod,
+	// under the same rule as the claims' Mount: an ephemeral volume's claim
+	// only when the pod owns it.
+	mounts  map[string][]string
 	history map[string][]Snapshot
 }
 
@@ -289,6 +295,7 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 	// The pods, for who mounts what. Kept small: only what this page reads.
 	pods, mountsKnown := readPods(r, h, cluster, ns, a, incomplete)
 	out.pods = pods
+	out.mounts = map[string][]string{}
 	mounting := map[string][]podInfo{}
 	for _, p := range pods {
 		for _, c := range p.claims {
@@ -300,6 +307,7 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 				continue
 			}
 			mounting[key] = append(mounting[key], p)
+			out.mounts[p.namespace+"/"+p.name] = append(out.mounts[p.namespace+"/"+p.name], c)
 		}
 	}
 	sets, setsKnown := readSets(r, h, cluster, ns, incomplete)
@@ -393,6 +401,9 @@ func tally(a *Answer, claims []Claim, volumes []Volume, classes []Class) {
 		}
 		if c.Fill.State == FillShared {
 			n.Shared++
+		}
+		if c.Fill.State == FillUnread {
+			n.Unread++
 		}
 		if c.Fill.State == FillMeasured {
 			n.Measured++

@@ -162,6 +162,9 @@ func TestTheThresholdsGradeAt80And90(t *testing.T) {
 	if warm := claimNamed(t, a, "shop", "cache"); warm.Fill.Level != LevelWarn {
 		t.Errorf("the claim at 85%% = %+v, want warn", warm.Fill)
 	}
+	if a.Counts.Unread != 0 {
+		t.Errorf("unread = %d, want 0: both mounted claims were measured", a.Counts.Unread)
+	}
 	if a.Counts.Bad != 1 || a.Counts.Warn != 1 || a.Counts.Measured != 2 {
 		t.Errorf("counts = %+v, want one bad, one warn, two measured", a.Counts)
 	}
@@ -219,6 +222,9 @@ func TestUnreadableStatsAreSaidAndNeverDrawnAsZero(t *testing.T) {
 				if claim.Fill.Percent != 0 || claim.Fill.Level != "" {
 					t.Errorf("%s carries a figure it was never given: %+v", claim.Name, claim.Fill)
 				}
+			}
+			if c.state == SourceUnreadable && a.Counts.Unread != 2 {
+				t.Errorf("unread = %d, want the 2 mounted claims", a.Counts.Unread)
 			}
 			cache := claimNamed(t, a, "shop", "cache")
 			if cache.Fill.State != FillUnread {
@@ -480,6 +486,22 @@ func TestAnEphemeralVolumesClaimIsMountedByItsPod(t *testing.T) {
 		if c := claimNamed(t, a, "shop", name); c.Mount != MountUnmounted || c.Orphan != OrphanUnmounted {
 			t.Errorf("%s = mount %q orphan %q pods %v, want an unmounted orphan", name, c.Mount, c.Orphan, c.Pods)
 		}
+	}
+
+	// The pod tab follows the same rule: job-x lists the claim it owns, and
+	// neither web nor job-x lists a claim that only shares a name.
+	names := func(p PodAnswer) []string {
+		var out []string
+		for _, c := range p.Claims {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+	if got := names(decode[PodAnswer](t, serve(t, h, "/x/prod/storage/pod/shop/job-x"))); len(got) != 1 || got[0] != "job-x-scratch" {
+		t.Errorf("job-x's tab lists %v, want [job-x-scratch]", got)
+	}
+	if got := names(decode[PodAnswer](t, serve(t, h, "/x/prod/storage/pod/shop/web"))); len(got) != 0 {
+		t.Errorf("web's tab lists %v, want nothing: web-data is not its claim", got)
 	}
 }
 

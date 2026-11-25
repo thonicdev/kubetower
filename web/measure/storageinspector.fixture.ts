@@ -156,6 +156,7 @@ export const STORAGE_OVERVIEW: Overview = {
     retainedOrphans: 1,
     measured: 3,
     shared: 1,
+    unread: 1,
     warn: 1,
     bad: 1,
     snapshotted: 3,
@@ -203,7 +204,7 @@ export const STORAGE_BARE: Overview = {
     delete out.snapshot;
     return out;
   }),
-  counts: { ...STORAGE_OVERVIEW.counts, measured: 0, shared: 0, warn: 0, bad: 0, snapshotted: 0 },
+  counts: { ...STORAGE_OVERVIEW.counts, measured: 0, shared: 0, unread: 5, warn: 0, bad: 0, snapshotted: 0 },
   fill: {
     state: 'unreadable',
     asked: 4,

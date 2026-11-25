@@ -233,6 +233,23 @@ describe('the Overview tile', () => {
     expect(tile.badges).not.toContain(expect.stringContaining('snapshotted'));
   });
 
+  it('withholds OK while a mounted claim is unread, and says how many', async () => {
+    // One claim measured, seven unread, nothing orphaned or full.
+    const counts = { ...STORAGE_OVERVIEW.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0, warn: 0, bad: 0, measured: 1, shared: 0, unread: 7 };
+    const partly = { ...STORAGE_OVERVIEW, counts };
+    stub({ [ROUTE]: { body: partly } });
+    const tile = await storageTile('prod', new AbortController().signal);
+    expect(tile.status).toBeUndefined();
+    expect(tile.badges).toContain('7 unread');
+    cleanup();
+    stub({ [ROUTE]: { body: partly } });
+    mount();
+    await screen.findByRole('table');
+    const full = document.querySelector('[data-filter="full"]');
+    expect(full?.textContent).toContain('0+');
+    expect(full?.textContent).not.toMatch(/(^|[^0-9])0(?!\+)/);
+  });
+
   it('carries no grade when the kubelets answered and measured no claim', async () => {
     // A driver reporting no volume stats: the source read, every claim unread.
     const counts = { ...STORAGE_BARE.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0 };
@@ -240,7 +257,7 @@ describe('the Overview tile', () => {
     stub({ [ROUTE]: { body: answered } });
     const tile = await storageTile('prod', new AbortController().signal);
     expect(tile.status).toBeUndefined();
-    expect(tile.badges).toContain('fill unread');
+    expect(tile.badges).toContain('5 unread');
     cleanup();
     stub({ [ROUTE]: { body: answered } });
     mount();
@@ -253,6 +270,6 @@ describe('the Overview tile', () => {
     stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts } } });
     const tile = await storageTile('prod', new AbortController().signal);
     expect(tile.status).toBeUndefined();
-    expect(tile.badges).toContain('fill unread');
+    expect(tile.badges).toContain('5 unread');
   });
 });

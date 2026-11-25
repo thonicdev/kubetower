@@ -120,6 +120,8 @@ export interface Counts {
   measured: number;
   /** Claims on a share: measured, with no percentage. */
   shared: number;
+  /** Mounted claims no kubelet gave a figure for. */
+  unread: number;
   warn: number;
   bad: number;
   snapshotted: number;

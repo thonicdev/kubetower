@@ -106,6 +106,8 @@ interface TileSpec {
   show: Show;
   label: string;
   count: number;
+  /** The count is a floor: claims it may hold were not read. */
+  floor?: boolean;
   tone: TileTone;
   hint: string;
 }
@@ -115,12 +117,20 @@ function tiles(data: Overview): TileSpec[] {
   const full = c.warn + c.bad;
   // No claim measured: how many are full is unknown, never 0.
   const known = fillKnown(data);
-  const unread = data.claims.filter((claim) => claim.fill.state === 'unread').length;
+  // Claims with no figure may be full: the count is then a floor, never a 0.
+  const unread = c.unread;
   const unsnapshotted = data.snapshots.state === 'read' ? c.claims - c.snapshotted : -1;
   return [
     { show: 'all', label: 'Claims', count: c.claims, tone: c.lost > 0 ? 'bad' : c.pending > 0 ? 'warn' : 'off', hint: `${String(c.bound)} bound · ${String(c.pending)} pending · ${String(c.lost)} lost` },
     { show: 'orphans', label: 'Orphans', count: c.orphans, tone: c.orphans > 0 ? 'warn' : 'off', hint: `${String(c.orphanClaims)} claims · ${String(c.orphanVolumes)} volumes (${String(c.retainedOrphans)} Retain) · ${String(c.orphanClasses)} classes` },
-    { show: 'full', label: '≥ 80 %', count: known ? full : -1, tone: c.bad > 0 ? 'bad' : full > 0 ? 'warn' : 'off', hint: `${String(c.bad)} at 90 % and over` },
+    {
+      show: 'full',
+      label: '≥ 80 %',
+      count: known ? full : -1,
+      floor: unread > 0,
+      tone: c.bad > 0 ? 'bad' : full > 0 ? 'warn' : 'off',
+      hint: unread > 0 ? `${String(c.bad)} at 90 % and over · ${String(unread)} unread` : `${String(c.bad)} at 90 % and over`,
+    },
     { show: 'unmeasured', label: 'Unread', count: unread, tone: unread > 0 ? 'warn' : 'off', hint: 'Mounted, and no kubelet figure' },
     { show: 'unsnapshotted', label: 'No snapshot', count: unsnapshotted, tone: 'off', hint: 'Claims with no VolumeSnapshot' },
     { show: 'volumes', label: 'Volumes', count: data.volumesRead.state === 'read' ? c.volumes : -1, tone: 'off', hint: 'PersistentVolumes' },
@@ -146,7 +156,7 @@ function Answer({ cluster, data, show, pick }: { cluster: string; data: Overview
               key={t.show}
               data-filter={t.show}
               data-count={String(t.count)}
-              count={t.count < 0 ? '–' : data.complete ? t.count : `${String(t.count)}+`}
+              count={t.count < 0 ? '–' : data.complete && t.floor !== true ? t.count : `${String(t.count)}+`}
               label={t.label}
               tone={t.tone}
               pressed={show === t.show}
