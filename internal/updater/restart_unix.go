@@ -3,17 +3,25 @@
 package updater
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 )
 
 // waitThenRun waits for pid $1 to exit, at most $2 checks 0.2 s apart (a pid
 // reused, or never reaped, would otherwise hold it forever), then runs the
-// rest of its arguments. Past the bound it gives up and starts nothing.
-const waitThenRun = `n=0; while kill -0 "$1" 2>/dev/null; do n=$((n+1)); [ "$n" -gt "$2" ] && exit 1; sleep 0.2; done; shift 2; exec "$@"`
+// rest of its arguments from $4 on. Past the bound it gives up and starts
+// nothing. Each step is appended to the install log $3, when one is named:
+// the wait, the exit, the give-up and the program started - its path, never
+// its arguments (#101).
+const waitThenRun = `log="$3"; L() { [ -n "$log" ] && printf '%s helper: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$log" 2>/dev/null; }; ` +
+	`L "waiting for KubeTower (pid $1) to exit"; n=0; while kill -0 "$1" 2>/dev/null; do n=$((n+1)); ` +
+	`if [ "$n" -gt "$2" ]; then L "gave up after $2 checks; nothing started"; exit 1; fi; sleep 0.2; done; ` +
+	`L "KubeTower exited; starting $4"; shift 3; exec "$@"`
 
 // relaunchChecks bounds the wait for this process to exit: two minutes.
 const relaunchChecks = 600
@@ -24,14 +32,43 @@ const relaunchChecks = 600
 // Then it asks this process to stop the way an operator's Ctrl+C does, so
 // shells, forwards and the state are closed as on any quit.
 func relaunch(path string, args []string) error {
-	argv := append([]string{"-c", waitThenRun, "sh", strconv.Itoa(os.Getpid()), strconv.Itoa(relaunchChecks), path}, args...)
+	argv := append([]string{"-c", waitThenRun, "sh", strconv.Itoa(os.Getpid()), strconv.Itoa(relaunchChecks), currentLog(), path}, args...)
 	cmd := exec.Command("/bin/sh", argv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	relaunchHelper.Lock()
+	relaunchHelper.pid = cmd.Process.Pid
+	relaunchHelper.Unlock()
 	_ = cmd.Process.Release()
 	return stopSelf()
+}
+
+func init() { abandonHelper = stopRelaunch }
+
+// relaunchHelper is the shell started last, kept so a console that did not
+// stop can stop it: left waiting, it would start a second console whenever
+// this one exits, or beside the next install's (#101).
+var relaunchHelper struct {
+	sync.Mutex
+	pid int
+}
+
+// stopRelaunch kills the waiting shell's process group (Setsid made it its
+// own), its sleep included. A group already gone is not an error.
+func stopRelaunch() error {
+	relaunchHelper.Lock()
+	defer relaunchHelper.Unlock()
+	if relaunchHelper.pid == 0 {
+		return nil
+	}
+	err := syscall.Kill(-relaunchHelper.pid, syscall.SIGKILL)
+	relaunchHelper.pid = 0
+	if err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
 }
 
 // restart is relaunch, held in a variable so a test replaces it rather than

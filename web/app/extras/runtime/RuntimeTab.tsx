@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { Failure, Pending, Pill, type ExtensionTabProps } from '@kubetower/ui';
+import { Failure, ImageRef, Pending, Pill, type ExtensionTabProps } from '@kubetower/ui';
 
 import { RUNTIME_LABEL, podQuery, type Container, type Runtime } from './data';
 import { GoPprof } from './GoPprof';
@@ -63,7 +63,7 @@ function ContainerFacts({ runtime, container }: { runtime: Runtime; container: C
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone="info">{RUNTIME_LABEL[runtime]}</Pill>
         <span className="font-medium">{container.name}</span>
-        <code className="text-xs text-muted">{container.image}</code>
+        <ImageRef image={container.image} className="max-w-full" />
       </div>
       <div className="flex flex-wrap gap-1" data-runtime-hints="">
         {container.hints.map((hint) => (

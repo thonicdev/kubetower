@@ -508,8 +508,9 @@ func windowEventQueryInterface(this *windowEvent, iid *windows.GUID, object *uns
 func windowEventCount(*windowEvent) uintptr { return 1 }
 
 // interruptNativeWindow closes the window, from any goroutine, as a click on
-// its close box would: the message loop ends, drawNativeWindow returns, and
-// the console shuts down.
+// its close box does: WM_CLOSE (windowstop.go), so the window goes at once,
+// the message loop ends, drawNativeWindow returns, and the console shuts
+// down.
 //
 // No signal reaches a -H windowsgui binary, but the console stops itself: an
 // installed update (internal/updater) puts an interrupt on launch's stop

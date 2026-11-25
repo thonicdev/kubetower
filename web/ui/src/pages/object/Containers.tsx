@@ -28,6 +28,7 @@ import {
 } from './TileParts';
 import { envFoldKey, useEnvFold } from './envFolds';
 import { TABLE } from '../../components/tableLook';
+import { ImageRef } from '../../components/ImageRef';
 
 /**
  * What a pod is made of.
@@ -273,9 +274,7 @@ function One({
           image keeps eight rem before it does, cut, whole in its title. */}
       <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         {name}
-        <span title={container.image} className="min-w-0 flex-1 basis-32 truncate font-mono text-xs text-muted">
-          {container.image}
-        </span>
+        <ImageRef image={container.image} className="flex-1 basis-32" />
         {pull}
         <StatusPill status={container.status} />
       </header>

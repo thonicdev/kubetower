@@ -1552,21 +1552,40 @@ func serve(ln net.Listener, bound, listen string, handler http.Handler, served c
 // signal. The goroutine is waited for before `interrupted` is read, so a
 // signal that arrives as the window closes is seen by exactly one side.
 //
+// It reads `stop` until the window has closed, not once: each signal asks the
+// window again, so a second update's stop is not left in the channel's buffer
+// behind a first that did not close it (#101).
+//
 // windowDone is Run's to close when the window has closed, and watcherDone is
 // closed when the goroutine has finished.
+// interruptWindow is interruptNativeWindow, held in a variable so a test
+// counts the asks.
+var interruptWindow = func() { interruptNativeWindow() }
+
 func watchWindowStop(ctx context.Context, stop <-chan os.Signal) (interrupted, windowDone, watcherDone chan struct{}) {
 	interrupted = make(chan struct{})
 	windowDone = make(chan struct{})
 	watcherDone = make(chan struct{})
 	go func() {
 		defer close(watcherDone)
-		select {
-		case <-stop:
-			close(interrupted)
-			interruptNativeWindow()
-		case <-ctx.Done():
-			interruptNativeWindow()
-		case <-windowDone:
+		once := false
+		for {
+			select {
+			case <-stop:
+				// Every stop asks again: a window the first ask did not close
+				// (#101) must close on the next, an update installed a second
+				// time among them.
+				if !once {
+					close(interrupted)
+					once = true
+				}
+				interruptWindow()
+			case <-ctx.Done():
+				interruptWindow()
+				return
+			case <-windowDone:
+				return
+			}
 		}
 	}()
 	return interrupted, windowDone, watcherDone

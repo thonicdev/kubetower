@@ -465,8 +465,10 @@ func TestTheRealHostsAreHTTPSOnGitHubOnly(t *testing.T) {
 func TestAConsoleThatDoesNotStopFailsTheInstallInBoundedTime(t *testing.T) {
 	stopped := 0
 	was := abandonHelper
-	abandonHelper = func() { stopped++ }
-	t.Cleanup(func() { abandonHelper = was })
+	abandonHelper = func() error { stopped++; return nil }
+	wasAfter := installsAfterExit
+	installsAfterExit = true // the Windows helpers: the install happens after exit
+	t.Cleanup(func() { abandonHelper, installsAfterExit = was, wasAfter })
 
 	f := newFake(t)
 	dir := t.TempDir()
@@ -500,7 +502,7 @@ func TestAConsoleThatDoesNotStopFailsTheInstallInBoundedTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := string(raw)
-	for _, want := range []string{"install 0.1.3 from " + f.asset, "staged ", "installer handed over", "still running after 50ms", "the verified file is kept"} {
+	for _, want := range []string{"install 0.1.3 from " + f.asset, "staged ", "installer handed over", "still running after 50ms", "back to ready, the verified file kept"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("the log lacks %q:\n%s", want, log)
 		}
@@ -527,7 +529,7 @@ func TestAConsoleThatDoesNotStopFailsTheInstallInBoundedTime(t *testing.T) {
 // fails an install still in progress.
 func TestAnInstallThatMovedOnIsNotFailedByTheWait(t *testing.T) {
 	was := abandonHelper
-	abandonHelper = func() { t.Error("the helper was stopped") }
+	abandonHelper = func() error { t.Error("the helper was stopped"); return nil }
 	t.Cleanup(func() { abandonHelper = was })
 	f := newFake(t)
 	rec := &recorder{err: ErrNotRestarted}
