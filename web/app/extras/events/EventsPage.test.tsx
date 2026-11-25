@@ -211,6 +211,14 @@ describe('Event Intelligence', () => {
     expect(cells[0]?.getAttribute('title')).toMatch(/^(<1|(≈ )?\d+) · −\d+ min( \d+ s)? to −\d+ min( \d+ s)?\nSpread evenly from each object’s first to last Event$/);
   });
 
+  it('draws an Event dated after the answer was built in the last cell, not outside the row', async () => {
+    stub(answer([cause('BackOff', 'Warning', [group('api-1', { count: 1, firstSeen: at(-1), lastSeen: at(-1) })])]));
+    mount();
+    await findCause(/BackOff/);
+    const cells = [...document.querySelectorAll<HTMLElement>('[data-lane="shop/api-1/BackOff"] [data-cell][data-count]')];
+    expect(cells.map((c) => [c.getAttribute('data-cell'), c.getAttribute('data-count')])).toEqual([['39', '1']]);
+  });
+
   it('hides Normal causes behind a toggle that says how many, and the Type filter overrides it', async () => {
     stub(answer([backoff, pulled]));
     mount();
