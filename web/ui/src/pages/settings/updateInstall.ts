@@ -118,6 +118,13 @@ interface InstallClock {
   expired: boolean;
 }
 
+/** Mark the clock expired once INSTALL_TIMEOUT_MS has passed by the wall clock. */
+function expireIfLate(cache: ReturnType<typeof useQueryClient>): void {
+  cache.setQueryData<InstallClock | null>(CLOCK_KEY, (was) =>
+    was !== null && was !== undefined && !was.expired && Date.now() - was.since >= INSTALL_TIMEOUT_MS ? { ...was, expired: true } : was,
+  );
+}
+
 /**
  * Whether "Installing…" has waited past INSTALL_TIMEOUT_MS, and a way to start
  * the clock again. The clock starts when the phase becomes `installing` and is
@@ -194,6 +201,9 @@ export function useUpdateInstall(): {
   useQuery({
     queryKey: [...settingsKey, 'update'],
     queryFn: async ({ signal }) => {
+      // Each read also checks the clock against the wall: a timer is late by
+      // as long as the machine slept, and the poll still runs (#99).
+      expireIfLate(cache);
       const next = await getUpdateInstall(signal);
       keep(next);
       // Settled: read the whole settings again, which after a restart is the
