@@ -62,13 +62,16 @@ const (
 // nodeOpenScript opens the inspector of the one Node.js process of the
 // container, or of the pid its first argument names among them, and says
 // what it did as one JSON line. A process is Node.js by its name (comm) or,
-// when it set process.title (Next.js's next-server), by its executable. It
-// reads /proc and calls process._debugProcess; it sends nothing else.
+// when it set process.title (Next.js's next-server), by its executable -
+// except a package manager's (npm start, npx, pnpm, yarn), which runs on
+// node too and only launches the application. It reads /proc and calls
+// process._debugProcess; it sends nothing else.
 const nodeOpenScript = `const fs=require('fs');` +
 	`const self=process.pid,parent=process.ppid,want=Number(process.argv[1]||0);` +
 	`const pids=fs.readdirSync('/proc').filter(d=>/^[0-9]+$/.test(d)).map(Number)` +
-	`.filter(p=>p!==self&&p!==parent).filter(p=>{const n=x=>x==='node'||x==='nodejs';` +
-	`try{if(n(fs.readFileSync('/proc/'+p+'/comm','utf8').trim()))return true}catch(e){}` +
+	`.filter(p=>p!==self&&p!==parent).filter(p=>{const n=x=>x==='node'||x==='nodejs';let c='';` +
+	`try{c=fs.readFileSync('/proc/'+p+'/comm','utf8').trim()}catch(e){}` +
+	`if(n(c))return true;if(/^(npm|npx|pnpm|yarn)( |$)/.test(c))return false;` +
 	`try{return n(require('path').basename(fs.readlinkSync('/proc/'+p+'/exe')))}catch(e){return false}});` +
 	`const pick=want?(pids.includes(want)?want:0):(pids.length===1?pids[0]:0);` +
 	`if(!pick){console.log(JSON.stringify({state:'choose',pids}));process.exit(0)}` +
