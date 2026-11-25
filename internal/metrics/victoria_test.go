@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,11 @@ func TestVictoriaMetricsIsFoundAsEachInstallLabelsIt(t *testing.T) {
 			[]*corev1.Service{vmclusterChart("vminsert", 8480), vmclusterChart("vmstorage", 8482), vmclusterChart("vmselect", 8481)},
 			"vm/r-victoria-metrics-cluster-vmselect:8481/select/0/prometheus", "app.kubernetes.io/component=vmselect",
 		},
+		{
+			"an older victoria-metrics-cluster chart",
+			[]*corev1.Service{promService("vm", "old-vmselect", map[string]string{"app": "vmselect"}, "http", 8481)},
+			"vm/old-vmselect:8481/select/0/prometheus", "app=vmselect",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			objects := make([]corev1.Service, len(c.services))
@@ -86,9 +92,14 @@ func TestVictoriaMetricsIsFoundAsEachInstallLabelsIt(t *testing.T) {
 				objects[i] = *svc
 			}
 			h := newHarness(t, toObjects(objects)...)
+			target, err := ParseTarget(c.want)
+			if err != nil {
+				t.Fatal(err)
+			}
 			h.answer(rawAnswers{
-				// vmselect answers its health at the root, not under the path.
+				// Health at the root only, so the path is confirmed by a query.
 				pathFree(c.want) + "/proxy" + endpointHealth: {body: []byte(vmHealthy)},
+				target.proxyPath(endpointQuery):              {body: []byte(`{"status":"success","data":{"resultType":"scalar","result":[0,"1"]}}`)},
 			})
 
 			found := h.metrics.Discover(context.Background(), testCluster, false)
@@ -305,4 +316,69 @@ func (h *harness) askedFor(path string) bool {
 		}
 	}
 	return false
+}
+
+// Every engine answers health at its root, so a typo in the path
+// (`/select/O/prometheus`) would pass a health check that falls back there.
+// The path is confirmed by a query, and the target is reported as not
+// reached, under its own name: the server profile's rule for a configured
+// target that does not answer.
+func TestAPathThatOnlyTheRootAnswersIsNotReached(t *testing.T) {
+	target, err := ParseTarget("vm/vmselect-main:8481/select/O/prometheus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarnessWith(t, func(o *Options) { o.Configured, o.Prometheus = true, target })
+	h.answer(rawAnswers{target.proxyRoot(endpointHealth): {body: []byte(vmHealthy)}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindUnreachable || found.Prometheus == nil || found.Prometheus.Address() != target.Address() {
+		t.Fatalf("kind %q target %+v (%s); want unreachable, under its own name", found.Kind, found.Prometheus, found.Detail)
+	}
+	if !strings.Contains(found.Detail, "not under /select/O/prometheus") {
+		t.Errorf("the detail does not name the path: %q", found.Detail)
+	}
+	if opened, _ := h.tunnels.counts(); opened != 0 {
+		t.Errorf("%d port-forwards opened to a Service the proxy already reached", opened)
+	}
+}
+
+// The same through the port-forward.
+func TestAPathThatOnlyTheRootAnswersIsNotReachedThroughThePortForward(t *testing.T) {
+	vmselect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == endpointHealth {
+			w.Write([]byte(vmHealthy))
+			return
+		}
+		http.Error(w, "unsupported path", http.StatusBadRequest)
+	}))
+	defer vmselect.Close()
+	target, _ := ParseTarget("vm/vmselect-main:8481/select/O/prometheus")
+	h := newHarnessWith(t, func(o *Options) { o.Configured, o.Prometheus = true, target })
+	h.tunnels.addr = strings.TrimPrefix(vmselect.URL, "http://")
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindUnreachable || !strings.Contains(found.Detail, "not under /select/O/prometheus") {
+		t.Fatalf("kind %q (%s)", found.Kind, found.Detail)
+	}
+}
+
+// One health attempt that hangs leaves the next its own time.
+func TestEachHealthAttemptHasItsOwnTimeout(t *testing.T) {
+	target := &PromTarget{Namespace: "monitoring", Service: "prometheus", Port: 9090, Path: "/prom"}
+	asked := 0
+	body, err := target.answers(context.Background(), 50*time.Millisecond, func(ctx context.Context, path string, _ url.Values) ([]byte, error) {
+		asked++
+		if path == "/prom"+endpointHealth {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return []byte("Prometheus Server is Healthy."), nil
+	})
+	if err != nil || string(body) != "Prometheus Server is Healthy." || asked != 3 {
+		t.Fatalf("%q, %v after %d asks", body, err, asked)
+	}
 }
