@@ -14,5 +14,5 @@ func installMacTar(_ context.Context, plan Plan) error {
 	if err := replaceFromTarGz(plan.Installation.Path, plan.File, "kubetower"); err != nil {
 		return err
 	}
-	return startAgain(plan.Installation.Path)
+	return startAgainUnlessQuit(plan)
 }

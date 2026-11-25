@@ -298,6 +298,16 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 		p.updates.Check(ctx)
 		p.updates.Watch(ctx, update.RecheckEvery)
 	}()
+	// "Install updates automatically" (#122): downloads what the check found
+	// and, set to install now, installs once nothing a restart closes is open.
+	// On quit is quit's own step, below.
+	if p.installer != nil {
+		open := openWorkOf(w)
+		safego.Go("update: automatic", func() error {
+			p.installer.Auto(ctx, updater.AutoEvery, func() string { return newerOf(p.updates.Report()) }, open)
+			return nil
+		}, nil)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -376,11 +386,13 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 		<-watcherDone
 		if closed {
 			shutdown(srv, w.shells)
+			p.installOnQuit(ctx)
 			return serveFailure(served)
 		}
 		select {
 		case <-interrupted:
 			shutdown(srv, w.shells)
+			p.installOnQuit(ctx)
 			return serveFailure(served)
 		default:
 		}
@@ -394,7 +406,26 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 	case <-ctx.Done():
 	}
 	shutdown(srv, w.shells)
+	p.installOnQuit(ctx)
 	return serveFailure(served)
+}
+
+// newerOf is the release the update check found newer than this build, or
+// empty.
+func newerOf(report update.Report) string {
+	if report.State != update.Newer {
+		return ""
+	}
+	return report.Latest
+}
+
+// installOnQuit installs a verified update as KubeTower quits, once the
+// server has stopped, where "Install updates automatically" says on quit
+// (#122). Bounded by updater.QuitWait; the next start runs the new build.
+func (p *profile) installOnQuit(ctx context.Context) {
+	if p.installer != nil {
+		p.installer.InstallOnQuit(ctx)
+	}
 }
 
 // serveFailure is the error the server stopped with on its own, or nil when

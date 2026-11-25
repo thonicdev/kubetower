@@ -54,6 +54,18 @@ const createNoWindow = 0x08000000
 // then stops this process.
 var helper = func(script string) error { return finish(script, startPowerShell, stopper) }
 
+// helperOnQuit starts the helper and asks nothing more: KubeTower is already
+// quitting (InstallOnQuit), and the helper runs once it has exited.
+var helperOnQuit = startPowerShell
+
+// handOver is helper, or helperOnQuit while KubeTower quits.
+func handOver(plan Plan, script string) error {
+	if plan.Quit {
+		return helperOnQuit(script)
+	}
+	return helper(script)
+}
+
 // startPowerShell starts the script in a hidden PowerShell and lets it go.
 func startPowerShell(script string) error {
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -79,7 +91,7 @@ func leave(file string) {
 // installSetup runs the downloaded setup silently once the console has exited.
 func installSetup(_ context.Context, plan Plan) error {
 	leave("")
-	return helper(setupScript(os.Getpid(), plan.File, plan.Installation.Path, os.Args[1:], plan.Log))
+	return handOver(plan, setupScript(os.Getpid(), plan.File, plan.Installation.Path, os.Args[1:], plan.Log, !plan.Quit))
 }
 
 // installZip writes the zip's kubetower.exe beside the running one, and has it
@@ -90,7 +102,7 @@ func installZip(_ context.Context, plan Plan) error {
 		return err
 	}
 	leave(next)
-	if err := helper(swapScript(os.Getpid(), next, plan.Installation.Path, os.Args[1:], plan.Log)); err != nil {
+	if err := handOver(plan, swapScript(os.Getpid(), next, plan.Installation.Path, os.Args[1:], plan.Log, !plan.Quit)); err != nil {
 		leave("")
 		_ = os.Remove(next)
 		return err

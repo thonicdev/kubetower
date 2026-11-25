@@ -13,7 +13,7 @@ import (
 
 func TestTheSetupRunsSilentlyAfterExitThenStartsKubeTower(t *testing.T) {
 	got := setupScript(4242, `C:\Users\o'neil\state\update\kubetower-0.1.3-setup.exe`,
-		`C:\Users\o'neil\AppData\Local\Programs\KubeTower\kubetower.exe`, nil, `C:\Users\o'neil\state\update-install.log`)
+		`C:\Users\o'neil\AppData\Local\Programs\KubeTower\kubetower.exe`, nil, `C:\Users\o'neil\state\update-install.log`, true)
 	for _, want := range []string{
 		"$kt_log='C:\\Users\\o''neil\\state\\update-install.log'",
 		"Wait-Process -Id 4242",
@@ -34,14 +34,30 @@ func TestTheSetupRunsSilentlyAfterExitThenStartsKubeTower(t *testing.T) {
 	}
 }
 
+// On quit (#122) the helper installs once KubeTower has exited and starts
+// nothing: the next start runs the new build.
+func TestOnQuitTheHelpersInstallAndStartNothing(t *testing.T) {
+	for name, script := range map[string]string{
+		"setup": setupScript(9, `C:\s\setup.exe`, `C:\k\kubetower.exe`, []string{"--x"}, `C:\s\update-install.log`, false),
+		"swap":  swapScript(9, `C:\k\.next.exe`, `C:\k\kubetower.exe`, []string{"--x"}, `C:\s\update-install.log`, false),
+	} {
+		if !strings.Contains(script, "Wait-Process -Id 9") || !strings.Contains(script, "installed on quit; nothing started") {
+			t.Errorf("%s: %s", name, script)
+		}
+		if strings.Contains(script, `Start-Process -FilePath 'C:\k\kubetower.exe'`) || strings.Contains(script, "starting ") {
+			t.Errorf("%s starts KubeTower on quit:\n%s", name, script)
+		}
+	}
+}
+
 // The log holds the script's own words, paths and exit codes, and nothing the
 // console was started with: its arguments may carry a listen address or a
 // flag, and the install never logs a URL or a token.
 func TestTheHelpersLogNoArgumentsAndNoURL(t *testing.T) {
 	args := []string{"--listen", "127.0.0.1:1", "--token=s3cr3t"}
 	for _, script := range []string{
-		setupScript(1, `C:\s\setup.exe`, `C:\k\kubetower.exe`, args, `C:\s\update-install.log`),
-		swapScript(1, `C:\k\.next.exe`, `C:\k\kubetower.exe`, args, `C:\s\update-install.log`),
+		setupScript(1, `C:\s\setup.exe`, `C:\k\kubetower.exe`, args, `C:\s\update-install.log`, true),
+		swapScript(1, `C:\k\.next.exe`, `C:\k\kubetower.exe`, args, `C:\s\update-install.log`, true),
 	} {
 		for _, line := range strings.Split(script, "L ")[1:] {
 			if strings.Contains(line, "s3cr3t") && !strings.Contains(line, "Start-Process") {
@@ -55,7 +71,7 @@ func TestTheHelpersLogNoArgumentsAndNoURL(t *testing.T) {
 }
 
 func TestTheZipSwapMovesTheNewExeAfterExit(t *testing.T) {
-	got := swapScript(7, `D:\tools\.kubetower-update-1.exe`, `D:\tools\kubetower.exe`, []string{"--listen", "127.0.0.1:1;x"}, `D:\s\update-install.log`)
+	got := swapScript(7, `D:\tools\.kubetower-update-1.exe`, `D:\tools\kubetower.exe`, []string{"--listen", "127.0.0.1:1;x"}, `D:\s\update-install.log`, true)
 	for _, want := range []string{
 		"Wait-Process -Id 7 -ErrorAction SilentlyContinue",
 		`Move-Item -LiteralPath 'D:\tools\.kubetower-update-1.exe' -Destination 'D:\tools\kubetower.exe' -Force -ErrorAction Stop`,

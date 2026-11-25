@@ -41,8 +41,15 @@ const (
 // Status is what the Settings page is told.
 type Status struct {
 	Phase Phase `json:"phase"`
-	// Enabled is the operator's "Install updates" setting.
+	// Enabled is the operator's "Install updates automatically" setting (#122):
+	// a newer release is downloaded and verified on its own, and installed at
+	// the moment When names. Off, Download and Install stay by hand.
 	Enabled bool `json:"enabled"`
+	// When is when an automatic update installs: WhenQuit or WhenNow.
+	When string `json:"when"`
+	// Password says installing asks for one (a .deb or .rpm, through pkexec):
+	// never asked unprompted, so an automatic update stops at ready.
+	Password bool `json:"password"`
 	// Supported says this installation has an asset in a release and an
 	// installer in this build. False draws no Download.
 	Supported bool `json:"supported"`
@@ -70,19 +77,33 @@ type Plan struct {
 	// the console appends to. Paths and exit codes only: never a token or a
 	// URL.
 	Log string
+	// Quit: KubeTower is quitting (InstallOnQuit). The installer puts the new
+	// build in place and starts nothing, and never asks the console to stop.
+	Quit bool
 }
+
+// When an automatic update installs (#122).
+const (
+	// WhenQuit: as KubeTower quits, so nothing open is interrupted. The default.
+	WhenQuit = "quit"
+	// WhenNow: as soon as no terminal and no port-forward is open.
+	WhenNow = "now"
+)
+
+// ValidWhen says when is one of WhenQuit and WhenNow.
+func ValidWhen(when string) bool { return when == WhenQuit || when == WhenNow }
 
 // Installer replaces the running KubeTower with plan.File and restarts it.
 // On success it does not return: the process exits.
 type Installer func(ctx context.Context, plan Plan) error
 
 var (
-	// ErrDisabled: the operator turned "Install updates" off.
-	ErrDisabled = errors.New("installing updates is turned off")
 	// ErrUnsupported: no asset or no installer for this installation.
 	ErrUnsupported = errors.New("this installation cannot be updated from the console")
 	// ErrBusy: a download or an install is already running.
 	ErrBusy = errors.New("an update is already in progress")
+	// ErrWhen: when an automatic update installs is neither on quit nor now.
+	ErrWhen = errors.New(`when must be "quit" or "now"`)
 	// ErrNotReady: Install was asked before a verified download.
 	ErrNotReady = errors.New("no verified update is ready")
 	// ErrNotNewer: the release is not newer than this build.
@@ -222,15 +243,23 @@ type Updater struct {
 	mu      sync.Mutex
 	status  Status
 	planned Plan
+	// downloaded and installed are the versions the automatic update last
+	// started a download and an install of: each is tried once, and a failure
+	// waits for a person or a newer release rather than repeating (#122).
+	autoDownloaded, autoInstalled string
 }
 
-// New reads the "Install updates" setting (on unless turned off).
+// New reads the "Install updates automatically" setting (on unless turned
+// off) and when it installs (on quit unless set otherwise).
 func New(o Options) *Updater {
 	u := &Updater{o: o}
 	_, supported := AssetName("0.0.0", o.GOOS, o.GOARCH, o.Installation.Kind)
+	held := u.readSettings()
 	u.status = Status{
 		Phase:        Idle,
-		Enabled:      u.readEnabled(),
+		Enabled:      held.on(),
+		When:         held.when(),
+		Password:     o.Installation.Kind == LinuxDeb || o.Installation.Kind == LinuxRPM,
 		Supported:    supported && u.installer() != nil && u.canInstall(),
 		Installation: o.Installation.Kind,
 	}
@@ -248,20 +277,23 @@ func (u *Updater) Status() Status {
 	return u.status
 }
 
-// SetEnabled writes the "Install updates" setting.
-func (u *Updater) SetEnabled(on bool) (Status, error) {
-	raw, _ := json.Marshal(struct {
-		InstallUpdates bool `json:"installUpdates"`
-	}{on})
-	err := statefile.Write(filepath.Join(u.dir(), settingsFile), raw)
-	u.mu.Lock()
-	u.status.Enabled = on
-	if !on && u.status.Phase != Installing && u.status.Phase != Downloading {
-		u.forget()
+// Set writes the "Install updates automatically" setting and, when it is not
+// empty, when it installs. Turning it off keeps a download: Install stays by
+// hand. An unknown when is ErrWhen, and nothing is written.
+func (u *Updater) Set(on bool, when string) (Status, error) {
+	if when != "" && !ValidWhen(when) {
+		return u.Status(), ErrWhen
 	}
-	out := u.status
-	u.mu.Unlock()
-	return out, err
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if when == "" {
+		when = u.status.When
+	}
+	raw, _ := json.Marshal(settings{InstallUpdates: &on, InstallWhen: when})
+	err := statefile.Write(filepath.Join(u.dir(), settingsFile), raw)
+	u.status.Enabled = on
+	u.status.When = when
+	return u.status, err
 }
 
 // Download starts fetching and verifying the latest release's asset. It
@@ -270,8 +302,6 @@ func (u *Updater) Download() (Status, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	switch {
-	case !u.status.Enabled:
-		return u.status, ErrDisabled
 	case !u.status.Supported:
 		return u.status, ErrUnsupported
 	case u.status.Phase == Downloading || u.status.Phase == Verifying || u.status.Phase == Installing:
@@ -292,10 +322,6 @@ func (u *Updater) Download() (Status, error) {
 // file's hash and the version again first: the file sat on disk since.
 func (u *Updater) Install(ctx context.Context) (Status, error) {
 	u.mu.Lock()
-	if !u.status.Enabled {
-		defer u.mu.Unlock()
-		return u.status, ErrDisabled
-	}
 	if u.status.Phase != Ready {
 		defer u.mu.Unlock()
 		return u.status, ErrNotReady
@@ -793,18 +819,33 @@ func (u *Updater) dir() string {
 	return dir
 }
 
-func (u *Updater) readEnabled() bool {
+// settings is updater.json. installUpdates keeps the name the manual
+// setting had: an operator who turned installing off keeps it off, now as
+// "not automatically".
+type settings struct {
+	InstallUpdates *bool  `json:"installUpdates,omitempty"`
+	InstallWhen    string `json:"installWhen,omitempty"`
+}
+
+// on is the automatic setting: on unless turned off.
+func (s settings) on() bool { return s.InstallUpdates == nil || *s.InstallUpdates }
+
+// when is when it installs: on quit unless set to a known other.
+func (s settings) when() string {
+	if ValidWhen(s.InstallWhen) {
+		return s.InstallWhen
+	}
+	return WhenQuit
+}
+
+// readSettings reads updater.json; missing or unreadable is the defaults.
+func (u *Updater) readSettings() settings {
+	var held settings
 	raw, err := os.ReadFile(filepath.Join(u.dir(), settingsFile))
-	if err != nil {
-		return true
+	if err != nil || json.Unmarshal(raw, &held) != nil {
+		return settings{}
 	}
-	var held struct {
-		InstallUpdates *bool `json:"installUpdates"`
-	}
-	if json.Unmarshal(raw, &held) != nil || held.InstallUpdates == nil {
-		return true
-	}
-	return *held.InstallUpdates
+	return held
 }
 
 // forget drops a download, under u.mu.

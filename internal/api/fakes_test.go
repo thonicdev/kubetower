@@ -284,7 +284,7 @@ func (fakeSettings) Settings() Settings {
 				Note:       "KubeTower 0.8.0 has been released. This build is 0.7.2.",
 				// Mid-download, so every member of the installer is measured.
 				Install: &UpdateInstall{
-					Phase: "downloading", Enabled: true, Supported: true, Installation: "linux-appimage",
+					Phase: "downloading", Enabled: true, When: "now", Password: true, Supported: true, Installation: "linux-appimage",
 					Version: "0.8.0", Asset: "kubetower-0.8.0-x86_64.AppImage", Done: 400, Total: 1000,
 					Reason: "", Ends: UpdateEnds{Terminals: 2, Forwards: 1},
 				},
@@ -1470,12 +1470,15 @@ func (fakePrereqs) InstallPrereq(_ context.Context, _, _, namespace string) (Act
 type fakeInstaller struct{}
 
 func (fakeInstaller) UpdateInstall() UpdateInstall {
-	return UpdateInstall{Phase: "idle", Enabled: true, Supported: true, Installation: "linux-appimage"}
+	return UpdateInstall{Phase: "idle", Enabled: true, When: "quit", Supported: true, Installation: "linux-appimage"}
 }
 
-func (f fakeInstaller) SetInstallUpdates(on bool) (UpdateInstall, error) {
+func (f fakeInstaller) SetInstallUpdates(on bool, when string) (UpdateInstall, error) {
 	out := f.UpdateInstall()
 	out.Enabled = on
+	if when != "" {
+		out.When = when
+	}
 	return out, nil
 }
 

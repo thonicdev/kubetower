@@ -53,6 +53,10 @@ func installApp(ctx context.Context, plan Plan) error {
 		_ = os.RemoveAll(next)
 		return err
 	}
+	if plan.Quit {
+		// KubeTower is quitting: the next start opens the new bundle.
+		return nil
+	}
 	if err := restart("/usr/bin/open", append([]string{"-n", bundle, "--args"}, os.Args[1:]...)); err != nil {
 		return fmt.Errorf("%w: %v", ErrNotRestarted, err)
 	}
