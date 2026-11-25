@@ -147,6 +147,15 @@ describe('the Monitoring tile', () => {
     expect(tile().querySelector('input')?.value).toBe('');
   });
 
+  it('offers the field where only metrics-server answers, which keeps no history', async () => {
+    serve({ lab: { source: '', editable: true, kind: 'metrics-server', detail: 'metrics-server answers; instant usage available, no history' } });
+    mountApp('/settings/general?cluster=lab');
+
+    await settled('metrics-server');
+    expect(badge().textContent).toBe('metrics-server');
+    expect(tile().querySelector('input')?.value).toBe('');
+  });
+
   it('saves a source and draws what the cluster answers then', async () => {
     const sent = serve({ lab: NONE }, (_cluster, body) => ({
       status: 200,
