@@ -3,7 +3,10 @@ import { cleanup, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Extension } from '../../extension';
+import { favouriteExtraKeys } from '../../shell/favouriteExtras';
 import { resetKindsMemory } from '../../shell/kindsMemory';
+import { ShellProvider } from '../../shell/ShellContext';
 import { FavouriteExtras } from './FavouriteExtras';
 
 /** The shortcuts to this cluster's favourite extras, under the Overview's head (#111). */
@@ -44,13 +47,15 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function draw(favourites: string[]) {
+/** Pod Debugging, as the build ships it: reached from a Pending pod, no menu entry of its own. */
+const contextual: Extension[] = [{ key: 'pending', icon: 'hourglass', nav: { label: 'Pod Debugging', path: 'x/pending', menu: false }, routes: [] }];
+
+function draw(favourites: string[], extensions?: Extension[]) {
   localStorage.setItem('kubetower.kinds', JSON.stringify({ showUnused: false, favourites: { prod: favourites } }));
+  const inside = <FavouriteExtras cluster="prod" />;
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <MemoryRouter>
-        <FavouriteExtras cluster="prod" />
-      </MemoryRouter>
+      <MemoryRouter>{extensions === undefined ? inside : <ShellProvider extensions={extensions}>{inside}</ShellProvider>}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -73,5 +78,16 @@ describe('the favourite extras on the Overview', () => {
     draw(['pods']);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(document.querySelector('[data-favourite-extras]')).toBeNull();
+  });
+
+  it('leaves out an extra the menu does not list, as the menu does', async () => {
+    draw(['extra:pending', 'extra:storage'], contextual);
+    await waitFor(() => {
+      expect(links()).toEqual([['/c/prod/x/storage', 'Storage Inspector']]);
+    });
+  });
+
+  it('reads only the extras among the favourites, whatever a kind is called', () => {
+    expect(favouriteExtraKeys(['pods', 'extra:storage', 'storage', 'extra:argocd'])).toEqual(['storage', 'argocd']);
   });
 });

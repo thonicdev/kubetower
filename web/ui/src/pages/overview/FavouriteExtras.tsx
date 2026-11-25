@@ -4,8 +4,10 @@ import { Link } from 'react-router';
 import { useNav } from '../../api';
 import { Icon } from '../../components/Icon';
 import { focusRing } from '../../focus';
+import { withoutContextual } from '../../shell/contextualExtras';
 import { extraKeyOfHref, favouriteExtraKeys } from '../../shell/favouriteExtras';
 import { useKindsChoice } from '../../shell/kindsMemory';
+import { useShellIfPresent } from '../../shell/ShellContext';
 
 /**
  * The favourite extras of this cluster, a link each under the cluster's head
@@ -13,12 +15,14 @@ import { useKindsChoice } from '../../shell/kindsMemory';
  * for this cluster - and nothing at all while there are none.
  */
 export function FavouriteExtras({ cluster }: { cluster: string }): ReactNode {
+  const extensions = useShellIfPresent()?.extensions;
   const choice = useKindsChoice(cluster);
   const keys = favouriteExtraKeys(choice.favourites);
   const nav = useNav(cluster, keys.length > 0);
   const offered = new Map<string, { text: string; href: string }>();
   const menu = nav.data;
-  for (const group of menu?.state === 'ok' ? menu.data.groups : []) {
+  // What the menu draws: not an extra reached only from its object's panel.
+  for (const group of menu?.state === 'ok' ? withoutContextual(menu.data.groups, extensions) : []) {
     if (group.key !== 'extra') continue;
     for (const item of group.items) {
       const key = extraKeyOfHref(item.href);

@@ -105,7 +105,9 @@ export function ExtraTab({
             suggested={suggested.get(item.key)}
             onEdit={() => setOpen({ cluster, key: item.key, what: 'edit' })}
             onAbout={() => setOpen({ cluster, key: item.key, what: 'about' })}
-            favourite={choice.isFavourite(extraFavourite(item.key))}
+            // No star on an extra the menu does not list (`nav.menu: false`): it
+            // is reached from its object's panel, so it has nowhere to be a favourite.
+            favourite={own(item.key)?.nav.menu === false ? undefined : choice.isFavourite(extraFavourite(item.key))}
             onFavourite={choice.ready ? () => choice.toggleFavourite(extraFavourite(item.key)) : undefined}
           />
         ))}
@@ -249,8 +251,8 @@ function ExtensionCard({
   suggested: string | undefined;
   onEdit: () => void;
   onAbout: () => void;
-  /** Marked as a favourite of this cluster (#111). */
-  favourite: boolean;
+  /** Marked as a favourite of this cluster (#111); undefined where it cannot be one. */
+  favourite: boolean | undefined;
   /** Mark or unmark it; undefined until the choice has been read. */
   onFavourite: (() => void) | undefined;
 }): ReactNode {
@@ -318,6 +320,7 @@ function ExtensionCard({
             ))}
           </div>
         </div>
+        {favourite === undefined ? null : (
         <button
           type="button"
           aria-pressed={favourite}
@@ -330,6 +333,7 @@ function ExtensionCard({
         >
           <Icon name={favourite ? 'starred' : 'star'} />
         </button>
+        )}
         {writable || shownDisabled ? (
           <ExtraSwitch
             on={item.enabled}

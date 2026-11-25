@@ -4,7 +4,9 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExtensionInfo } from '../../api';
+import type { Extension } from '../../extension';
 import { resetKindsMemory } from '../../shell/kindsMemory';
+import { ShellProvider } from '../../shell/ShellContext';
 import { ExtraTab } from './ExtraTab';
 
 /** The star on each card of Settings > Extra (#111). */
@@ -67,5 +69,26 @@ describe('Settings > Extra', () => {
       expect(star('argocd').getAttribute('aria-pressed')).toBe('true');
     });
     expect(star('storage').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('draws no star on an extra the menu does not list', async () => {
+    const shipped: Extension[] = [
+      { key: 'pending', icon: 'hourglass', nav: { label: 'Pod Debugging', path: 'x/pending', menu: false }, routes: [] },
+      { key: 'storage', icon: 'database', nav: { label: 'Storage Inspector', path: 'x/storage' }, routes: [] },
+    ];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ShellProvider extensions={shipped}>
+            <ExtraTab cluster="prod" clusters={[]} items={items} />
+          </ShellProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(star('storage')).not.toBeNull();
+    });
+    expect(star('pending')).toBeNull();
+    expect(document.querySelector('[data-extra="pending"]')).not.toBeNull();
   });
 });

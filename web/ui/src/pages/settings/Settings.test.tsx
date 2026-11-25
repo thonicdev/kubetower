@@ -1062,7 +1062,8 @@ describe('in a cluster, Extra lists every extra with a button, as the server say
     const switches = [...(tab?.querySelectorAll<HTMLButtonElement>('[role="switch"]') ?? [])];
     expect(switches.length).toBe(2);
     expect(switches.every((one) => one.disabled)).toBe(true);
-    // (Bar each card's Edit and About, which write nothing by themselves.)
+    // (Bar each card's Edit and About, which write nothing by themselves, and its
+    // star, which writes a person's favourite and not the cluster: #111.)
     expect(
       tab?.querySelectorAll('button:not([disabled]):not([data-extra-about]):not([data-extra-edit]):not([data-extra-favourite]), input:not([disabled]), select, textarea').length,
     ).toBe(0);
@@ -1420,7 +1421,8 @@ describe('on the desktop, Extra has a tile per extension with a switch and its s
     });
     const tab = page().querySelector('[data-extras]');
     expect(tab?.querySelectorAll('[role="switch"]').length).toBe(2);
-    // Bar each card's Edit and About, which write nothing by themselves.
+    // Bar each card's Edit and About, which write nothing by themselves, and its
+    // star, which writes a person's favourite and not the cluster (#111).
     expect(tab?.querySelectorAll('input:not([disabled]), button:not([disabled]):not([data-extra-about]):not([data-extra-edit]):not([data-extra-favourite])').length).toBe(0);
   });
 });
