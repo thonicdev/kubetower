@@ -104,6 +104,8 @@ const EVERY_GLYPH: readonly IconName[] = [
   'shield',
   // About an extra.
   'info',
+  'plus',
+  'check',
 ];
 
 describe('the sheet carries every glyph a control can ask for', () => {

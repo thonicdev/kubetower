@@ -9,9 +9,9 @@ import { resetWhatsNew } from './WhatsNew';
 // A changelog of fake releases, in place of this repository's.
 const real = RELEASES;
 const FAKE: Release[] = [
-  { version: '0.3.0', highlights: ['Saved views', 'Pod logs across restarts'] },
+  { version: '0.3.0', highlights: [{ title: 'Saved views', kind: 'added' }, { title: 'Pod logs across restarts', kind: 'fixed' }] },
   { version: '0.2.1', highlights: [] },
-  { version: '0.2.0', highlights: ["What's new"] },
+  { version: '0.2.0', highlights: [{ title: "What's new", kind: 'added' }] },
   { version: '0.1.2', highlights: [] },
 ];
 beforeEach(() => {
@@ -73,6 +73,15 @@ function console(release: string | undefined, where: { desktop: boolean; seen?: 
         });
       case '/api/settings':
         return json(200, { info: { repositoryUrl: 'https://github.com/thonicdev/kubetower' } });
+      case '/api/c/prod/extensions':
+        return json(200, {
+          state: 'ok',
+          items: [
+            { key: 'events', label: 'Event Intelligence', enabled: true, pinned: false, writable: true },
+            { key: 'netinspect', label: 'Network Inspector', enabled: false, pinned: false, writable: true },
+            { key: 'runtime', label: 'Runtime Inspector', enabled: true, pinned: false, writable: true },
+          ],
+        });
       default:
         return json(404, { status: 404, title: 'Not Found', code: 'not_found', detail: `no stub for ${path}` });
     }
@@ -80,7 +89,10 @@ function console(release: string | undefined, where: { desktop: boolean; seen?: 
   return out;
 }
 
+/** The dialog's content box, marked with what it shows. */
 const banner = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-whats-new]');
+/** The dialog itself: the one an extra's About opens. */
+const dialog = (): HTMLElement | null => banner()?.closest<HTMLElement>('[role="dialog"]') ?? null;
 
 async function shown(kind: string): Promise<HTMLElement> {
   await waitFor(() => {
@@ -89,7 +101,7 @@ async function shown(kind: string): Promise<HTMLElement> {
   return banner() as HTMLElement;
 }
 
-/** Long enough for every read to answer: then an absent banner is a finding. */
+/** Long enough for every read to answer: then an absent dialog is a finding. */
 async function settled(): Promise<void> {
   await waitFor(() => {
     expect(screen.getAllByText('prod').length).toBeGreaterThan(0);
@@ -97,32 +109,87 @@ async function settled(): Promise<void> {
   await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
 }
 
+const titleOf = (): string | null | undefined => dialog()?.querySelector('h2')?.textContent;
+
 describe("What's new", () => {
-  it('welcomes a first visit with the tour', async () => {
+  it('welcomes a first visit in a centred dialog, with the mark and a card per view', async () => {
     console('0.3.0', { desktop: false });
     mountApp('/');
     const box = await shown('welcome');
-    expect(box.querySelector('h2')?.textContent).toBe('Welcome to KubeTower');
-    const tiles = [...box.querySelectorAll<HTMLElement>('[data-whats-new-tour] li')];
-    expect(tiles.map((tile) => tile.textContent)).toEqual(['Clusters', 'Resources', 'Dock', 'Extras', 'Settings']);
-    // What each holds is a tooltip, not a line under the label.
-    expect(tiles.every((tile) => (tile.title ?? '') !== '')).toBe(true);
+    // The shared Dialog: modal, named by its heading, and no top band in the page.
+    expect(dialog()?.getAttribute('aria-modal')).toBe('true');
+    expect(screen.getByRole('dialog', { name: 'Welcome to KubeTower' })).toBe(dialog());
+    expect(box.querySelector('[data-kubetower-mark]')).not.toBeNull();
+    const cards = [...box.querySelectorAll<HTMLElement>('[data-whats-new-card]')];
+    expect(cards.map((card) => card.querySelector('.font-medium')?.textContent)).toEqual([
+      'Clusters',
+      'Overview',
+      'Network Inspector',
+      'Runtime Inspector',
+      'Event Intelligence',
+      'Extras',
+    ]);
+    // What each holds is its description, shown on hover and keyboard focus: no title.
+    for (const card of cards) {
+      const tip = document.getElementById(card.getAttribute('aria-describedby') ?? '');
+      expect(tip?.textContent).not.toBe('');
+      expect(card.contains(tip)).toBe(true);
+      expect(tip?.className).toContain('group-focus-visible:not-sr-only');
+      expect(card.hasAttribute('title')).toBe(false);
+    }
+    expect(screen.getByRole('button', { name: 'Get started' })).toBeDefined();
+    // The focus goes into the dialog.
+    await waitFor(() => {
+      expect(dialog()?.contains(document.activeElement)).toBe(true);
+    });
   });
 
-  it('aggregates the highlights of every release since the one seen, with the changelog', async () => {
+  it('leads each card to its view on the cluster in the address, or to Settings › Extra where the extra is off', async () => {
+    console('0.3.0', { desktop: false });
+    const { router } = mountApp('/c/prod');
+    const box = await shown('welcome');
+    const href = (key: string): string | null | undefined => box.querySelector(`[data-whats-new-card="${key}"]`)?.getAttribute('href');
+    await waitFor(() => {
+      expect(href('events')).toBe('/c/prod/x/events');
+    });
+    expect(href('clusters')).toBe('/');
+    expect(href('overview')).toBe('/c/prod');
+    expect(href('runtime')).toBe('/c/prod/x/runtime');
+    expect(href('netinspect')).toBe('/settings/extra');
+    expect(href('extras')).toBe('/settings/extra');
+    fireEvent.click(box.querySelector('[data-whats-new-card="events"]') as HTMLElement);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/c/prod/x/events');
+    });
+    // A card closes it for the release, as Get started does.
+    expect(banner()).toBeNull();
+    expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
+  });
+
+  it("gives What's new its version, an icon and a badge per highlight, and the changelog", async () => {
     localStorage.setItem('kubetower.seenVersion', '0.1.2');
     console('0.3.0', { desktop: false });
     mountApp('/');
     const box = await shown('news');
-    expect(box.querySelector('h2')?.textContent).toBe("What's new");
+    expect(titleOf()).toBe("What's new 0.3.0");
     expect([...box.querySelectorAll('[data-whats-new-release]')].map((one) => one.getAttribute('data-whats-new-release'))).toEqual([
       '0.3.0',
       '0.2.0',
     ]);
-    expect([...box.querySelectorAll('li')].map((one) => one.textContent)).toEqual(['Saved views', 'Pod logs across restarts', "What's new"]);
-    expect(box.querySelector('[data-whats-new-changelog]')?.getAttribute('href')).toBe(
-      'https://github.com/thonicdev/kubetower/blob/main/CHANGELOG.md',
-    );
+    const items = [...box.querySelectorAll<HTMLElement>('[data-highlight]')];
+    expect(items.map((one) => [one.dataset['highlight'], one.textContent])).toEqual([
+      ['added', 'Saved viewsAdded'],
+      ['fixed', 'Pod logs across restartsFixed'],
+      ['added', "What's newAdded"],
+    ]);
+    // Added and Fixed differ by their glyph, not by a sentence.
+    expect(items.map((one) => one.querySelector('use')?.getAttribute('href'))).toEqual(['#i-plus', '#i-check', '#i-plus']);
+    await waitFor(() => {
+      expect(box.querySelector('[data-whats-new-changelog]')?.getAttribute('href')).toBe(
+        'https://github.com/thonicdev/kubetower/blob/main/CHANGELOG.md',
+      );
+    });
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDefined();
   });
 
   it('shows nothing on the version already seen', async () => {
@@ -133,12 +200,13 @@ describe("What's new", () => {
     expect(banner()).toBeNull();
   });
 
-  it('falls back to the tour when nothing notable came since', async () => {
+  it('falls back to the cards when nothing notable came since', async () => {
     localStorage.setItem('kubetower.seenVersion', '0.2.0');
     console('0.2.1', { desktop: false });
     mountApp('/');
     const box = await shown('tour');
-    expect(box.querySelector('h2')?.textContent).toBe('KubeTower');
+    expect(titleOf()).toBe('KubeTower 0.2.1');
+    expect(box.querySelectorAll('[data-whats-new-card]')).toHaveLength(6);
   });
 
   it('shows nothing on a development build', async () => {
@@ -148,11 +216,11 @@ describe("What's new", () => {
     expect(banner()).toBeNull();
   });
 
-  it('closes with one click and stays closed in this browser', async () => {
+  it('closes with Get started and stays closed in this browser', async () => {
     console('0.3.0', { desktop: false });
     const first = mountApp('/');
     await shown('welcome');
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Get started' }));
     expect(banner()).toBeNull();
     expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
     first.view.unmount();
@@ -162,11 +230,25 @@ describe("What's new", () => {
     expect(banner()).toBeNull();
   });
 
-  it('keeps the release seen on the desktop, through the preferences', async () => {
+  it('closes on a click on the veil, and not on one inside the box', async () => {
+    console('0.3.0', { desktop: false });
+    mountApp('/');
+    const box = await shown('welcome');
+    fireEvent.mouseDown(box);
+    fireEvent.click(box);
+    expect(banner()).not.toBeNull();
+    const veil = dialog()?.parentElement as HTMLElement;
+    fireEvent.mouseDown(veil);
+    fireEvent.click(veil);
+    expect(banner()).toBeNull();
+    expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
+  });
+
+  it('keeps the release seen on the desktop, through the preferences, closed by Escape', async () => {
     const c = console('0.3.0', { desktop: true, seen: '0.2.0' });
     const first = mountApp('/');
-    const box = await shown('news');
-    fireEvent.keyDown(box, { key: 'Escape' });
+    await shown('news');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     expect(banner()).toBeNull();
     await waitFor(() => {
       // Only the What's new write: the desktop's rail writes its own.
@@ -182,24 +264,24 @@ describe("What's new", () => {
     expect(banner()).toBeNull();
   });
 
-  it('opens again from Settings › Infos, on this release, and takes the focus once', async () => {
+  it('opens again from Settings › Infos, takes the focus, and gives it back on close', async () => {
     localStorage.setItem('kubetower.seenVersion', '0.3.0');
     console('0.3.0', { desktop: false });
-    const { router } = mountApp('/settings/infos');
+    mountApp('/settings/infos');
     const open = await openButton();
     expect(banner()).toBeNull();
+    open.focus();
     fireEvent.click(open);
     const box = await shown('news');
-    expect([...box.querySelectorAll('li')].map((one) => one.textContent)).toEqual(['Saved views', 'Pod logs across restarts']);
+    expect([...box.querySelectorAll<HTMLElement>('[data-highlight]')].map((one) => one.dataset['highlight'])).toEqual(['added', 'fixed']);
     await waitFor(() => {
-      expect(document.activeElement).toBe(box);
+      expect(dialog()?.contains(document.activeElement)).toBe(true);
     });
-    // Elsewhere, then a navigation: the banner stays drawn and leaves the focus where it is.
-    open.focus();
-    await act(() => router.navigate('/settings/infos?probe=1', { replace: true }));
-    await act(() => router.navigate('/settings/infos?probe=2'));
-    expect(banner()).not.toBeNull();
-    expect(document.activeElement).toBe(open);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(banner()).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(open);
+    });
   });
 
   it('records nothing when an older build, opened from Infos, is closed', async () => {
@@ -216,11 +298,14 @@ describe("What's new", () => {
   it('comes back saying so when the desktop could not keep it', async () => {
     console('0.3.0', { desktop: true, seen: '0.2.0', refuse: true });
     mountApp('/');
-    fireEvent.keyDown(await shown('news'), { key: 'Escape' });
+    await shown('news');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     const box = await shown('news');
     await waitFor(() => {
       expect(box.querySelector('[data-whats-new-failed]')?.textContent).toBe('Not saved');
     });
+    // Inside a status region that was there before it, so it is announced.
+    expect(box.querySelector('[data-whats-new-failed]')?.closest('[role="status"]')).not.toBeNull();
   });
 });
 

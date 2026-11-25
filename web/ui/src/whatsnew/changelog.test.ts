@@ -52,15 +52,19 @@ describe('the changelog', () => {
 
   it('takes Added entries and the Fixed ones marked as highlights, by their bold lead', () => {
     expect(releases.map((one) => one.version)).toEqual(['0.3.0', '0.2.0', '0.1.2', '0.1.0']);
-    expect(releases[1]?.highlights).toEqual(["What's new", 'aws eks get-token arguments read as the CLI reads them']);
+    // Each says which section it came from, so Added and Fixed draw apart (#107).
+    expect(releases[1]?.highlights).toEqual([
+      { title: "What's new", kind: 'added' },
+      { title: 'aws eks get-token arguments read as the CLI reads them', kind: 'fixed' },
+    ]);
     expect(releases[2]?.highlights).toEqual([]);
     expect(releases[3]?.highlights).toEqual([]);
   });
 
   it('keeps at most MAX_HIGHLIGHTS per release', () => {
     expect(releases[0]?.highlights).toHaveLength(MAX_HIGHLIGHTS);
-    expect(releases[0]?.highlights[0]).toBe('Saved views');
-    expect(releases[0]?.highlights).not.toContain('Six, past the limit');
+    expect(releases[0]?.highlights[0]?.title).toBe('Saved views');
+    expect(releases[0]?.highlights.map((one) => one.title)).not.toContain('Six, past the limit');
   });
 
   it('aggregates every release since the one seen, newest first, and only those with highlights', () => {
@@ -89,7 +93,7 @@ describe('the changelog', () => {
     expect(RELEASES.some((one) => one.version === '0.1.0')).toBe(true);
     // 0.1.2, released: its Added entries by their bold lead, five at most.
     const released = RELEASES.find((one) => one.version === '0.1.2');
-    expect(released?.highlights.slice(0, 2)).toEqual(['Releases are signed', 'The desktop updates itself']);
+    expect(released?.highlights.slice(0, 2).map((one) => one.title)).toEqual(['Releases are signed', 'The desktop updates itself']);
     expect(released?.highlights).toHaveLength(MAX_HIGHLIGHTS);
     for (const one of RELEASES) expect(one.highlights.length).toBeLessThanOrEqual(MAX_HIGHLIGHTS);
   });

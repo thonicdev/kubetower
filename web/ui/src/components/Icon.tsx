@@ -111,7 +111,9 @@ export type IconName =
   | 'certificate' | 'delivery' | 'database' | 'globe' | 'pulse' | 'coffee'
   | 'sliders' | 'clock' | 'topology' | 'hourglass' | 'layers' | 'shield'
   // About an extra: a circled i.
-  | 'info';
+  | 'info'
+  // What's new: a release's Added and Fixed entries (#107).
+  | 'plus' | 'check';
 
 /**
  * The sheet itself. Mounted **once**, by the Shell, above everything that draws
@@ -645,6 +647,15 @@ export function IconSprite(): ReactNode {
         <circle cx="12" cy="12" r="9"/>
         <line x1="12" y1="11" x2="12" y2="16.5"/>
         <line x1="12" y1="7.5" x2="12.01" y2="7.5"/>
+      </symbol>
+
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </symbol>
+
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <polyline points="5,12.5 10,17.5 19,7"/>
       </symbol>
       </defs>
     </svg>

@@ -1,28 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { useId, useSyncExternalStore, type ReactNode } from 'react';
+import { Link, useMatch } from 'react-router';
 
 import { setSeenVersion } from '../api/endpoints';
-import { preferencesQuery, queryKeys, useCapabilities } from '../api/queries';
+import { preferencesQuery, queryKeys, useCapabilities, useExtensions } from '../api/queries';
 import type { Preferences } from '../api/types';
-import { CloseButton } from '../components/CloseButton';
+import { clusterPath } from '../clusters/clusterPath';
+import { btnPrimary } from '../components/buttons';
+import { Dialog } from '../components/Dialog';
 import { Icon, type IconName } from '../components/Icon';
 import { Pill } from '../components/Pill';
 import { externalHref } from '../externalHref';
 import { focusRing } from '../focus';
+import { KeyLayer } from '../keyboard/layers';
 import { useSettings } from '../pages/settings/data';
-import { compareVersions, highlightsBetween, RELEASES, type Release } from './changelog';
+import { compareVersions, highlightsBetween, RELEASES, type Highlight, type Release } from './changelog';
+import { Mark } from './Mark';
 import { rememberSeen, useSeenHere } from './seenMemory';
 
 /**
- * Welcome and What's new (#80): a banner atop every page on the first visit of
- * a release this person has not seen.
+ * Welcome and What's new (#80): on the first visit of a release this person has
+ * not seen, a centred dialog - the one an extra's About opens (#107).
  *
  *   never seen anything  Welcome to KubeTower, and the tour
  *   seen an older one    What's new, X.Y.Z: the highlights of every release
  *                        since, and the full changelog
  *   nothing notable      the tour
  *
- * × or Escape closes it, and it stays closed for this release: the desktop
+ * Close, Get started, Escape, a click on the veil or a card closes it, and it
+ * stays closed for this release: the desktop
  * keeps the release seen in its state directory (`preferences`), a server
  * console in each browser. Settings › Infos › What's new opens it again.
  * Nothing on a development build, nor under automation (`navigator.webdriver`)
@@ -56,9 +62,6 @@ function subscribe(listener: () => void): () => void {
 }
 const current = (): Banner => banner;
 
-/** The last opening that took the focus, so no later render takes it again. */
-let focused = 0;
-
 /** Opens the banner again, from About. */
 export function openWhatsNew(): void {
   setBanner({ ...banner, reopened: true, opens: banner.opens + 1, failed: undefined });
@@ -66,7 +69,6 @@ export function openWhatsNew(): void {
 
 /** Test seam. */
 export function resetWhatsNew(): void {
-  focused = 0;
   setBanner(CLOSED);
 }
 
@@ -134,64 +136,68 @@ export function useWhatsNew(): {
   return compareVersions(seen, release) < 0 ? { ...off, shown: { kind: 'tour' } } : off;
 }
 
-/** The main views, as tiles: a label, and what each holds in its tooltip. */
-const TOUR: readonly { icon: IconName; label: string; tip: string }[] = [
-  { icon: 'cluster', label: 'Clusters', tip: 'Every kubeconfig context' },
-  { icon: 'workloads', label: 'Resources', tip: 'Every kind, live' },
-  { icon: 'terminal', label: 'Dock', tip: 'Logs, shells, forwards' },
-  { icon: 'extra', label: 'Extras', tip: 'Argo CD, Redis, Postgres…' },
-  { icon: 'settings', label: 'Settings', tip: 'Extras, updates' },
+/** A card of the welcome: where it leads, by what it shows. */
+interface Card {
+  key: string;
+  icon: IconName;
+  label: string;
+  tip: string;
+  /** The extra it opens, when it is one: off on this cluster, it leads to Settings › Extra. */
+  extra?: string;
+  /** Its page under the cluster: '' is the Overview. */
+  page?: string;
+}
+
+/** The product, as cards: each opens its view (#107). */
+const CARDS: readonly Card[] = [
+  { key: 'clusters', icon: 'cluster', label: 'Clusters', tip: 'Every kubeconfig context' },
+  { key: 'overview', icon: 'overview', label: 'Overview', tip: 'Nodes, workloads, capacity', page: '' },
+  { key: 'netinspect', icon: 'topology', label: 'Network Inspector', tip: 'Policies, flows, verdicts', extra: 'netinspect', page: 'x/netinspect' },
+  { key: 'runtime', icon: 'coffee', label: 'Runtime Inspector', tip: 'Java, Go, Node.js, Python', extra: 'runtime', page: 'x/runtime' },
+  { key: 'events', icon: 'pulse', label: 'Event Intelligence', tip: 'Events by cause, on a timeline', extra: 'events', page: 'x/events' },
+  { key: 'extras', icon: 'extra', label: 'Extras', tip: 'Argo CD, Redis, Postgres, Storage…' },
 ];
 
-export function WhatsNewBanner(): ReactNode {
-  const { release, shown, opens, failed, close } = useWhatsNew();
-  const box = useRef<HTMLElement>(null);
-  const drawn = shown !== null;
-  // Opened from Infos: focus moves to it, once per opening. Shown on its own,
-  // drawn again by a navigation or mounted again, it takes nothing.
-  useEffect(() => {
-    if (!drawn || opens <= focused) return;
-    focused = opens;
-    box.current?.focus();
-  }, [opens, drawn]);
+/** Where a card leads, on the cluster in the address when there is one. */
+function cardHref(card: Card, cluster: string | undefined, on: ReadonlySet<string>): string {
+  if (card.key === 'clusters') return '/';
+  if (card.page === undefined) return '/settings/extra';
+  if (cluster === undefined) return card.extra === undefined ? '/' : '/settings/extra';
+  if (card.extra !== undefined && !on.has(card.extra)) return '/settings/extra';
+  return card.page === '' ? clusterPath(cluster) : `${clusterPath(cluster)}/${card.page}`;
+}
+
+export function WhatsNewDialog(): ReactNode {
+  const { release, shown, failed, close } = useWhatsNew();
   if (shown === null || release === undefined) return null;
-  const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
-    event.stopPropagation();
-    close();
-  };
-  const title =
-    shown.kind === 'welcome' ? 'Welcome to KubeTower' : shown.kind === 'news' ? "What's new" : 'KubeTower';
+  const news = shown.kind === 'news';
+  const title = shown.kind === 'welcome' ? 'Welcome to KubeTower' : news ? `What's new ${release}` : `KubeTower ${release}`;
   return (
-    <section
-      ref={box}
-      tabIndex={-1}
-      aria-labelledby="whats-new-title"
-      onKeyDown={onKeyDown}
-      data-whats-new={shown.kind}
-      className={`shrink-0 border-b border-l-2 border-line border-l-accent bg-panel px-3 py-2 text-xs ${focusRing}`}
-    >
-      <div className="flex items-center gap-2">
-        <h2 id="whats-new-title" className="text-sm font-medium text-fg">
-          {title}
-        </h2>
-        <Pill tone="info">{release}</Pill>
-        {failed !== undefined ? (
-          <span className="text-bad" title={failed} data-whats-new-failed="">
-            Not saved
+    <Dialog title={title} onClose={close} layer={KeyLayer.Dialog} size="wide" showClose={false}>
+      <div data-whats-new={shown.kind} className="flex flex-col gap-4">
+        {news ? <News releases={shown.releases} /> : <Welcome onOpen={close} />}
+        <div className="flex flex-wrap items-center gap-3">
+          {news ? <ChangelogLink /> : null}
+          {/* Always in the dialog, so a screen reader announces "Not saved" as it arrives. */}
+          <span role="status" data-whats-new-status="">
+            {failed !== undefined ? (
+              <span className="text-bad" title={failed} data-whats-new-failed="">
+                Not saved
+              </span>
+            ) : null}
           </span>
-        ) : null}
-        {shown.kind === 'news' ? <ChangelogLink /> : null}
-        <CloseButton onClick={close} size="inline" escape className="ml-auto" />
+          <button type="button" className={`ml-auto ${btnPrimary}`} onClick={close} data-whats-new-done="">
+            {news ? 'Close' : 'Get started'}
+          </button>
+        </div>
       </div>
-      {shown.kind === 'news' ? <News releases={shown.releases} /> : <Tour />}
-    </section>
+    </Dialog>
   );
 }
 
 /**
  * The repository's CHANGELOG, from the settings read: asked only once news is
- * drawn, so a page with no banner reads nothing more.
+ * drawn, so a dialog with no news reads nothing more.
  */
 function ChangelogLink(): ReactNode {
   const repository = externalHref(useSettings().data?.info.repositoryUrl);
@@ -201,44 +207,93 @@ function ChangelogLink(): ReactNode {
       href={`${repository.replace(/\/+$/, '')}/blob/main/CHANGELOG.md`}
       target="_blank"
       rel="noopener noreferrer"
-      className={`text-accent underline underline-offset-2 ${focusRing}`}
+      className={`inline-flex items-center gap-1 text-accent underline underline-offset-2 ${focusRing}`}
       data-whats-new-changelog=""
     >
       Changelog
+      <Icon name="external" />
     </a>
   );
 }
 
+/** Added and Fixed, told apart by their glyph and their badge. */
+const KIND: Readonly<Record<Highlight['kind'], { icon: IconName; label: string; tone: string }>> = {
+  added: { icon: 'plus', label: 'Added', tone: 'info' },
+  fixed: { icon: 'check', label: 'Fixed', tone: 'ok' },
+};
+
 function News({ releases }: { releases: readonly Release[] }): ReactNode {
   return (
-    <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-2" data-whats-new-releases="">
+    <div className="flex flex-col gap-3" data-whats-new-releases="">
       {releases.map((one) => (
-        <div key={one.version} className="min-w-0 basis-64" data-whats-new-release={one.version}>
-          {releases.length > 1 ? <span className="font-medium text-muted">{one.version}</span> : null}
-          <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-fg">
-            {one.highlights.map((highlight) => (
-              <li key={highlight}>{highlight}</li>
-            ))}
+        <section key={one.version} aria-label={one.version} className="flex min-w-0 flex-col gap-1.5" data-whats-new-release={one.version}>
+          {releases.length > 1 ? (
+            <span className="self-start">
+              <Pill>{one.version}</Pill>
+            </span>
+          ) : null}
+          <ul className="flex flex-col gap-1.5">
+            {one.highlights.map((highlight) => {
+              const kind = KIND[highlight.kind];
+              return (
+                <li key={highlight.title} data-highlight={highlight.kind} className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2.5 py-2">
+                  <span aria-hidden="true" className={`grid size-7 shrink-0 place-items-center rounded-md border ${highlight.kind === 'added' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-ok/40 bg-ok/10 text-ok'}`}>
+                    <Icon name={kind.icon} />
+                  </span>
+                  <span className="min-w-0 flex-1 text-fg">{highlight.title}</span>
+                  <Pill tone={kind.tone}>{kind.label}</Pill>
+                </li>
+              );
+            })}
           </ul>
-        </div>
+        </section>
       ))}
     </div>
   );
 }
 
-function Tour(): ReactNode {
+/** The logo, and a card per view: a click opens it and closes the dialog. */
+function Welcome({ onOpen }: { onOpen: () => void }): ReactNode {
+  const match = useMatch('/c/:cluster/*');
+  const cluster = match?.params.cluster;
+  const extensions = useExtensions(cluster);
+  const on = new Set(extensions.data?.state === 'ok' ? extensions.data.items.filter((one) => one.enabled).map((one) => one.key) : []);
   return (
-    <ul className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-whats-new-tour="">
-      {TOUR.map((tile) => (
-        <li
-          key={tile.label}
-          title={tile.tip}
-          className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2 py-1.5"
-        >
-          <Icon name={tile.icon} className="shrink-0 text-accent" />
-          <span className="min-w-0 truncate font-medium text-fg">{tile.label}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col items-center gap-4" data-whats-new-welcome="">
+      <Mark className="size-16" />
+      <ul className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-whats-new-cards="">
+        {CARDS.map((card) => (
+          <WelcomeCard key={card.key} card={card} href={cardHref(card, cluster, on)} onOpen={onOpen} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One card. Its tip is drawn on hover and on keyboard focus, and is the link's
+ * description (`aria-describedby`): a `title` reaches neither a keyboard nor a
+ * touch screen.
+ */
+function WelcomeCard({ card, href, onOpen }: { card: Card; href: string; onOpen: () => void }): ReactNode {
+  const tip = useId();
+  return (
+    <li className="min-w-0">
+      <Link
+        to={href}
+        onClick={onOpen}
+        aria-describedby={tip}
+        data-whats-new-card={card.key}
+        className={`group flex h-full min-w-0 flex-col items-center gap-2 rounded-lg border border-line px-2 py-3 text-center hover:border-accent/60 hover:bg-white/5 ${focusRing}`}
+      >
+        <span aria-hidden="true" className="grid size-10 place-items-center rounded-lg border border-accent/40 bg-accent/10 text-accent [--icon:calc(var(--spacing)*5)]">
+          <Icon name={card.icon} />
+        </span>
+        <span className="min-w-0 truncate font-medium text-fg">{card.label}</span>
+        <span id={tip} data-whats-new-tip="" className="sr-only text-2xs text-muted group-hover:not-sr-only group-focus-visible:not-sr-only">
+          {card.tip}
+        </span>
+      </Link>
+    </li>
   );
 }
