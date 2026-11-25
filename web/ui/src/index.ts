@@ -167,6 +167,7 @@ export {
 // one that does nothing on half the installations.
 export { Dialog, type DialogProps } from './components/Dialog';
 export { CopyButton, copyText, type CopyButtonProps } from './components/CopyButton';
+export { ImageRef, imageParts, shortDigest, type ImageParts } from './components/ImageRef';
 
 // The plan dialog, for an extra page that links to one of the console's own
 // confirm-then-act routes (the Security Center's install of its operator): the

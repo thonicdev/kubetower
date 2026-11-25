@@ -54,6 +54,8 @@ import {
   PODS_PATH,
   PODS_TALL_DRAWER,
   PODS_TALL_PAGE,
+  POD_IMAGE_PAGE,
+  podImageAnswers,
   podsAnswers,
   podsLongStatusAnswers,
   podsManyAnswers,
@@ -1400,6 +1402,9 @@ const CONSOLES: Readonly<
   // own panel scroll, never the document.
   'console-pod-tall-open': { at: PODS_TALL_DRAWER, answers: podsTallAnswers() },
   'console-pod-tall-page': { at: PODS_TALL_PAGE, answers: podsTallAnswers() },
+  // A pod's images in every shape #110 names: a long repository and its tag,
+  // a digest alone, a tag and a digest, no tag.
+  'console-pod-images': { at: POD_IMAGE_PAGE, answers: podImageAnswers() },
   // A pod, a service and a secret open in the drawer, each with its whole tab
   // strip and its kind's verbs: what the drawer's narrowest width is measured
   // on.

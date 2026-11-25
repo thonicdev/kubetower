@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Suspense, type ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -83,7 +83,10 @@ describe('the runtime tabs', () => {
     const asked = stub(answer);
     const Node = tabFor('node');
     mount(<Node cluster="kind" kind="pods" namespace="shop" name="web-0" />);
-    await screen.findByText('registry.example.com/web:1');
+    // The image as ImageRef draws it: the repository, then its tag as a badge (#110).
+    await waitFor(() => {
+      expect(document.querySelector('[data-image="registry.example.com/web:1"] [data-image-version]')?.textContent).toBe('1');
+    });
     const hints = document.querySelectorAll('[data-runtime-hints] [data-pill]');
     expect([...hints].map((h) => `${h.textContent ?? ''}|${h.getAttribute('title') ?? ''}`)).toEqual([
       'command|the command line starts “node”',
