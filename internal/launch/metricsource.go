@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/thonicdev/kubetower/internal/api"
 	"github.com/thonicdev/kubetower/internal/metrics"
 	"github.com/thonicdev/kubetower/internal/statefile"
+	"github.com/thonicdev/kubetower/textutil"
 )
 
 // metricsSources is api.MetricsSources: Settings › General's metrics source
@@ -85,18 +85,13 @@ func (m metricsSources) SaveMetricsSource(ctx context.Context, cluster, source s
 	}
 	_, err := m.store.Set(cluster, source)
 	if err != nil && !errors.Is(err, statefile.ErrNotSaved) {
-		return api.MetricsSource{}, fmt.Errorf("%w: %s", api.ErrInvalid, firstLineOf(err.Error()))
+		return api.MetricsSource{}, fmt.Errorf("%w: %s", api.ErrInvalid, textutil.FirstLine(err.Error()))
 	}
 	out := m.answer(cluster, m.measure.Discover(ctx, cluster, true))
 	saved := err == nil
 	out.Persisted = &saved
 	if err != nil {
-		out.Note = "In effect now, and it will not survive a restart: " + firstLineOf(err.Error())
+		out.Note = "In effect now, and it will not survive a restart: " + textutil.FirstLine(err.Error())
 	}
 	return out, nil
-}
-
-func firstLineOf(text string) string {
-	line, _, _ := strings.Cut(text, "\n")
-	return line
 }
