@@ -176,6 +176,10 @@ var installsAfterExit = false
 // build is in place and the console did not stop to run it (#101).
 var errInstalledNotRestarted = errors.New("the update is installed; quit KubeTower and start it again to run it")
 
+// errHelperAlive is the reason an install ends with when its helper could not
+// be stopped: it may still act when KubeTower exits.
+var errHelperAlive = errors.New("the update's helper could not be stopped; it may still install when KubeTower exits")
+
 // errBackToReady marks an installer's failure that installed nothing and left
 // the verified file usable: the update goes back to ready with the reason,
 // and Install is offered again without a new download (#101).
@@ -359,13 +363,22 @@ func (u *Updater) awaitExit(staged string) {
 			return nil
 		}
 		if err := abandonHelper(); err != nil {
+			// A helper still alive may yet install, or restart, when the console
+			// exits: nothing it needs is removed, and no second Install is
+			// offered beside it (#106).
 			u.step("still running after %s; the helper could not be stopped: %s", wait, textutil.FirstLine(err.Error()))
 			if u.o.Logf != nil {
 				u.o.Logf("update: the helper could not be stopped: %s", textutil.FirstLine(err.Error()))
 			}
-		} else {
-			u.step("still running after %s: helper stopped", wait)
+			u.mu.Lock()
+			if u.status.Phase == Installing {
+				u.status.Phase = Failed
+				u.status.Reason = errHelperAlive.Error()
+			}
+			u.mu.Unlock()
+			return nil
 		}
+		u.step("still running after %s: helper stopped", wait)
 		if installsAfterExit {
 			// The helper never ran the install: the verified file is good.
 			u.backToReady(staged, errNotStopped.Error())

@@ -2,6 +2,8 @@ package updater
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,5 +176,55 @@ func TestTheRelaunchShellIsStoppedWithItsGroup(t *testing.T) {
 	}
 	if err := stopRelaunch(); err != nil {
 		t.Errorf("stopping again: %v, want nothing to do", err)
+	}
+}
+
+// pkexec runs the manager as root: our kill at the bound may be refused, and
+// exec then waits for the manager to finish and says "canceling Cmd". What it
+// did is not known, so the update is never said to be uninstalled.
+func TestABoundThatCouldNotKillSaysTheUpdateMayBeInstalled(t *testing.T) {
+	f := newFake(t)
+	u, _ := packageUpdater(t, f, func(ctx context.Context) error {
+		<-ctx.Done()
+		return fmt.Errorf("exec: canceling Cmd: %w", syscall.EPERM)
+	})
+	readyFor(t, u)
+	if _, err := u.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := until(t, u, Installing)
+	if s.Phase != Failed || !strings.Contains(s.Reason, "may be installed") || strings.Contains(s.Reason, "nothing was installed") {
+		t.Fatalf("a kill refused at the bound: %+v, want failed, it may be installed", s)
+	}
+}
+
+// A helper that could not be stopped may still install or restart when the
+// console exits: the install fails, nothing the helper needs is removed, and
+// no second Install is offered beside it.
+func TestAHelperThatCouldNotBeStoppedFailsTheInstall(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	wasAbandon, wasAfter := abandonHelper, installsAfterExit
+	abandonHelper = func() error { return errors.New("Access is denied.") }
+	installsAfterExit = true
+	t.Cleanup(func() { abandonHelper, installsAfterExit = wasAbandon, wasAfter })
+	u := f.updater(dir, &recorder{}, func(o *Options) { o.ExitWait = 30 * time.Millisecond })
+	readyFor(t, u)
+	if _, err := u.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s := until(t, u, Installing)
+	if s.Phase != Failed || s.Reason != errHelperAlive.Error() {
+		t.Fatalf("a helper alive: %+v, want failed", s)
+	}
+	if staged, _ := filepath.Glob(filepath.Join(dir, "update", "install-*")); len(staged) != 1 {
+		t.Errorf("the staged copy the helper may still run is gone: %v", staged)
+	}
+	if _, err := u.Install(context.Background()); !errors.Is(err, ErrNotReady) {
+		t.Errorf("a second Install beside a live helper: %v, want refused", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, installLog))
+	if !strings.Contains(string(raw), "the helper could not be stopped: Access is denied.") {
+		t.Errorf("the log does not say the helper could not be stopped:\n%s", raw)
 	}
 }

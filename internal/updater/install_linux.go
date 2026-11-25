@@ -63,11 +63,27 @@ func installPackage(ctx context.Context, plan Plan) error {
 	defer cancel()
 	if out, err := runPrivileged(ctx, argv); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("no answer to the password prompt within %s: %w", PromptWait, errBackToReady)
+			// Killed at the bound, the error is the context's own: pkexec was
+			// still asking, and nothing was installed. A kill the process
+			// refused (pkexec runs the manager as root) leaves exec's
+			// "canceling Cmd" error instead, once the manager has finished:
+			// what it did is not known, so the update is never said to be
+			// uninstalled (#106).
+			if killedAtTheBound(err) {
+				return fmt.Errorf("no answer to the password prompt within %s: %w", PromptWait, errBackToReady)
+			}
+			return fmt.Errorf("the package install ran past %s and could not be stopped; it may be installed: start KubeTower again", PromptWait)
 		}
 		return pkexecFailure(err, out)
 	}
 	return startAgain(plan.Installation.Path)
+}
+
+// killedAtTheBound says the process was stopped at the context's deadline:
+// exec returns the context's error then, and a wrapped "canceling Cmd" error
+// when the kill itself failed.
+func killedAtTheBound(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "canceling Cmd")
 }
 
 // pkexecFailure says why pkexec or the package manager refused, in one line.
