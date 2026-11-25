@@ -88,7 +88,7 @@ jobs:
       # image) and the license files the runtime stage copies. Go and
       # TypeScript sources reach the image through `COPY . .` and are proved
       # by the go and web jobs on every pull request, so they are not here.
-      IMAGE_INPUTS: '^((.*/)?Dockerfile[^/]*|\.dockerignore|go\.(mod|sum)|web/(ui/)?package\.json|web/pnpm-(lock|workspace)\.yaml|web/(index\.html|vite\.config\.ts)|api/openapi\.yaml|internal/web/static/pwa/.+|cmd/ktnotices/.+|LICENSE|LICENSING\.md)$'
+      IMAGE_INPUTS: '^((.*/)?Dockerfile[^/]*|\.dockerignore|go\.(mod|sum)|web/(ui/)?package\.json|web/pnpm-(lock|workspace)\.yaml|web/(index\.html|vite\.config\.ts)|api/openapi\.yaml|internal/web/static/pwa/.+|cmd/ktnotices/.+|LICENSE|LICENSING\.md|CHANGELOG\.md)$'
       EVENT: ${{ github.event_name }}
       # The pull request's base, to tell whether it touches what the image is
       # built from. Empty on every other event.
