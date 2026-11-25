@@ -596,3 +596,44 @@ describe('a list the server cut says so on its last page', () => {
     expect(page().textContent).toContain('event-399');
   });
 });
+
+describe('a metrics backend found and not reached (#127)', () => {
+  it('draws Over time as one quiet line, the sentence on hover, with a small retry', async () => {
+    const said = 'service monitoring/prometheus:9090 found, but neither the API service proxy nor a port-forward reached it';
+    stubFetch(
+      withOverview({
+        body: {
+          state: 'ok',
+          data: {
+            cluster: 'prod',
+            counts: { state: 'ok', items: [{ kind: 'nodes', label: 'Nodes', count: 6 }] },
+            history: {
+              state: 'unreachable',
+              reason: { code: 'cluster_unreachable', message: said, detail: said, retryable: true },
+            },
+            top: { state: 'unreadable', reason: { code: 'unreadable', message: 'the leaderboard query answered garbage' } },
+            events: { state: 'empty', items: [] },
+          },
+        },
+      }),
+    );
+
+    mountApp('/c/prod');
+
+    await waitFor(() => {
+      expect(page().textContent).toContain('Over time');
+    });
+    const text = page().textContent ?? '';
+    expect(text).not.toContain('Could not be asked');
+    expect(text).not.toContain(said);
+    const lines = Array.from(page().querySelectorAll('[data-no-metrics]'));
+    expect(lines.map((line) => line.getAttribute('data-state'))).toEqual(['unreachable', 'unreadable']);
+    expect(lines[0]?.getAttribute('title')).toBe(said);
+    expect(lines[1]?.getAttribute('title')).toBe('the leaderboard query answered garbage');
+    // Retry only where the reason allows it: the history, not the leaderboard.
+    expect(lines[0]?.querySelector('button[aria-label="Try again"]')).not.toBeNull();
+    expect(lines[1]?.querySelector('button')).toBeNull();
+    expect(page().querySelector('[data-no-metrics].font-mono, [data-no-metrics] .font-mono')).toBeNull();
+  });
+});
+

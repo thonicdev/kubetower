@@ -42,7 +42,7 @@ import { WHATS_NEW_RELEASES, whatsNewAnswers } from './whatsnew.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
 import { EXTRA_CLUSTER, EXTRA_SCENES, ExtraProblem, type ExtraAnswer } from './extras.fixture';
 import { STORAGE_OVERVIEW } from './storageinspector.fixture';
-import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
+import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_NO_PROMETHEUS_ANSWERS, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
 import {
   drawerAnswers,
   CLUSTER_ROLES_PATH,
@@ -1340,6 +1340,8 @@ const CONSOLES: Readonly<
     },
   },
   'overview-unmeasured': { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_UNMEASURED_ANSWERS },
+  // A Prometheus found and not reached: the proxy and the port-forward failed.
+  'overview-no-prometheus': { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_NO_PROMETHEUS_ANSWERS },
   // A Prometheus with no usable cAdvisor series and an empty leaderboard, as
   // an in-cluster console can answer.
   'overview-quiet': { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_QUIET_ANSWERS },

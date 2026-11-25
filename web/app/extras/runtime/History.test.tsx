@@ -120,8 +120,8 @@ describe('the memory history', () => {
 
   it('draws each state as its own thing, never as an empty chart', () => {
     for (const [state, label, tone] of [
-      ['absent', 'No Prometheus', 'normal'],
-      ['unreadable', 'Prometheus unreadable', 'bad'],
+      ['absent', 'No metrics available', 'normal'],
+      ['unreadable', 'No metrics available', 'normal'],
       ['empty', 'No series for this pod', 'normal'],
     ] as const) {
       cleanup();

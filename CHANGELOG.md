@@ -19,6 +19,14 @@ dialog draws it first, as a New extra line.
   with a blue +, or under Fixed, with a green check; an extra a release
   introduces comes first, as New extra and its name (#121).
 
+### Fixed
+
+- **Missing metrics read as one quiet line.** Where Prometheus or
+  metrics-server is absent or cannot be reached, the Overview's Over time and
+  Most used, a Node or Pod's Metrics tab, KubeAdjust and the Runtime
+  Inspector's week say No metrics available, with the reason on hover and a
+  small retry where one could help, instead of a red box (#127). <!-- highlight -->
+
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 
 ### Added

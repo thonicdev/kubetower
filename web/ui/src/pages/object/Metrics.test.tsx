@@ -667,7 +667,7 @@ describe('the enlarged chart carries the span and the measurement', () => {
 
     view.rerender(at('api-1'));
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Prometheus did not answer in time');
+      expect(document.querySelector('[data-no-metrics]')?.getAttribute('title')).toBe('Prometheus did not answer in time');
     });
     expect(polylines()).toEqual([]);
     expect(document.querySelector('[data-span-failed]')).toBeNull();
