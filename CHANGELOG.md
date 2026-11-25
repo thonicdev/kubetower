@@ -11,6 +11,14 @@ per release. Keep the bold lead short: it is all the banner draws.
 
 ## Unreleased
 
+### Added
+
+- **Storage Inspector**, a new read-only extra (key `storage`): the
+  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their orphans,
+  how full each claim is (graded at 80 and 90 %), and each claim's last
+  VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
+  Overview. Extras can now draw a tile on the Overview (#90).
+
 ### Fixed
 
 - **Updates install from the Windows window.** Installing an update from the
@@ -21,7 +29,8 @@ per release. Keep the bold lead short: it is all the banner draws.
   and Install is offered again. Check now no longer loses a downloaded
   update, its Install button or the "Install updates" setting. Each install's
   steps are written to `update-install.log` in the state folder (#96).
-  <!-- highlight -->
+  From 0.2.0 on Windows: close the window after Install; the setup then
+  runs. <!-- highlight -->
 
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 

@@ -41,6 +41,7 @@ import (
 	"github.com/thonicdev/kubetower/extras/redis"
 	"github.com/thonicdev/kubetower/extras/runtimeinspect"
 	"github.com/thonicdev/kubetower/extras/security"
+	"github.com/thonicdev/kubetower/extras/storage"
 )
 
 const (
@@ -389,6 +390,7 @@ var (
 	applications = extension.CRD{Group: "argoproj.io", Version: "v1alpha1", Plural: "applications", Singular: "application", Kind: "Application", Namespaced: true}
 	certificates = extension.CRD{Group: "cert-manager.io", Version: "v1", Plural: "certificates", Singular: "certificate", Kind: "Certificate", Namespaced: true}
 	pgClusters   = extension.CRD{Group: "postgresql.cnpg.io", Version: "v1", Plural: "clusters", Singular: "cluster", Kind: "Cluster", Namespaced: true}
+	snapshots    = extension.CRD{Group: "snapshot.storage.k8s.io", Version: "v1", Plural: "volumesnapshots", Singular: "volumesnapshot", Kind: "VolumeSnapshot", Namespaced: true}
 )
 
 type extraCase struct {
@@ -425,6 +427,46 @@ func extraCases() []extraCase {
 		// The endpoints behind a Service are read across namespaces: narrowed,
 		// a Service with none read says "could not be read", not "nothing".
 		saysNarrowed: []string{".namespaces[*].deployments[*].members[*].endpointless"},
+	}, {
+		// A volume is cluster-scoped and named here after its namespace's claim
+		// without the mark: the refused person may list volumes, and the one bound
+		// into the refused namespace must not name its claim.
+		name: "Storage Inspector", ext: storage.New(), crds: []extension.CRD{snapshots},
+		objects: append([]object{{"storageclasses", map[string]any{"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass",
+			"metadata": map[string]any{"name": "standard", "uid": "sc"}, "provisioner": "rancher.io/local-path"}}},
+			perNamespace(func(ns, m string) []object {
+				return []object{
+					{"persistentvolumes", map[string]any{"apiVersion": "v1", "kind": "PersistentVolume",
+						"metadata": map[string]any{"name": "pv-" + ns, "uid": "pv-" + ns, "creationTimestamp": "2026-11-01T00:00:00Z"},
+						"spec": map[string]any{"capacity": map[string]any{"storage": "1Gi"}, "storageClassName": "standard",
+							"persistentVolumeReclaimPolicy": "Delete",
+							"claimRef":                      map[string]any{"namespace": ns, "name": "data-" + m}},
+						"status": map[string]any{"phase": "Bound"}}},
+					{"persistentvolumeclaims", map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+						"metadata": meta(ns, "data-"+m, nil),
+						"spec": map[string]any{"storageClassName": "standard", "volumeName": "pv-" + ns,
+							"resources": map[string]any{"requests": map[string]any{"storage": "1Gi"}}},
+						"status": map[string]any{"phase": "Bound", "capacity": map[string]any{"storage": "1Gi"}}}},
+					{"persistentvolumeclaims", map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+						"metadata": meta(ns, "spare-"+m, nil),
+						"spec":     map[string]any{"resources": map[string]any{"requests": map[string]any{"storage": "1Gi"}}},
+						"status":   map[string]any{"phase": "Pending"}}},
+					pod(ns, "db-"+m, "Running", func(doc map[string]any) {
+						doc["spec"].(map[string]any)["volumes"] = []any{map[string]any{"name": "data",
+							"persistentVolumeClaim": map[string]any{"claimName": "data-" + m}}}
+					}),
+					{"volumesnapshots", map[string]any{"apiVersion": "snapshot.storage.k8s.io/v1", "kind": "VolumeSnapshot",
+						"metadata": meta(ns, "snap-"+m, nil),
+						"spec":     map[string]any{"source": map[string]any{"persistentVolumeClaimName": "data-" + m}},
+						"status":   map[string]any{"readyToUse": true, "creationTime": "2026-11-02T00:00:00Z"}}},
+				}
+			})...),
+		paths:   []string{"/"},
+		totals:  []string{"/?ns=" + seen},
+		details: []string{"/claim/{ns}/data-{m}", "/pod/{ns}/db-{m}"},
+		// Narrowed, the pods are not all read, so no claim is called unmounted;
+		// and a volume names no claim that was not read.
+		saysNarrowed: []string{".claims[*].mount", ".claims[*].orphan", ".counts.orphanClaims", ".counts.orphans", ".volumes[*].claim"},
 	}, {
 		name: "Pending", ext: pending.New(),
 		objects: append(append(namespaces(), node()), perNamespace(func(ns, m string) []object {

@@ -32,6 +32,7 @@ import { extras } from '../app/extras';
 import { events as eventsExtra } from '../app/extras/events';
 import { pending } from '../app/extras/pending';
 import { security } from '../app/extras/security';
+import { storage } from '../app/extras/storage';
 import { redis } from '../app/extras/redis';
 
 import { ACTIVITY_EXTRA, activityAnswers, activityPath } from './events.fixture';
@@ -40,6 +41,7 @@ import { replaceReleases } from '../ui/src/whatsnew/changelog';
 import { WHATS_NEW_RELEASES, whatsNewAnswers } from './whatsnew.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
 import { EXTRA_CLUSTER, EXTRA_SCENES, ExtraProblem, type ExtraAnswer } from './extras.fixture';
+import { STORAGE_OVERVIEW } from './storageinspector.fixture';
 import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
 import {
   drawerAnswers,
@@ -1427,6 +1429,13 @@ const CONSOLES: Readonly<
     answers: withExtraOn(activityAnswers(OVERVIEW_CLUSTER, OVERVIEW_ANSWERS), 'events', 'Event Intelligence'),
     extensions: [eventsExtra],
     extra: ACTIVITY_EXTRA(OVERVIEW_CLUSTER) as Readonly<Record<string, ExtraAnswer>>,
+  },
+  // The overview with Storage Inspector on: its tile in the Extras panel.
+  'console-overview-storage': {
+    at: `/c/${OVERVIEW_CLUSTER}`,
+    answers: withExtraOn(OVERVIEW_ANSWERS, 'storage', 'Storage Inspector'),
+    extensions: [storage],
+    extra: { [`/x/${OVERVIEW_CLUSTER}/storage/`]: STORAGE_OVERVIEW },
   },
   // The Deployments list with Pod Debugging on: its Pending column.
   'console-deployments-pending': {

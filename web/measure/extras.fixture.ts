@@ -22,6 +22,7 @@ import { BADGE_ANSWERS, CASES as BADGE_CASES } from './netinspect-badges.fixture
 import { NETINSPECT_ANSWERS, NETINSPECT_AT, NETINSPECT_MANY_ANSWERS, NETINSPECT_MANY_FOLDED_ANSWERS, NETINSPECT_NEW_ANSWERS, NETINSPECT_NEW_AT } from './netinspect.fixture';
 import { PENDING_ANSWERS, PENDING_CHECKOUT, PENDING_NOMINATED_ANSWERS, PENDING_NOMINATED_AT, PENDING_POD, PENDING_POD_AT, PENDING_REFUSED, PENDING_WORKLOAD_ANSWERS } from './pending.fixture';
 import { SECURITY_POLICIES, SECURITY_POLICY } from './policies.fixture';
+import { STORAGE_BARE, STORAGE_CLAIM, STORAGE_OVERVIEW, STORAGE_POD } from './storageinspector.fixture';
 import {
   SECURITY_ABSENT,
   SECURITY_CHECKOUT,
@@ -1312,6 +1313,21 @@ export const EXTRA_SCENES = {
     key: 'certmanager',
     answers: { [`${base('certmanager')}objects/ingresses/shop/front`]: CERTMANAGER_TAB },
     tab: { key: 'ingress', kind: 'ingresses', namespace: 'shop', name: 'front' },
+  },
+  'extra-storage': { key: 'storage', answers: { [base('storage')]: STORAGE_OVERVIEW } },
+  'extra-storage-orphans': { key: 'storage', at: 'x/storage?show=orphans', answers: { [base('storage')]: STORAGE_OVERVIEW } },
+  // No snapshot kinds installed, and no kubelet readable: two absences, said apart.
+  'extra-storage-bare': { key: 'storage', answers: { [base('storage')]: STORAGE_BARE } },
+  // Not pages: the Storage tab of a claim, and of the pod that mounts it.
+  'extra-storage-claim-tab': {
+    key: 'storage',
+    answers: { [`${base('storage')}claim/shop/data-orders-db-0`]: STORAGE_CLAIM },
+    tab: { key: 'claim', kind: 'persistentvolumeclaims', namespace: 'shop', name: 'data-orders-db-0' },
+  },
+  'extra-storage-pod-tab': {
+    key: 'storage',
+    answers: { [`${base('storage')}pod/shop/orders-db-0`]: STORAGE_POD },
+    tab: { key: 'pod', kind: 'pods', namespace: 'shop', name: 'orders-db-0' },
   },
   'extra-security': { key: 'security', answers: SECURITY_ANSWERS },
   'extra-security-workload': { key: 'security', answers: SECURITY_ANSWERS, at: 'x/security/shop/Deployment/checkout-api' },

@@ -17,6 +17,7 @@ export type {
   ExtensionSettingsStatusProps,
   ExtensionShortcut,
   ExtensionShortcutTarget,
+  ExtensionOverviewTile,
   ExtensionStatus,
   ExtensionMeter,
   ExtensionMeterSegment,
