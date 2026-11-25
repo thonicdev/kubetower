@@ -2,6 +2,7 @@ import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
 import { resetLogStreamSlots } from '../api/logstream';
+import { resetLiveHandles } from '../live/handles';
 import { resetEnvFolds } from '../pages/object/envFolds';
 import { resetExtraColumnMemory } from '../pages/resources/extraColumnMemory';
 import { resetColumnMemory } from '../pages/resources/columnMemory';
@@ -22,6 +23,20 @@ import { resetViewMemory } from '../shell/viewMemory';
 // enough that a hung wait fails a run. The tests themselves are untouched: a
 // timeout that lives in one file is one that can be revisited with one edit.
 configure({ asyncUtilTimeout: 3000 });
+
+/*
+ * jsdom has no layout, and its `Range` has neither `getClientRects` nor
+ * `getBoundingClientRect`. CodeMirror and xterm both ask a range where text is
+ * drawn when they measure, and throw where the answer is missing (#117). An
+ * empty answer is the truthful one here: nothing is drawn anywhere. For every
+ * file, here, rather than for those that remember to import it.
+ */
+if (typeof Range !== 'undefined' && !('getClientRects' in Range.prototype)) {
+  Object.assign(Range.prototype, {
+    getClientRects: () => document.createElement('div').getClientRects(),
+    getBoundingClientRect: () => document.createElement('div').getBoundingClientRect(),
+  });
+}
 
 /**
  * **What this console remembers in the browser, and how a test forgets it.**
@@ -98,6 +113,14 @@ const memory: readonly { readonly prefix: string; readonly forget?: () => void }
  */
 afterEach(() => {
   cleanup();
+
+  // The live handles the unmount just let go of - a dock terminal, a log
+  // stream - are kept for a grace period on a timer (`live/handles.ts`). Left
+  // to it, the timer fires after the file's jsdom is gone and xterm's dispose
+  // throws on a DOM that no longer exists, attributed to whichever file is
+  // running (#117). Disposed here instead, after the unmount and while jsdom
+  // is still there; nothing outlives its test.
+  resetLiveHandles();
 
   // The one memory kept in neither storage: which of a pod's long variable
   // lists were opened (`envFolds.ts`). It lives in a module-level set for the
