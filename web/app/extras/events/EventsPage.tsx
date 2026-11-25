@@ -1,15 +1,16 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { Failure, Pending as Waiting, btnSecondary, useDeclarePageFacts } from '@kubetower/ui';
 
 import { DEFAULT_WINDOW, WINDOWS, namespaceQuery, pageQuery, type Answer, type Tiles as TilesData, type Window } from './data';
-import { TILE_KEYS, narrow, type Filters, type TileKey } from './model';
-import { Causes, Controls, Sources, Tiles, Timeline, useHighlight } from './parts';
+import { TILE_KEYS, narrow, normalCount, shownTypes, type Filters, type TileKey } from './model';
+import { Causes, Controls, Correlations, Sources, Tiles, Timeline, useHighlight } from './parts';
 
 /**
  * The body both the page and an object's tab draw: the tiles (the page only),
- * the controls, the timeline and the causes under the filters given.
+ * the controls, the correlations, the timeline and the causes under the filters
+ * given, Normal Events only once asked for.
  */
 export function EventsBody({
   cluster,
@@ -31,15 +32,24 @@ export function EventsBody({
   /** The figures the tiles show; the answer's own when omitted, null while a namespace's are read. */
   tilesOf?: TilesData | null | undefined;
 }): ReactNode {
-  const causes = useMemo(() => narrow(answer, filters), [answer, filters]);
+  const narrowed = useMemo(() => narrow(answer, filters), [answer, filters]);
+  // Normal Events wait behind a toggle, unless the Type filter chose a type.
+  const [normal, setNormal] = useState(false);
+  const causes = useMemo(() => shownTypes(narrowed, filters, normal), [narrowed, filters, normal]);
   const highlight = useHighlight();
   return (
     <div data-events="" className="flex flex-col gap-3">
       {tiles ? <Tiles tiles={tilesOf ?? undefined} filters={filters} onTile={(tile) => onFilters({ ...filters, tile })} /> : null}
       <Controls answer={answer} filters={filters} onFilters={onFilters} window={window} onWindow={onWindow} />
       <Sources answer={answer} />
-      <Timeline answer={answer} causes={causes} highlight={highlight} />
-      <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} />
+      <Correlations answer={answer} causes={causes} highlight={highlight} />
+      <Timeline
+        answer={answer}
+        causes={causes}
+        highlight={highlight}
+        normal={filters.type === '' ? { on: normal, count: normalCount(narrowed), onToggle: () => setNormal(!normal) } : undefined}
+      />
+      <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} hidden={normal || filters.type !== '' ? 0 : normalCount(narrowed)} />
     </div>
   );
 }

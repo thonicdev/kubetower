@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Suspense } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -94,9 +94,9 @@ describe('the Activity view', () => {
   it('draws the timeline with its change and the aggregated cause with its count, asked from the object route', async () => {
     const fetch = stub(200, answer);
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
-    expect(screen.getByRole('button', { name: /BackOff/ }).textContent).toContain('× 268');
-    expect(document.querySelectorAll('[data-bar]')).toHaveLength(1);
+    await within(await screen.findByRole('region', { name: 'Causes' })).findByRole('button', { name: /BackOff/ });
+    expect(within(screen.getByRole('region', { name: 'Causes' })).getByRole('button', { name: /BackOff/ }).textContent).toContain('× 268');
+    expect(document.querySelectorAll('[data-workload]')).toHaveLength(1);
     expect(document.querySelector(`[data-change="${ROLLOUT.id}"]`)).not.toBeNull();
     // Only the window is a control: no tiles, no filters.
     expect(document.querySelector('[data-tile]')).toBeNull();
@@ -109,7 +109,7 @@ describe('the Activity view', () => {
   it('says a source it could not read, and nothing about the ones it read', async () => {
     stub(200, { ...answer, sources: { ...answer.sources, events: { state: 'denied', complete: false, note: 'no' } } });
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await within(await screen.findByRole('region', { name: 'Causes' })).findByRole('button', { name: /BackOff/ });
     expect(document.querySelector('[data-source="Events"]')?.textContent).toBe('Events: refused');
     expect(document.querySelector('[data-source="Pods"]')).toBeNull();
   });
@@ -118,6 +118,6 @@ describe('the Activity view', () => {
     stub(500, { code: 'internal', message: 'the events could not be read' });
     mount();
     await waitFor(() => expect(document.querySelector('[data-activity-view]')?.textContent).toMatch(/could not be read|Retry/i));
-    expect(document.querySelector('[data-bar]')).toBeNull();
+    expect(document.querySelector('[data-workload]')).toBeNull();
   });
 });

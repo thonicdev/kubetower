@@ -50,6 +50,7 @@ const (
 const (
 	CodeNoPrimary      = "no_primary"
 	CodeExecForbidden  = "exec_forbidden"
+	CodeReadOnly       = "read_only"
 	CodeExecUnreviewed = "exec_unreviewed"
 	CodeNoPsql         = "no_psql"
 	CodeExecBusy       = "exec_busy"
@@ -164,6 +165,8 @@ func writeLagFailure(w http.ResponseWriter, cluster string, err error) {
 	switch {
 	case errors.Is(err, extension.ErrUnknownCluster):
 		writeProblem(w, http.StatusNotFound, CodeUnknownCluster, extension.UnknownClusterText(cluster), err)
+	case errors.Is(err, extension.ErrReadOnly):
+		writeProblem(w, http.StatusForbidden, CodeReadOnly, cluster+" is read-only: no command is run in its pods.", err)
 	case errors.Is(err, extension.ErrDenied):
 		writeProblem(w, http.StatusForbidden, CodeExecForbidden,
 			"The cluster says you may not run commands in this pod (create pods/exec), so nothing was run.", err)

@@ -444,6 +444,8 @@ func (c Consumer) exec(h extension.Host) http.Handler {
 		switch {
 		case err == nil:
 			fmt.Fprintf(w, "exit=%d stdout=%d bytes truncated=%t", out.ExitCode, len(out.Stdout), out.Truncated)
+		case errors.Is(err, extension.ErrReadOnly):
+			fmt.Fprint(w, "exec=read-only")
 		case errors.Is(err, extension.ErrDenied):
 			fmt.Fprint(w, "exec=not permitted")
 		case errors.Is(err, extension.ErrUnreviewable):

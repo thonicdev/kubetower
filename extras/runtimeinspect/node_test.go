@@ -450,6 +450,11 @@ func runOpenScript(t *testing.T, procs map[string][2]string, pid int) (string, s
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
+		// GitHub's runners carry node; a CI without it would pass this
+		// test without ever running the script, so it fails there instead.
+		if os.Getenv("CI") != "" {
+			t.Fatal("no node on PATH to run the opening script, and under CI it must run")
+		}
 		t.Skip("no node on PATH to run the opening script")
 	}
 	harness := filepath.Join(t.TempDir(), "harness.js")

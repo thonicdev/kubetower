@@ -88,8 +88,8 @@ func TestAReadOnlyClusterRefusesEveryDiagnostic(t *testing.T) {
 			if problem.Message != "kind is read-only: no command, tunnel or dump." {
 				t.Errorf("the refusal reads %q", problem.Message)
 			}
-			if len(h.refused) == before {
-				t.Errorf("POST %s was refused without the console being asked", path)
+			if got := len(h.refused) - before; got != 1 {
+				t.Errorf("POST %s asked the console %d times, want once: one refusal, then nothing", path, got)
 			}
 		})
 	}

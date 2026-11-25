@@ -3,8 +3,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Failure, Pending as Waiting, type ExtensionTabProps } from '@kubetower/ui';
 
 import { DEFAULT_WINDOW, objectQuery, type Window } from './data';
-import { NO_FILTERS, narrow } from './model';
-import { Causes, Sources, Timeline, WindowPicker, useHighlight } from './parts';
+import { NO_FILTERS, narrow, normalCount, shownTypes } from './model';
+import { Causes, Correlations, Sources, Timeline, WindowPicker, useHighlight } from './parts';
 
 /**
  * What Event Intelligence says about a Pod, Deployment, StatefulSet, DaemonSet,
@@ -21,7 +21,9 @@ export default function ActivityView({ cluster, kind, namespace, name }: Extensi
     placeholderData: keepPreviousData,
   });
   const answer = query.data;
-  const causes = useMemo(() => (answer === undefined ? [] : narrow(answer, NO_FILTERS)), [answer]);
+  const narrowed = useMemo(() => (answer === undefined ? [] : narrow(answer, NO_FILTERS)), [answer]);
+  const [normal, setNormal] = useState(false);
+  const causes = useMemo(() => shownTypes(narrowed, NO_FILTERS, normal), [narrowed, normal]);
   const highlight = useHighlight();
   if (namespace === undefined) return null;
   return (
@@ -39,8 +41,9 @@ export default function ActivityView({ cluster, kind, namespace, name }: Extensi
         <>
           {query.isError ? <Failure error={query.error} onRetry={() => void query.refetch()} /> : null}
           <Sources answer={answer} />
-          <Timeline answer={answer} causes={causes} highlight={highlight} compact />
-          <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} />
+          <Correlations answer={answer} causes={causes} highlight={highlight} compact />
+          <Timeline answer={answer} causes={causes} highlight={highlight} normal={{ on: normal, count: normalCount(narrowed), onToggle: () => setNormal(!normal) }} compact />
+          <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} hidden={normal ? 0 : normalCount(narrowed)} />
         </>
       )}
     </div>

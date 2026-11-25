@@ -109,12 +109,14 @@ const tile = (key: string): HTMLElement => {
   return found;
 };
 const rows = () => [...document.querySelectorAll('[data-cause]')].map((e) => e.getAttribute('data-cause'));
+/** A cause's line in the list, once drawn: a correlation card may carry the same reason. */
+const findCause = async (name: RegExp): Promise<HTMLElement> => within(await screen.findByRole('region', { name: 'Causes' })).findByRole('button', { name });
 
 describe('Event Intelligence', () => {
   it('says a cause in one line: reason, count, objects, since the change, how long', async () => {
     stub(answer([backoff]));
     mount();
-    const line = await screen.findByRole('button', { name: /BackOff/ });
+    const line = await findCause(/BackOff/);
     expect(line.textContent).toContain('BackOff × 219');
     expect(line.textContent).toContain('2 pods');
     expect(line.textContent).toContain('since rollout api rev. 7 · 15 min');
@@ -123,14 +125,14 @@ describe('Event Intelligence', () => {
   it('files the causes into tiles that filter, and a second press unfilters', async () => {
     stub(answer([backoff, sched, pulled]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     expect(tile('failedScheduling').getAttribute('data-count')).toBe('4');
-    expect(rows()).toEqual(['BackOff', 'FailedScheduling', 'Pulled']);
+    expect(rows()).toEqual(['BackOff', 'FailedScheduling']);
     fireEvent.click(tile('failedScheduling'));
     await waitFor(() => expect(rows()).toEqual(['FailedScheduling']));
     expect(tile('failedScheduling').getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(tile('failedScheduling'));
-    await waitFor(() => expect(rows()).toEqual(['BackOff', 'FailedScheduling', 'Pulled']));
+    await waitFor(() => expect(rows()).toEqual(['BackOff', 'FailedScheduling']));
     fireEvent.click(tile('warnings'));
     await waitFor(() => expect(rows()).toEqual(['BackOff', 'FailedScheduling']));
   });
@@ -138,7 +140,7 @@ describe('Event Intelligence', () => {
   it('filters the crash loop tile by the pods the answer names', async () => {
     stub(answer([backoff, sched]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     fireEvent.click(tile('crashLoop'));
     await waitFor(() => expect(rows()).toEqual(['BackOff']));
   });
@@ -146,7 +148,7 @@ describe('Event Intelligence', () => {
   it('filters by namespace, type and kind, and recounts what a filter narrowed', async () => {
     stub(answer([backoff, sched, pulled, node]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'Normal' } });
     await waitFor(() => expect(rows()).toEqual(['Pulled']));
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: '' } });
@@ -157,41 +159,148 @@ describe('Event Intelligence', () => {
     await waitFor(() => expect(rows()).toEqual(['NodeNotReady']));
   });
 
-  it('places a change before the group that came after it on the timeline', async () => {
+  it('places a change before the cells of the group that came after it', async () => {
     stub(answer([backoff]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const change = document.querySelector<HTMLElement>(`[data-change="${ROLLOUT.id}"]`);
-    const bar = document.querySelector<HTMLElement>('[data-bar="shop/api-1"]');
-    expect(change).not.toBeNull();
-    expect(bar).not.toBeNull();
-    // The change is drawn in the row above the bars, and its left edge precedes the bar's.
-    const left = (e: HTMLElement | null) => Number.parseFloat(e?.style.left ?? 'NaN');
-    expect(left(change)).toBeLessThan(left(bar));
-    expect(bar?.getAttribute('data-since')).toBe(ROLLOUT.id);
+    const lane = document.querySelector<HTMLElement>('[data-lane="shop/api-1/BackOff"]');
     expect(change?.closest('[data-changes]')).not.toBeNull();
-    expect(bar?.closest('[data-bars]')).not.toBeNull();
+    expect(lane?.getAttribute('data-since')).toBe(ROLLOUT.id);
+    // The first cell with Events is right of the change: cells are 100/40 % wide.
+    const firstCell = Number([...(lane?.querySelectorAll('[data-cell][data-count]') ?? [])][0]?.getAttribute('data-cell'));
+    expect(Number.parseFloat(change?.style.left ?? 'NaN')).toBeLessThan(((firstCell + 1) * 100) / 40);
   });
 
-  it('names every lane and labels every change marker', async () => {
+  it('names every workload and every change marker', async () => {
     stub(answer([backoff, sched]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
-    const names = [...document.querySelectorAll('[data-lane-name]')].map((e) => e.textContent);
-    expect(names).toEqual(expect.arrayContaining(['api-1 · BackOff', 'api-2 · BackOff', 'job-1 · FailedScheduling']));
-    expect(names).toHaveLength(3);
+    await findCause(/BackOff/);
+    const names = [...document.querySelectorAll('[data-workload] [data-cut-name]')].map((e) => e.textContent);
+    // Busiest first, then by namespace and name.
+    expect(names).toEqual(['api-1', 'job-1', 'api-2']);
     const mark = document.querySelector<HTMLElement>(`[data-change="${ROLLOUT.id}"]`);
-    expect(mark?.textContent).toBe('rollout api rev.7');
+    expect(mark?.getAttribute('aria-label')).toBe('rollout api rev.7');
     expect(mark?.getAttribute('title')).toContain('rollout api rev. 7');
+  });
+
+  it('draws one row per workload that unfolds to its reasons, each with its total', async () => {
+    const cilium = (n: string, count: number) => group(n, { namespace: 'kube-system', workloadKind: 'DaemonSet', workloadName: 'cilium', count });
+    stub(answer([cause('BackOff', 'Warning', [cilium('cilium-a', 300), cilium('cilium-b', 200)]), cause('Unhealthy', 'Warning', [cilium('cilium-a', 40)]), sched]));
+    mount();
+    await findCause(/BackOff/);
+    const workloads = () => [...document.querySelectorAll<HTMLElement>('[data-workload]')].map((w) => `${w.getAttribute('data-workload') ?? ''}=${w.lastElementChild?.textContent ?? ''}`);
+    expect(workloads()).toEqual(['kube-system/cilium=540', 'batch/job-1=5']);
+    const lanes = () => [...document.querySelectorAll('[data-lane]')].map((l) => `${l.getAttribute('data-lane') ?? ''}=${l.lastElementChild?.textContent ?? ''}`);
+    // The busiest is open; the others wait for a click.
+    expect(lanes()).toEqual(['kube-system/cilium/BackOff=500', 'kube-system/cilium/Unhealthy=40']);
+    expect(document.querySelector('[data-lane="kube-system/cilium/BackOff"] [data-lane-name]')?.textContent).toBe('BackOff· 2');
+    fireEvent.click(within(document.querySelector('[data-workload="batch/job-1"]') as HTMLElement).getByRole('button'));
+    expect(lanes()).toEqual(['kube-system/cilium/BackOff=500', 'kube-system/cilium/Unhealthy=40', 'batch/job-1/FailedScheduling=5']);
+    fireEvent.click(within(document.querySelector('[data-workload="kube-system/cilium"]') as HTMLElement).getByRole('button'));
+    expect(lanes()).toEqual(['batch/job-1/FailedScheduling=5']);
+  });
+
+  it('says on each cell how many Events it holds, when, and that they are spread', async () => {
+    stub(answer([cause('BackOff', 'Warning', [group('api-1', { count: 30, firstSeen: at(12), lastSeen: at(2) })])]));
+    mount();
+    await findCause(/BackOff/);
+    const cells = [...document.querySelectorAll<HTMLElement>('[data-lane="shop/api-1/BackOff"] [data-cell][data-count]')];
+    expect(cells.length).toBeGreaterThan(1);
+    expect(cells.reduce((n, c) => n + Number(c.getAttribute('data-count')), 0)).toBeCloseTo(30, 0);
+    expect(cells[0]?.getAttribute('title')).toMatch(/^(<1|(≈ )?\d+) · −\d+ min( \d+ s)? to −\d+ min( \d+ s)?\nSpread evenly from each object’s first to last Event$/);
+  });
+
+  it('draws an Event dated after the answer was built in the last cell, not outside the row', async () => {
+    stub(answer([cause('BackOff', 'Warning', [group('api-1', { count: 1, firstSeen: at(-1), lastSeen: at(-1) })])]));
+    mount();
+    await findCause(/BackOff/);
+    const cells = [...document.querySelectorAll<HTMLElement>('[data-lane="shop/api-1/BackOff"] [data-cell][data-count]')];
+    expect(cells.map((c) => [c.getAttribute('data-cell'), c.getAttribute('data-count')])).toEqual([['39', '1']]);
+  });
+
+  it('hides Normal causes behind a toggle that says how many, and the Type filter overrides it', async () => {
+    stub(answer([backoff, pulled]));
+    mount();
+    await findCause(/BackOff/);
+    const toggle = document.querySelector<HTMLElement>('[data-normal-toggle]') as HTMLElement;
+    expect(toggle.textContent).toBe('Normal1');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(rows()).toEqual(['BackOff']);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(rows()).toEqual(['BackOff', 'Pulled']));
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelector('[data-lane="shop/api-1/Pulled"]')).not.toBeNull();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(rows()).toEqual(['BackOff']));
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'Normal' } });
+    await waitFor(() => expect(rows()).toEqual(['Pulled']));
+    expect(document.querySelector('[data-normal-toggle]')).toBeNull();
+  });
+
+  it('draws nodes that came together as one marker that lists them, and a lone node as its own', async () => {
+    const nodes = [0, 1, 2].map((i) => ({ id: `node-added//node-${String(i)}/0`, kind: 'node-added' as const, objectKind: 'Node', name: `node-${String(i)}`, time: at(30 - i * 3), referenced: true }));
+    const lone = { id: 'node-notready//node-9/0', kind: 'node-notready' as const, objectKind: 'Node', name: 'node-9', time: at(5), referenced: true };
+    stub(answer([backoff], { changes: [ROLLOUT, ...nodes, lone] }));
+    mount();
+    await findCause(/BackOff/);
+    const marks = [...document.querySelectorAll<HTMLElement>('[data-node-group]')];
+    expect(marks.map((m) => `${m.getAttribute('aria-label') ?? ''}:${m.getAttribute('data-nodes') ?? ''}`)).toEqual(['3 nodes added:3', 'node node-9 not ready:1']);
+    // The answer holds when a node came, not its state now.
+    expect(marks[0]?.getAttribute('title')).toBe('3 nodes added\nnode-0 · 30 min\nnode-1 · 27 min\nnode-2 · 24 min');
+    expect(marks[1]?.getAttribute('title')).toBe('node node-9 not ready\nnode-9 · 5 min');
+    expect(marks.map((m) => m.getAttribute('data-track'))).toEqual(['0', '0']);
+    const row = document.querySelector('[data-nodes-row]')?.textContent ?? '';
+    expect(row).toContain('+3');
+    expect(row).toContain('!1');
+    // The rollout stays on the changes row, on its own.
+    expect([...document.querySelectorAll('[data-change]')].map((c) => c.getAttribute('data-change'))).toEqual([ROLLOUT.id]);
+  });
+
+  it('leads with the correlations, and a click on one lights its rows and its node marker', async () => {
+    const nodes = [0, 1, 2].map((i) => ({ id: `node-added//node-${String(i)}/0`, kind: 'node-added' as const, objectKind: 'Node', name: `node-${String(i)}`, time: at(30 - i * 3), referenced: true }));
+    const cilium = (n: string, i: number) => group(n, { namespace: 'kube-system', workloadName: 'cilium', count: 100 + i, since: nodes[i]?.id ?? '' });
+    const crash = cause('BackOff', 'Warning', [cilium('cilium-a', 0), cilium('cilium-b', 1), cilium('cilium-c', 2)], { since: nodes[0]?.id ?? '' });
+    // Another reason on another pod: the card's objects are the lead reason's.
+    const probe = cause('Unhealthy', 'Warning', [group('cilium-x', { namespace: 'kube-system', workloadName: 'cilium', count: 5, since: nodes[1]?.id ?? '' })]);
+    stub(answer([crash, backoff, sched, probe], { changes: [ROLLOUT, ...nodes] }));
+    mount();
+    await findCause(/FailedScheduling/);
+    const cards = [...document.querySelectorAll<HTMLElement>('[data-correlation]')];
+    expect(cards.map((c) => c.textContent)).toEqual(['3 nodes added303BackOff3 objectsUnhealthy 5', 'rollout api rev. 7219BackOff2 objects']);
+    // The cards come before the timeline.
+    const timeline = document.querySelector('[data-timeline]') as HTMLElement;
+    expect((cards[0] as HTMLElement).compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(cards[0] as HTMLElement);
+    fireEvent.mouseLeave(cards[0] as HTMLElement);
+    const lit = (sel: string, attr: string) => [...document.querySelectorAll<HTMLElement>(`${sel}[data-lit="true"]`)].map((e) => e.getAttribute(attr));
+    expect(lit('[data-workload]', 'data-workload')).toEqual(['kube-system/cilium']);
+    expect(lit('[data-node-group]', 'data-nodes')).toEqual(['3']);
+    expect(document.querySelector('[data-workload="shop/api-1"]')?.getAttribute('data-dim')).toBe('true');
+    expect(document.querySelector(`[data-change="${ROLLOUT.id}"]`)?.getAttribute('data-lit')).toBe('false');
+    expect(cards[0]?.getAttribute('aria-pressed')).toBe('true');
+    // The list follows: what came after the nodes stays, the rest dims.
+    expect((await findCause(/FailedScheduling/)).closest('[data-cause]')?.className).toContain('opacity-50');
+    expect((await findCause(/BackOff × 303/)).closest('[data-cause]')?.className).not.toContain('opacity-50');
+    fireEvent.click(cards[0] as HTMLElement);
+    expect(lit('[data-workload]', 'data-workload')).toEqual([]);
+  });
+
+  it('says how much of a cut answer the lists hold, in place of truncated', async () => {
+    stub(answer([backoff], { truncated: true, tiles: { ...answer([]).tiles, warnings: { count: 2058, state: 'read' } } }));
+    mount();
+    await findCause(/BackOff/);
+    expect(document.querySelector('[data-held]')?.textContent).toBe('219 of 2 058');
+    expect(screen.queryByText('truncated')).toBeNull();
   });
 
   it('shortens a long workload name on the marker and keeps the whole one in the title', async () => {
     const long = 'checkout-payment-gateway-service-blue';
     stub(answer([backoff], { changes: [{ ...ROLLOUT, name: long }] }));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const mark = document.querySelector<HTMLElement>(`[data-change="${ROLLOUT.id}"]`);
-    expect(mark?.textContent).toBe('rollout checkout-payment-gatewa… rev.7');
+    expect(mark?.getAttribute('aria-label')).toBe('rollout checkout-payment-gatewa… rev.7');
     expect(mark?.getAttribute('title')).toContain(long);
   });
 
@@ -208,7 +317,7 @@ describe('Event Intelligence', () => {
     });
     const fetch = stubByNamespace(answer([backoff, sched]), { batch });
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     expect(figures()).toEqual(['10', '1', '0', '4', '3']);
     fireEvent.change(screen.getByLabelText('Namespace'), { target: { value: 'batch' } });
     await waitFor(() => expect(figures()).toEqual(['4', '0', '0', '4', '1']));
@@ -232,10 +341,10 @@ describe('Event Intelligence', () => {
   it('lights the groups after a change on hover and click, dims the rest, and clears on Escape', async () => {
     stub(answer([backoff, sched]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const mark = document.querySelector<HTMLElement>(`[data-change="${ROLLOUT.id}"]`) as HTMLElement;
-    const lanes = () => [...document.querySelectorAll<HTMLElement>('[data-lane]')];
-    const state = () => lanes().map((l) => `${l.getAttribute('data-lane') ?? ''}:${l.getAttribute('data-lit') === 'true' ? 'lit' : l.getAttribute('data-dim') === 'true' ? 'dim' : 'plain'}`).sort();
+    const lanes = () => [...document.querySelectorAll<HTMLElement>('[data-workload]')];
+    const state = () => lanes().map((l) => `${l.getAttribute('data-workload') ?? ''}:${l.getAttribute('data-lit') === 'true' ? 'lit' : l.getAttribute('data-dim') === 'true' ? 'dim' : 'plain'}`).sort();
     expect(state().every((s) => s.endsWith('plain'))).toBe(true);
     fireEvent.mouseEnter(mark);
     expect(state()).toEqual(['batch/job-1:dim', 'shop/api-1:lit', 'shop/api-2:lit']);
@@ -254,24 +363,24 @@ describe('Event Intelligence', () => {
   it('lights a cause and its change from a click on its row', async () => {
     stub(answer([backoff, sched]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const causesList = within(screen.getByRole('region', { name: 'Causes' }));
     fireEvent.click(causesList.getByRole('button', { name: /FailedScheduling/ }));
-    const lit = [...document.querySelectorAll('[data-lane][data-lit="true"]')].map((l) => l.getAttribute('data-lane'));
+    const lit = [...document.querySelectorAll('[data-workload][data-lit="true"]')].map((l) => l.getAttribute('data-workload'));
     expect(lit).toEqual(['batch/job-1']);
-    expect(document.querySelectorAll('[data-lane][data-dim="true"]')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-workload][data-dim="true"]')).toHaveLength(2);
     fireEvent.click(causesList.getByRole('button', { name: /BackOff/ }));
-    const next = [...document.querySelectorAll('[data-lane][data-lit="true"]')].map((l) => l.getAttribute('data-lane'));
+    const next = [...document.querySelectorAll('[data-workload][data-lit="true"]')].map((l) => l.getAttribute('data-workload'));
     expect(next).toEqual(['shop/api-1', 'shop/api-2']);
     expect(document.querySelector(`[data-change="${ROLLOUT.id}"]`)?.getAttribute('data-lit')).toBe('true');
     fireEvent.click(causesList.getByRole('button', { name: /BackOff/ }));
-    expect(document.querySelectorAll('[data-lane][data-dim="true"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-workload][data-dim="true"]')).toHaveLength(0);
   });
 
   it('starts the axis at the earliest drawn activity, not at the window', async () => {
     stub(answer([backoff, sched]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const section = document.querySelector<HTMLElement>('[data-timeline]') as HTMLElement;
     const start = Number(section.getAttribute('data-axis-start'));
     // The earliest drawn time is a group first seen 20 min ago; the window began 60 min ago.
@@ -285,7 +394,7 @@ describe('Event Intelligence', () => {
   it('unfolds a cause per object', async () => {
     stub(answer([backoff]));
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: /BackOff/ }));
+    fireEvent.click(await findCause(/BackOff/));
     expect(document.querySelectorAll('[data-group]')).toHaveLength(2);
     expect(document.querySelector('[data-group="shop/api-1"]')?.textContent).toContain('× 214');
   });
@@ -321,6 +430,17 @@ describe('Event Intelligence', () => {
     expect(document.querySelector('[data-source]')).toBeNull();
   });
 
+  it('says nothing is none when only Normal Events are there, and offers the toggle', async () => {
+    stub(answer([pulled]));
+    mount();
+    await waitFor(() => expect(document.querySelector('[data-normal-toggle]')).not.toBeNull());
+    const toggle = document.querySelector<HTMLElement>('[data-normal-toggle]') as HTMLElement;
+    expect(toggle.textContent).toBe('Normal1');
+    expect(document.querySelector('[data-none]')).toBeNull();
+    fireEvent.click(toggle);
+    expect(await findCause(/Pulled/)).toBeTruthy();
+  });
+
   it('says a refusal of the whole read in its own words', async () => {
     stub({ code: 'list_forbidden', message: 'The cluster says you may not list events here, so none can be shown.' }, 403);
     mount();
@@ -331,7 +451,7 @@ describe('Event Intelligence', () => {
   it('draws no explanatory sentence', async () => {
     stub(answer([backoff, sched, pulled]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     const text = document.getElementById('events')?.textContent ?? '';
     // Labels, figures and short states only: no run of prose.
     expect(text).not.toMatch(/\b(this|which|because|shows|are the)\b/i);
@@ -340,7 +460,7 @@ describe('Event Intelligence', () => {
   it('asks the window it is given, and again only on the poll', async () => {
     const fetch = stub(answer([backoff]));
     mount();
-    await screen.findByRole('button', { name: /BackOff/ });
+    await findCause(/BackOff/);
     fireEvent.click(screen.getByRole('button', { name: '3 h' }));
     await waitFor(() => expect(fetch.mock.calls.some(([u]) => String(u).endsWith('?window=3h'))).toBe(true));
   });
@@ -374,11 +494,14 @@ describe('Event Intelligence', () => {
     const fetch = stub(answer(causes, { changes }));
     const started = performance.now();
     mount();
-    await screen.findByRole('button', { name: /Reason0/ });
+    await findCause(/Reason1 ×/);
     expect(document.querySelectorAll('[data-cause]')).toHaveLength(PAGE_CAUSES);
     expect(document.querySelectorAll('[data-change]')).toHaveLength(200);
-    expect(document.querySelectorAll('[data-bar]')).toHaveLength(24);
-    expect(document.querySelector('[data-timeline]')?.textContent).toContain('24 of 2000');
+    // Normal causes wait behind the toggle: 266 Warning causes of 5 pods each.
+    expect(document.querySelectorAll('[data-workload]')).toHaveLength(24);
+    expect(document.querySelector('[data-rows-shown]')?.textContent).toBe('24 of 1330');
+    fireEvent.click(screen.getByRole('button', { name: '+24' }));
+    expect(document.querySelectorAll('[data-workload]')).toHaveLength(48);
     expect(performance.now() - started).toBeLessThan(5000);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(fetch).toHaveBeenCalledTimes(1);
