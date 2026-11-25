@@ -2542,6 +2542,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '500': { $ref: '#/components/responses/NotSaved' }
 
+  /api/preferences/seen-version:
+    post:
+      operationId: setSeenVersion
+      tags: [preferences]
+      summary: Record the release whose "What's new" was seen.
+      description: >-
+        Desktop only, like every preference write (#80): the server profile keeps
+        the last version seen in each browser.
+      parameters: [{ $ref: '#/components/parameters/RequestMarker' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeenVersionWrite' }
+      responses:
+        '204': { description: Written. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '500': { $ref: '#/components/responses/NotSaved' }
+
   /api/preferences/columns/reset:
     post:
       operationId: resetColumns
@@ -3723,6 +3743,11 @@ components:
             collapse the envelope exists to refuse, one layer up.
         version: { type: string }
         revision: { type: string }
+        release:
+          type: string
+          description: >-
+            This build's bare version (`0.2.0`), as CHANGELOG.md spells it. Absent
+            on a development build, which shows no "What's new" (#80).
 
     # ---- Clusters, nav, extensions ---------------------------------------
 
@@ -8346,6 +8371,11 @@ components:
           that is comfortable on one kind and compact on another is two grids.
       required: [rail, columns]
       properties:
+        seenVersion:
+          type: string
+          description: >-
+            The last release whose "What's new" was seen on this desktop (#80).
+            Absent where nothing was seen.
         rail:
           type: object
           required: [bars]
@@ -8622,6 +8652,16 @@ components:
       required: [density]
       properties:
         density: { type: string, enum: [comfortable, compact] }
+
+    SeenVersionWrite:
+      type: object
+      description: The release whose "What's new" was seen (#80).
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: string
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 
     ColumnResetWrite:
       type: object

@@ -177,6 +177,9 @@ type Capabilities struct {
 	ReadOnly        ReadOnlyState `json:"readOnly"`
 	Version         string        `json:"version,omitempty"`
 	Revision        string        `json:"revision,omitempty"`
+	// Release is this build's bare version (`0.2.0`), as CHANGELOG.md and the
+	// tags spell it. Absent on a development build: no "What's new" there (#80).
+	Release string `json:"release,omitempty"`
 }
 
 // --- Clusters, navigation, extensions ---------------------------------------

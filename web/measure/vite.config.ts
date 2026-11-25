@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
+import { changelog } from '../scripts/changelog.ts';
+
 /**
  * The layout harness's own dev server.
  *
@@ -70,7 +72,7 @@ export default defineConfig({
   // stylesheet — which is a harness measuring CSS the console does not have.
   root: fileURLToPath(new URL('..', import.meta.url)),
 
-  plugins: [harnessDocument(), react(), tailwindcss()],
+  plugins: [harnessDocument(), react(), tailwindcss(), changelog(fileURLToPath(new URL('../../CHANGELOG.md', import.meta.url)))],
 
   resolve: {
     alias: {

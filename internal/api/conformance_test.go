@@ -178,6 +178,7 @@ var order = []string{
 	"setRailBar", "setRailAssign", "setRailMove", "setRailPlace", "setRailHide",
 	"setRailReveal", "setRailNameplate",
 	"setColumnSize", "setColumnPlace", "setColumnShow", "setColumnDensity", "resetColumns",
+	"setSeenVersion",
 	"openDesktopTerminal", "listLogContainers", "streamLogs",
 	"listForwards", "openForward", "closeForward", "openForwardWindow",
 }
@@ -321,6 +322,8 @@ func exercises() map[string]exercise {
 			body: sends(`{"density":"compact"}`)},
 		"resetColumns": {status: 204, path: at("/api/preferences/columns/reset"),
 			body: sends(`{"kind":"pods"}`)},
+		"setSeenVersion": {status: 204, path: at("/api/preferences/seen-version"),
+			body: sends(`{"version":"0.2.0"}`)},
 
 		"openDesktopTerminal": {status: 201, path: at("/api/dock/terminals"),
 			body: sends(`{"cluster":"prod","namespace":"default","kind":"pods","name":"api-1"}`)},

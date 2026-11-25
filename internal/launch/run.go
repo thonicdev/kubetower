@@ -66,6 +66,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/metrics"
 	"github.com/thonicdev/kubetower/internal/nameplates"
 	"github.com/thonicdev/kubetower/internal/recorder"
+	"github.com/thonicdev/kubetower/internal/seen"
 	"github.com/thonicdev/kubetower/internal/sharedstate"
 	"github.com/thonicdev/kubetower/internal/shellenv"
 	"github.com/thonicdev/kubetower/internal/statefile"
@@ -685,7 +686,9 @@ type profile struct {
 	xtra       *extras.Store
 	// kinds is each person's choices about the kinds column, nil where they
 	// would not last. See openKindPrefs.
-	kinds    *kindprefs.Store
+	kinds *kindprefs.Store
+	// seen is the last release whose "What's new" was seen (#80).
+	seen     *seen.Store
 	replicas replication
 	// statePersistent is KT_STATE_PERSISTENT, as the deployment said it.
 	statePersistent bool
@@ -850,6 +853,7 @@ func openProfile(inCluster bool) (*profile, error) {
 		kubeconfig: kubeconfig, kubefiles: kubefiles, clusters: clusters,
 		gate: gate, readOnly: readOnly, measure: measure,
 		bars: bars, cols: cols, plates: plates, xtra: xtra, kinds: kinds, replicas: replicas,
+		seen:            seen.New(statefile.Dir(), logf),
 		statePersistent: statePersistent,
 	}, nil
 }
@@ -1223,6 +1227,7 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 			StateIsNewer:   stateIsNewer,
 			Version:        versionLine(),
 			Development:    developmentBuild(),
+			Release:        releaseOf(),
 			// Where KubeTower lives, beside the version. From the package that
 			// asks the same repository, so the link and the endpoint cannot name
 			// two different addresses.
@@ -1272,6 +1277,7 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 		Nameplates: p.plates,
 		Extras:     p.xtra,
 		KindPrefs:  p.kinds,
+		Seen:       p.seen,
 		Archive:    w.archives,
 		Forwards:   w.forwards,
 		// The same object, in its other role. Usage is metrics-server's instant

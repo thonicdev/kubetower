@@ -95,6 +95,11 @@ func (p *recordingPrefs) SetColumnDensity(density string) error {
 	return nil
 }
 
+func (p *recordingPrefs) SetSeenVersion(version string) error {
+	p.note("SetSeenVersion", version)
+	return nil
+}
+
 func (p *recordingPrefs) ResetColumns(kind, scope string) error {
 	p.note("ResetColumns", kind, scope)
 	return nil
@@ -335,6 +340,12 @@ func TestTheCorrectedRailAndDensityWritesReachTheStore(t *testing.T) {
 		{what: "density is the console's and carries no kind", id: "setColumnDensity",
 			path: "/api/preferences/columns/density", body: `{"density":"comfortable"}`,
 			status: http.StatusNoContent, call: "SetColumnDensity comfortable"},
+		{what: "the version seen is a release version", id: "setSeenVersion",
+			path: "/api/preferences/seen-version", body: `{"version":"0.2.0"}`,
+			status: http.StatusNoContent, call: "SetSeenVersion 0.2.0"},
+		{what: "a version that is not a release is refused", id: "setSeenVersion",
+			path: "/api/preferences/seen-version", body: `{"version":"dev"}`,
+			status: http.StatusBadRequest},
 	})
 }
 

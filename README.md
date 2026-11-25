@@ -64,6 +64,16 @@ The desktop then updates itself from **Settings**: Download, verified against th
 - **Desktop:** start KubeTower from your applications menu (or run `kubetower --app`). It reads `KUBECONFIG` or `~/.kube/config` and opens a window on `http://127.0.0.1:5823`, loopback only. Settings are `KT_` environment variables, listed in [`.env.example`](.env.example).
 - **In a cluster:** install the [Helm chart](https://github.com/thonicdev/kubetower-helm-charts) with your OIDC issuer; people then see and do only what their own RoleBindings allow. The in-cluster console does not create, change or delete RBAC objects in this version. See the [chart's README](https://github.com/thonicdev/kubetower-helm-charts#readme) and the [threat model](docs/SERVER-MODE-THREAT-MODEL.md).
 
+## What's new
+
+The first time you open a version you have not seen, a banner atop the console shows what changed:
+
+- **First visit:** a welcome and a short tour of the main views.
+- **After an upgrade:** the highlights of every version since the one you last saw, and a link to [`CHANGELOG.md`](CHANGELOG.md).
+- **Nothing notable since:** the tour.
+
+Close it with × or Escape; it stays closed for that version. **Settings > Infos > What's new** opens it again. The desktop remembers the last version seen in its state directory, a console in a cluster in each browser. Nothing is fetched: the highlights are read from `CHANGELOG.md`, built into the console. A development build, a browser under automation and `?welcome=off` show no banner.
+
 ## Build
 
 ```bash

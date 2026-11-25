@@ -44,6 +44,7 @@ var addressesSeveralReplicasRemove = []struct {
 	{http.MethodPost, "/api/preferences/columns/show"},
 	{http.MethodPost, "/api/preferences/columns/density"},
 	{http.MethodPost, "/api/preferences/columns/reset"},
+	{http.MethodPost, "/api/preferences/seen-version"},
 	{http.MethodPut, "/api/c/prod/extensions/argocd"},
 	{http.MethodPut, "/api/c/prod/extensions/argocd/settings/list-column"},
 	{http.MethodPut, "/api/settings"},

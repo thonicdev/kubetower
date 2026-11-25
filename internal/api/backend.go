@@ -404,6 +404,8 @@ type PreferenceStore interface {
 	// SetColumnDensity carries no kind: row height is one setting for every
 	// table, which is where the store keeps it.
 	SetColumnDensity(density string) error
+	// SetSeenVersion records the release whose "What's new" was seen (#80).
+	SetSeenVersion(version string) error
 	// ResetColumns forgets one scope of one kind's arrangement: "all", "widths",
 	// "order" or "hidden". The scope is always one of the four by the time it
 	// arrives — the handler defaults an absent one to "all" and refuses anything

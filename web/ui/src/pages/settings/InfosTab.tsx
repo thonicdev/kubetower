@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
+import { useCapabilities } from '../../api/queries';
 import { btnSecondary } from '../../components/buttons';
 import { Pill } from '../../components/Pill';
 import { externalHref } from '../../externalHref';
 import { focusRing } from '../../focus';
 
 import { checkUpdates, settingsKey, useUpdateWatch, type Settings } from './data';
+import { openWhatsNew } from '../../whatsnew/WhatsNew';
 import { InstallUpdatesSetting, UpdateControl } from './UpdateControl';
 
 /**
@@ -29,7 +31,10 @@ export function InfosTab({ info }: { info: Settings['info'] }): ReactNode {
     // `kubetower 0.7.2 (2026-09-11, windows/amd64)` and a development build's
     // commit and toolchain wrapped at 448px.
     <section className="max-w-4xl rounded-lg border border-line bg-panel p-3" data-infos="">
-      <h2 className="text-base font-medium">Version</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-base font-medium">Version</h2>
+        <WhatsNewButton />
+      </div>
       <p className="mt-1 flex flex-wrap items-center gap-2">
         {version === undefined ? (
           <span className="text-sm text-muted">Not stamped</span>
@@ -49,6 +54,17 @@ export function InfosTab({ info }: { info: Settings['info'] }): ReactNode {
       <Update update={info.update} />
       <Links repositoryUrl={info.repositoryUrl} documentationUrl={info.documentationUrl} />
     </section>
+  );
+}
+
+/** Opens the What's new banner again (#80), where this build has a release. */
+function WhatsNewButton(): ReactNode {
+  const release = useCapabilities().data?.release;
+  if (release === undefined || release === '') return null;
+  return (
+    <button type="button" className={btnSecondary} onClick={openWhatsNew} data-whats-new-open="">
+      What&apos;s new
+    </button>
   );
 }
 

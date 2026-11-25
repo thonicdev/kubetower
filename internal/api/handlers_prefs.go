@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"unicode/utf8"
+
+	"github.com/thonicdev/kubetower/internal/seen"
 )
 
 // Twelve writes, one cell each, on purpose: a write posting the whole grid
@@ -259,6 +261,20 @@ func (a *API) setColumnDensity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wrote(w, a.deps.Prefs.SetColumnDensity(body.Density))
+}
+
+// setSeenVersion records that this release's "What's new" was seen (#80).
+func (a *API) setSeenVersion(w http.ResponseWriter, r *http.Request) {
+	var body SeenVersionWrite
+	if !decode(w, r, maxBody, &body) || !requireAll(w, "version", body.Version) ||
+		!a.prefsOrMissing(w) {
+		return
+	}
+	if !seen.Valid(body.Version) {
+		badRequest(w, "version is a release version, such as 0.2.0")
+		return
+	}
+	wrote(w, a.deps.Prefs.SetSeenVersion(body.Version))
 }
 
 // resetColumns is the one write that is not a single cell, because forgetting

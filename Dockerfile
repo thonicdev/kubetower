@@ -55,6 +55,8 @@ COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
 COPY api/openapi.yaml /api/openapi.yaml
+# What's new (#80) is drawn from the changelog, imported into the bundle.
+COPY CHANGELOG.md /CHANGELOG.md
 # The same gates CI runs, in the same order, because an image built from a tree
 # that fails them is an image nobody should be able to produce by accident.
 RUN pnpm run lint && pnpm run typecheck && pnpm run check:styles \

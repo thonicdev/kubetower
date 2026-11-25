@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+import { changelog } from './scripts/changelog.ts';
 import { thirdPartyNotices } from './scripts/third-party-notices.ts';
 
 /**
@@ -17,6 +18,8 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // CHANGELOG.md, for What's new (#80).
+    changelog(fileURLToPath(new URL('../CHANGELOG.md', import.meta.url))),
     // The npm half of THIRD_PARTY_NOTICES.txt: what this build bundled, with
     // each package's license text. Written to build/, outside dist/, so it is
     // neither embedded nor served; cmd/ktnotices merges it with the Go modules.

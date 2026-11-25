@@ -457,7 +457,8 @@ describe('the window title', () => {
     await screen.findByRole('link', { name: 'docker-desktop' });
     // A raw context name is neither short enough for a tab nor the thing anybody
     // scans a taskbar for. Less information, more of it legible.
-    await waitFor(() => expect(document.title).toBe('KubeTower'));
+    // Read once the overview has named itself, so it is no race with that.
+    await waitFor(() => expect(document.title).toBe('KubeTower · Overview'));
   });
 });
 

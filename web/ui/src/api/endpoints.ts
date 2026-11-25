@@ -525,6 +525,14 @@ export function setColumnPlace(kind: string, column: string, order: number): Pro
  * rather than about pods, and somebody who wants more rows at once wants them
  * everywhere.
  */
+/** What's new (#80): the release whose highlights were seen, on the desktop. */
+export function setSeenVersion(version: string): Promise<void> {
+  return request<void>(url('/api/preferences/seen-version'), {
+    method: 'POST',
+    body: { version },
+  });
+}
+
 export function setColumnDensity(density: 'comfortable' | 'compact'): Promise<void> {
   return request<void>(url('/api/preferences/columns/density'), {
     method: 'POST',
