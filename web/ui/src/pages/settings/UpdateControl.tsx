@@ -59,6 +59,11 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
             </Pill>
           </span>
           <Ends install={install} />
+          {install.reason === undefined || install.reason === '' ? null : (
+            <span className="min-w-0 max-w-full truncate text-bad" data-update-reason="" title={install.reason}>
+              {install.reason}
+            </span>
+          )}
           <button
             type="button"
             className={btnPrimary}
@@ -85,7 +90,9 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
         </>
       ) : (
         <span data-update-step="installing" role="status">
-          <Pill tone="info">Installing…</Pill>
+          <Pill tone="info" title="KubeTower closes, installs and starts again">
+            Installing…
+          </Pill>
         </span>
       );
       break;
@@ -227,7 +234,7 @@ export function UpdateBanner(): ReactNode {
     >
       <span className="font-medium text-fg">Update available</span>
       {version === undefined ? null : <Pill tone="info">{version}</Pill>}
-      <span className="ml-auto">
+      <span className="ml-auto min-w-0 max-w-full">
         <UpdateControl prominent />
       </span>
     </section>

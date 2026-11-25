@@ -494,7 +494,7 @@ export interface paths {
         put?: never;
         /**
          * Ask GitHub now whether a newer release exists.
-         * @description Settings › Infos' **Check now**: the update check of `info.update`, run past its cache - an answer kept for a day is not the answer to "ask now". It answers once the check has settled, with the same object `GET /api/settings` carries in `info.update`.
+         * @description Settings › Infos' **Check now**: the update check of `info.update`, run past its cache - an answer kept for a day is not the answer to "ask now". It answers once the check has settled, with the same object `GET /api/settings` carries in `info.update`, `install` included where the desktop installs: the page writes this answer over its update line, and one without `install` lost a ready download's Install (#96).
          *     The switches still hold: a check that is off (`KT_UPDATE_CHECK`), or a development build, makes no request however it is asked and answers `off` or `notApplicable`. Checks are taken one at a time, so a press during the startup check waits for it and then asks once more.
          *     **Not registered under the server profile** (`mode: shared`), which never checks: a console in a cluster is upgraded by its image tag. The address then answers the contract's 404 and the page draws no control.
          */
