@@ -3,8 +3,10 @@ package updater
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -347,5 +349,106 @@ func TestNoAutomaticDownloadBesideAHelperStillAlive(t *testing.T) {
 	u.autoStep(context.Background(), func() string { return "0.1.3" }, nothingOpen)
 	if s := u.Status(); s.Phase != Failed || s.Reason != errHelperAlive.Error() {
 		t.Fatalf("%+v", s)
+	}
+}
+
+// By hand, a folder that cannot be written is found by Install, as before
+// (#124's delta review: macOS then opens the disk image for the person who
+// clicked); turned on afterwards, on quit settles it as the manual phase.
+func TestByHandTheFolderIsFoundByInstallAndOnQuitSettlesIt(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	u := f.updater(t.TempDir(), rec, func(o *Options) { o.Writable = func() bool { return false } })
+	if _, err := u.Set(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, u); s.Phase != Ready {
+		t.Fatalf("by hand: %+v", s)
+	}
+	if _, err := u.Set(true, WhenQuit); err != nil {
+		t.Fatal(err)
+	}
+	if u.InstallOnQuit(context.Background()) || len(plans(rec)) != 0 {
+		t.Fatal("tried on quit")
+	}
+	if s := u.Status(); s.Phase != Manual || s.Folder == "" {
+		t.Fatalf("%+v", s)
+	}
+	u.mu.Lock()
+	failed := u.held.FailedOnQuit
+	u.mu.Unlock()
+	if failed != "" {
+		t.Fatalf("kept as failed on quit: %q", failed)
+	}
+}
+
+// Windows' helper installs after the exit, out of sight: the next start
+// running an older build is that install having failed, kept as such; the
+// release it names running is the install done, and nothing is kept.
+func TestTheNextStartChecksTheInstallHandedOverAtQuit(t *testing.T) {
+	f := newFake(t)
+	for _, c := range []struct {
+		next   string
+		failed bool
+	}{{"0.1.2", true}, {"0.1.3", false}} {
+		dir := t.TempDir()
+		u := readyOn(t, f, dir, &recorder{}, nil)
+		if !u.InstallOnQuit(context.Background()) {
+			t.Fatal("not handed over")
+		}
+		next := f.updater(dir, &recorder{}, func(o *Options) { o.Version = c.next })
+		s := next.Status()
+		if got := s.Phase == Failed && strings.Contains(s.Reason, "update-install.log"); got != c.failed {
+			t.Errorf("next start on %s: %+v", c.next, s)
+		}
+		// Settled once: a third start says the same, and holds nothing pending.
+		again := f.updater(dir, &recorder{}, func(o *Options) { o.Version = c.next })
+		if again.Status().Phase != s.Phase || again.held.InstalledOnQuit != "" {
+			t.Errorf("third start on %s: %+v %+v", c.next, again.Status(), again.held)
+		}
+	}
+}
+
+// A release kept as failed on quit and then installed by hand is not said
+// as failed by the build that runs it.
+func TestAFailureOnQuitIsForgottenOnceThatReleaseRuns(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, settingsFile), []byte(`{"failedOnQuit":"0.1.3","failedReason":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.updater(dir, &recorder{}, nil).Status(); s.Phase != Failed {
+		t.Fatalf("0.1.2: %+v", s)
+	}
+	if s := f.updater(dir, &recorder{}, func(o *Options) { o.Version = "0.1.3" }).Status(); s.Phase == Failed {
+		t.Fatalf("0.1.3 runs it: %+v", s)
+	}
+}
+
+// The writes of updater.json land in order: what is on disk is the last
+// setting, however the writes interleave.
+func TestTheSettingOnDiskIsTheLastOne(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	u := f.updater(dir, &recorder{}, nil)
+	var wg sync.WaitGroup
+	for i := range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			when := WhenQuit
+			if i%2 == 0 {
+				when = WhenNow
+			}
+			_, _ = u.Set(i%3 == 0, when)
+		}()
+	}
+	wg.Wait()
+	want := u.Status()
+	if got := f.updater(dir, &recorder{}, nil).Status(); got.Enabled != want.Enabled || got.When != want.When {
+		t.Fatalf("on disk %v/%s, in memory %v/%s", got.Enabled, got.When, want.Enabled, want.When)
 	}
 }

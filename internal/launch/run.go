@@ -419,21 +419,18 @@ func newerOf(report update.Report) string {
 // finish is every quit's last step: stop the server and the shells, then
 // install a verified update where "Install updates automatically" says on
 // quit (#122), bounded by updater.QuitWait; the next start runs it.
+//
+// Nothing installs where there is no installer, nor under --unattended, where
+// a service's stop or restart is nobody quitting.
 func (p *profile) finish(ctx context.Context, stop func()) {
 	stop()
-	if p.onQuit != nil {
-		p.onQuit(ctx)
+	if p.installer != nil && !unattended {
+		installOnQuit(ctx, p.installer)
 	}
 }
 
-// installOnQuitOf is profile.onQuit: nil where nothing installs or nobody
-// quits (--unattended).
-func installOnQuitOf(u *updater.Updater) func(context.Context) {
-	if u == nil || unattended {
-		return nil
-	}
-	return func(ctx context.Context) { u.InstallOnQuit(ctx) }
-}
+// installOnQuit is updater.InstallOnQuit, held in a variable for the tests.
+var installOnQuit = func(ctx context.Context, u *updater.Updater) { u.InstallOnQuit(ctx) }
 
 // serveFailure is the error the server stopped with on its own, or nil when
 // it was stopped: by a signal, the window, or the caller's context.
@@ -711,11 +708,7 @@ type profile struct {
 	updates        *update.Checker
 	// installer downloads and installs an update (#47): the desktop only, nil
 	// in a cluster and in a container, which are upgraded by their image tag.
-	installer *updater.Updater
-	// onQuit installs a verified update as KubeTower quits (#122): nil where
-	// nothing installs, and under --unattended, where a service stop or
-	// restart is nobody quitting.
-	onQuit     func(context.Context)
+	installer  *updater.Updater
 	kubeconfig cluster.Kubeconfig
 	kubefiles  cluster.KubeconfigSurvey
 	clusters   *cluster.Manager
@@ -891,7 +884,7 @@ func openProfile(inCluster bool) (*profile, error) {
 	kinds := openKindPrefs(inCluster, replicas.Several, statePersistent)
 
 	return &profile{
-		stateWrittenBy: stateWrittenBy, stateIsNewer: stateIsNewer, updates: updates, installer: installer, onQuit: installOnQuitOf(installer),
+		stateWrittenBy: stateWrittenBy, stateIsNewer: stateIsNewer, updates: updates, installer: installer,
 		kubeconfig: kubeconfig, kubefiles: kubefiles, clusters: clusters,
 		gate: gate, readOnly: readOnly, measure: measure,
 		bars: bars, cols: cols, plates: plates, xtra: xtra, kinds: kinds, replicas: replicas,

@@ -251,6 +251,10 @@ type Updater struct {
 	autoDownloaded, autoInstalled string
 	// held is updater.json as last read or written.
 	held settings
+	// saving serializes the writes of updater.json: each writes held as it
+	// stands when the write runs, so a later setting is never overwritten by
+	// an earlier one landing after it.
+	saving sync.Mutex
 }
 
 // New reads the "Install updates automatically" setting (on unless turned
@@ -267,6 +271,19 @@ func New(o Options) *Updater {
 		Password:     o.Installation.Kind == LinuxDeb || o.Installation.Kind == LinuxRPM,
 		Supported:    supported && u.installer() != nil && u.canInstall(),
 		Installation: o.Installation.Kind,
+	}
+	// A release handed over at the last quit that this build is older than
+	// did not get installed (a setup that failed after the exit): it is kept
+	// as failed on quit, as a failure seen at the quit itself is.
+	if held.InstalledOnQuit != "" {
+		if update.IsNewer(held.InstalledOnQuit, o.Version) {
+			held.FailedOnQuit, held.FailedReason = held.InstalledOnQuit, errNotInstalledOnQuit.Error()
+		}
+		held.InstalledOnQuit = ""
+		u.held = held
+		if err := u.saveSettings(); err != nil {
+			u.logf("update: the last quit's install could not be settled: %s", textutil.FirstLine(err.Error()))
+		}
 	}
 	// A release that could not be installed at the last quit is said, and
 	// neither downloaded nor tried again until a person asks (#122).
@@ -303,13 +320,18 @@ func (u *Updater) Set(on bool, when string) (Status, error) {
 	u.held.InstallUpdates, u.held.InstallWhen = &on, when
 	u.status.Enabled = on
 	u.status.When = when
-	held, out := u.held, u.status
+	out := u.status
 	u.mu.Unlock()
-	return out, u.writeSettings(held)
+	return out, u.saveSettings()
 }
 
-// writeSettings writes updater.json.
-func (u *Updater) writeSettings(held settings) error {
+// saveSettings writes updater.json with held as it stands now, one write at a time.
+func (u *Updater) saveSettings() error {
+	u.saving.Lock()
+	defer u.saving.Unlock()
+	u.mu.Lock()
+	held := u.held
+	u.mu.Unlock()
 	raw, _ := json.Marshal(held)
 	return statefile.Write(filepath.Join(u.dir(), settingsFile), raw)
 }
@@ -324,9 +346,8 @@ func (u *Updater) failedOnQuit(version, reason string) {
 		return
 	}
 	u.held.FailedOnQuit, u.held.FailedReason = version, reason
-	held := u.held
 	u.mu.Unlock()
-	if err := u.writeSettings(held); err != nil {
+	if err := u.saveSettings(); err != nil {
 		u.logf("update: the failed install could not be kept: %s", textutil.FirstLine(err.Error()))
 	}
 }
@@ -344,11 +365,9 @@ func (u *Updater) Download() (Status, error) {
 	}
 	u.forget()
 	u.status.Phase = Downloading
-	if u.held.FailedOnQuit != "" {
-		held := u.held
-		held.FailedOnQuit, held.FailedReason = "", ""
-		u.held = held
-		safego.Go("update settings", func() error { return u.writeSettings(held) }, nil)
+	if u.held.FailedOnQuit != "" || u.held.InstalledOnQuit != "" {
+		u.held.FailedOnQuit, u.held.FailedReason, u.held.InstalledOnQuit = "", "", ""
+		safego.Go("update settings", u.saveSettings, nil)
 	}
 	safego.Go("update download", func() error { u.download(); return nil }, func(err error) {
 		// Only a panic gets here: download reports its own failures.
@@ -418,6 +437,10 @@ func (u *Updater) install(ctx context.Context, still func(Status) bool) (Status,
 	})
 	return out, nil
 }
+
+// errNotInstalledOnQuit is the reason kept when the release handed over at
+// the last quit is not the one this start runs.
+var errNotInstalledOnQuit = errors.New("the update handed over at the last quit was not installed; see update-install.log")
 
 // errNotStopped is the reason an install fails when the console did not stop
 // for its helper within ExitWait.
@@ -623,9 +646,11 @@ func (u *Updater) download() {
 	u.status.Version = plan.Version
 	u.status.Done = u.status.Total
 	u.mu.Unlock()
-	// Settled while KubeTower runs, not at quit: a folder it cannot write to is
-	// the manual phase (Open folder) now, never a silent failure as it closes.
-	if !u.writable() {
+	// Automatic: settled while KubeTower runs, not at quit - a folder it
+	// cannot write to is the manual phase (Open folder) now, never a silent
+	// failure as it closes. By hand, Install finds it, as before (macOS then
+	// opens the disk image for the person who clicked).
+	if u.Status().Enabled && !u.writable() {
 		u.manual(plan.File, fmt.Errorf("%w: %s", ErrNotWritable, filepath.Dir(u.o.Installation.Path)))
 		return
 	}
@@ -905,6 +930,10 @@ type settings struct {
 	// and FailedReason why: kept until a person downloads again.
 	FailedOnQuit string `json:"failedOnQuit,omitempty"`
 	FailedReason string `json:"failedReason,omitempty"`
+	// InstalledOnQuit is the release handed over at the last quit. Windows'
+	// helper runs the setup after the exit, out of sight: the next start
+	// running an older build is that install having failed.
+	InstalledOnQuit string `json:"installedOnQuit,omitempty"`
 }
 
 // on is the automatic setting: on unless turned off.

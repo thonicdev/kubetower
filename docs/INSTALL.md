@@ -142,11 +142,13 @@ either **On quit** (the default: as KubeTower closes, starting nothing; the
 next start runs the new version) or **At once** (as soon as no terminal and no
 port-forward is open, restarting KubeTower). A `.deb` or `.rpm`, whose install
 asks for a password, is never installed unasked: it waits, verified, for
-**Install**. Whether KubeTower's folder can be written is settled once the
-download is verified, while KubeTower runs: where it cannot, Settings says
-**Not writable** at once (below), and nothing is tried on quit. An install
-that fails on quit is said at the next start, with its reason, and that
-release is neither downloaded nor tried again until **Retry**. Under
+**Install**. With automatic updates, whether KubeTower's folder can be
+written is settled once the download is verified, while KubeTower runs: where
+it cannot, Settings says **Not writable** at once (below), and nothing is tried
+on quit. An install that fails on quit is said at the next start, with its
+reason - on Windows, a setup that failed after KubeTower closed shows as the
+next start still running the older version - and that release is neither
+downloaded nor tried again until **Retry**. Under
 `--unattended`, nothing is installed on quit: a service's stop is nobody
 quitting.
 

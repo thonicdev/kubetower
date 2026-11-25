@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/thonicdev/kubetower/internal/update"
@@ -63,11 +64,27 @@ func (u *Updater) autoStep(ctx context.Context, latest func() string, open func(
 		if !u.once(&u.autoInstalled, s.Version) {
 			return
 		}
+		if u.notWritable() {
+			return
+		}
 		now := func(s Status) bool { return s.Enabled && s.When == WhenNow && !s.Password }
 		if _, err := u.install(ctx, now); err != nil {
 			u.logf("update: the automatic install did not start: %s", textutil.FirstLine(err.Error()))
 		}
 	}
+}
+
+// notWritable settles the installation's folder for a verified update: one
+// that cannot be written puts the update in the manual phase (Open folder).
+func (u *Updater) notWritable() bool {
+	if u.writable() {
+		return false
+	}
+	u.mu.Lock()
+	file := u.planned.File
+	u.mu.Unlock()
+	u.manual(file, fmt.Errorf("%w: %s", ErrNotWritable, filepath.Dir(u.o.Installation.Path)))
+	return true
 }
 
 // failedAtQuit is the release kept as not installed at the last quit.
@@ -115,6 +132,17 @@ func (u *Updater) InstallOnQuit(ctx context.Context) bool {
 		return false
 	}
 	plan := u.planned
+	u.mu.Unlock()
+	// Turned on after a download by hand: the folder is settled now, and a
+	// folder that cannot be written is the manual phase, never a failure.
+	if u.notWritable() {
+		return false
+	}
+	u.mu.Lock()
+	if u.status.Phase != Ready {
+		u.mu.Unlock()
+		return false
+	}
 	u.status.Phase = Installing
 	u.status.Reason = ""
 	u.mu.Unlock()
@@ -163,6 +191,14 @@ func (u *Updater) InstallOnQuit(ctx context.Context) bool {
 		}
 	case <-bounded.Done():
 		return fail(fmt.Sprintf("not done within %s", QuitWait))
+	}
+	// Handed over: the next start checks it runs this release (Windows'
+	// helper installs after the exit, where a failure is not seen here).
+	u.mu.Lock()
+	u.held.InstalledOnQuit = plan.Version
+	u.mu.Unlock()
+	if err := u.saveSettings(); err != nil {
+		u.logf("update: the install on quit could not be noted: %s", textutil.FirstLine(err.Error()))
 	}
 	u.step("installed on quit; the next start runs %s", plan.Version)
 	u.logf("update: %s installed; the next start runs it", plan.Version)
