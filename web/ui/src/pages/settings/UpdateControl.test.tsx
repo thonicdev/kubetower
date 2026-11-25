@@ -12,6 +12,7 @@ import { INSTALL_POLL_MS, INSTALL_TIMEOUT_MS, REFUSED_MS, type UpdateInstall } f
  */
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   resetKeyboardStack();
 });
@@ -110,6 +111,18 @@ function console(
     }
   });
   return out;
+}
+
+/**
+ * Past INSTALL_TIMEOUT_MS by the wall clock, then one poll, under fake timers:
+ * the poll reads the clock, so no three minutes of polls are run (#99).
+ */
+async function pastTheTimeout(): Promise<void> {
+  // The clock's timer armed first, at its full delay, so only the poll's
+  // reading of the wall clock can end it.
+  await vi.advanceTimersByTimeAsync(0);
+  vi.setSystemTime(Date.now() + INSTALL_TIMEOUT_MS);
+  await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS);
 }
 
 const banner = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-update-banner]');
@@ -297,6 +310,7 @@ describe('Settings › Infos', () => {
 
 describe('the poll', () => {
   it('reads a running download every INSTALL_POLL_MS, stops once it settles, and reads the settings again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const downloading: UpdateInstall = { ...idle, phase: 'downloading', version: '0.1.3', done: 1, total: 4 };
     const c = console(downloading);
     mountApp('/settings/general');
@@ -314,21 +328,24 @@ describe('the poll', () => {
       expect(c.reads.lastIndexOf('/api/settings')).toBeGreaterThan(c.reads.lastIndexOf('/api/settings/update'));
     });
     const polls = c.reads.filter((p) => p === '/api/settings/update').length;
-    await new Promise((resolve) => setTimeout(resolve, INSTALL_POLL_MS * 3));
+    await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS * 3);
     expect(c.reads.filter((p) => p === '/api/settings/update').length).toBe(polls);
   });
 
   it('does not poll while nothing runs', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const c = console(idle);
     mountApp('/settings/general');
     await waitFor(() => {
       expect(control()?.getAttribute('data-update-control')).toBe('idle');
     });
-    await new Promise((resolve) => setTimeout(resolve, INSTALL_POLL_MS * 3));
+    await vi.advanceTimersByTimeAsync(INSTALL_POLL_MS * 3);
     expect(c.reads).not.toContain('/api/settings/update');
   });
 
-  it('draws Installing… as failed once the console has not come back in time, and Retry waits again without installing again', async () => {
+  // The timer's own path: three minutes of polls under fake timers, a few
+  // seconds of real time, so its time limit says so rather than the default.
+  it('draws Installing… as failed once the console has not come back in time, and Retry waits again without installing again', { timeout: 30_000 }, async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const c = console({ ...idle, phase: 'installing', version: '0.1.3' });
@@ -474,7 +491,7 @@ describe('the install timeout', () => {
       await waitFor(() => {
         expect(line()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
-      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await pastTheTimeout();
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
         expect(line()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
@@ -506,7 +523,7 @@ describe('the install timeout', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
-      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await pastTheTimeout();
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-wait]')).not.toBeNull();
       });
@@ -546,7 +563,7 @@ describe('the install timeout, once the console answers', () => {
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
-      await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT_MS);
+      await pastTheTimeout();
       await waitFor(() => {
         expect(control()?.querySelector('[data-update-step="timed-out"]')).not.toBeNull();
       });
