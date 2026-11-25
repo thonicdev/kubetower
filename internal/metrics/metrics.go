@@ -288,6 +288,9 @@ var vmSelectors = []vmSelector{
 	{selector: "app.kubernetes.io/name=victoria-metrics-single", ports: []int{8428}},
 	{selector: "app.kubernetes.io/name=vmselect", ports: []int{8481}, path: vmselectPath},
 	{selector: "app.kubernetes.io/name=victoria-metrics-cluster,app.kubernetes.io/component=vmselect", ports: []int{8481}, path: vmselectPath},
+	// Older victoria-metrics-cluster charts label vmselect under the plain
+	// `app` key only.
+	{selector: "app=vmselect", ports: []int{8481}, path: vmselectPath},
 }
 
 // vmselectPath is where vmselect serves tenant 0's Prometheus API.
@@ -423,6 +426,14 @@ func (m *Metrics) probe(ctx context.Context, name string) *Discovery {
 	switch {
 	case target != nil:
 		transport, health, err := m.probeTransport(ctx, name, client, target)
+		var wrongPath *pathRefused
+		if errors.As(err, &wrongPath) {
+			return &Discovery{
+				Kind:       KindUnreachable,
+				Prometheus: target,
+				Detail:     fmt.Sprintf("service %s found via %s: %s", target.Address(), selector, shortError(err)),
+			}
+		}
 		if err != nil {
 			// Found but unreachable is not an absence. The line names the
 			// transports tried, so the operator knows where to look.
@@ -505,7 +516,7 @@ var promQueries = []string{
 	// Covers both `app.kubernetes.io/name=prometheus` selectors, and every
 	// VictoriaMetrics one: one list rather than one more per probe.
 	"app.kubernetes.io/name in (prometheus,vmsingle,vmselect,victoria-metrics-single,victoria-metrics-cluster)",
-	"app in (prometheus,kube-prometheus-stack-prometheus)",
+	"app in (prometheus,kube-prometheus-stack-prometheus,vmselect)",
 	"operated-prometheus=true",
 }
 

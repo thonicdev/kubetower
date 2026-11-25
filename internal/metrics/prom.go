@@ -251,20 +251,19 @@ func engineOf(health []byte, fallback string) string {
 // is tried too rather than assumed — an unverified "port-forward" would be a
 // confident wrong answer, like "none" for a cluster that could not be asked.
 func (m *Metrics) probeTransport(ctx context.Context, name string, client *cluster.Client, target *PromTarget) (transport string, health []byte, err error) {
-	proxyCtx, cancel := context.WithTimeout(ctx, healthTimeout)
-	defer cancel()
-
-	var proxyErr error
-	for _, path := range target.healthPaths() {
-		body, err := m.raw(proxyCtx, client, target.proxyRoot(path), nil)
-		if err == nil {
-			return TransportProxy, body, nil
-		}
-		if proxyErr == nil {
-			proxyErr = err
-		}
+	viaProxy := func(ctx context.Context, path string, params url.Values) ([]byte, error) {
+		return m.raw(ctx, client, target.proxyRoot(path), params)
 	}
-	if m.tunnels == nil {
+	body, proxyErr := target.answers(ctx, healthTimeout, viaProxy)
+	var wrongPath *pathRefused
+	switch {
+	case proxyErr == nil:
+		return TransportProxy, body, nil
+	case errors.As(proxyErr, &wrongPath):
+		// The proxy reached the Service; a port-forward would reach the same
+		// Service and be refused the same path.
+		return "", nil, proxyErr
+	case m.tunnels == nil:
 		return "", nil, fmt.Errorf("the API service proxy refused (%s) and no port-forward is configured", shortError(proxyErr))
 	}
 
@@ -277,17 +276,63 @@ func (m *Metrics) probeTransport(ctx context.Context, name string, client *clust
 	}
 	defer tunnel.Close()
 
-	var forwardErr error
-	for _, path := range target.healthPaths() {
-		body, err := httpGet(ctx, "http://"+tunnel.Addr()+path, nil, healthTimeout)
-		if err == nil {
-			return TransportForward, body, nil
-		}
-		if forwardErr == nil {
-			forwardErr = err
-		}
+	viaForward := func(ctx context.Context, path string, params url.Values) ([]byte, error) {
+		return httpGet(ctx, "http://"+tunnel.Addr()+path, params, healthTimeout)
 	}
-	return "", nil, forwardErr
+	body, err = target.answers(ctx, healthTimeout, viaForward)
+	if err != nil {
+		return "", nil, err
+	}
+	return TransportForward, body, nil
+}
+
+// pathRefused is a Service that answers at its root and not under the
+// target's path: reached, and still not the Prometheus API that was named.
+type pathRefused struct {
+	path  string
+	cause error
+}
+
+func (p *pathRefused) Error() string {
+	return fmt.Sprintf("the Service answers, but not under %s: %s", p.path, shortError(p.cause))
+}
+
+func (p *pathRefused) Unwrap() error { return p.cause }
+
+// answers asks the health endpoint through get, each place in healthPaths with
+// a timeout of its own, so one that hangs leaves the next its time.
+//
+// Every Prometheus and VictoriaMetrics answers health at the root, whatever
+// the path: so where only the root answered, a query under the path confirms
+// the path, and a path with a typo in it (`/select/O/prometheus`) is reported
+// as one rather than as a Prometheus reached.
+func (p *PromTarget) answers(ctx context.Context, timeout time.Duration, get func(context.Context, string, url.Values) ([]byte, error)) ([]byte, error) {
+	var first error
+	for _, path := range p.healthPaths() {
+		body, err := askWithin(ctx, timeout, func(ctx context.Context) ([]byte, error) { return get(ctx, path, nil) })
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if path == endpointHealth && p.Path != "" {
+			_, err := askWithin(ctx, timeout, func(ctx context.Context) ([]byte, error) {
+				return get(ctx, p.Path+endpointQuery, url.Values{"query": {"1"}})
+			})
+			if err != nil {
+				return nil, &pathRefused{path: p.Path, cause: err}
+			}
+		}
+		return body, nil
+	}
+	return nil, first
+}
+
+func askWithin(ctx context.Context, timeout time.Duration, ask func(context.Context) ([]byte, error)) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return ask(ctx)
 }
 
 // Session is one way in to one cluster's Prometheus, held open across several
