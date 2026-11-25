@@ -2314,3 +2314,64 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 		t.Error("the draft attaches the signature before it has checked every asset")
 	}
 }
+
+// TestOnlyTheSignJobHoldsTheKey (#70). RELEASE_SIGNING_KEY is a secret of the
+// `release` Environment, which admits release tags only, so a workflow on a
+// pushed branch cannot read it:
+//
+//  1. release.yml's sign job declares `environment: release`;
+//  2. no other job of any workflow names the secret;
+//  3. a run started by hand must be on the tag it builds, or the Environment
+//     refuses the sign job after everything else was built.
+func TestOnlyTheSignJobHoldsTheKey(t *testing.T) {
+	jobs := workflowJobs(t, "release.yml")
+	sign, ok := jobs["sign"]
+	if !ok {
+		t.Fatal("release.yml has no sign job")
+	}
+	env := sign["environment"]
+	if m, ok := env.(map[string]any); ok {
+		env = m["name"]
+	}
+	if env != "release" {
+		t.Errorf("release.yml's sign job runs in environment %v, not release: its key would be a repository secret any branch can read", sign["environment"])
+	}
+
+	files, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Skip(".github/workflows is not in this tree, so where the key is read is UNCHECKED here")
+	}
+	held := 0
+	for _, f := range files {
+		name := filepath.Base(f)
+		for job, body := range workflowJobs(t, name) {
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "RELEASE_SIGNING_KEY") || !strings.Contains(string(raw), "secrets.") {
+				continue
+			}
+			if name != "release.yml" || job != "sign" {
+				t.Errorf("%s's %s job names RELEASE_SIGNING_KEY; only release.yml's sign job, in the release Environment, may", name, job)
+				continue
+			}
+			held++
+		}
+	}
+	if held != 1 {
+		t.Errorf("release.yml's sign job does not read RELEASE_SIGNING_KEY (%d jobs do)", held)
+	}
+
+	i := stepWhere(jobs["verify"], runs(`[[ "$tag" =~ `))
+	if i < 0 {
+		t.Fatal(`release.yml's verify job has no tag step`)
+	}
+	script, _ := steps(jobs["verify"])[i]["run"].(string)
+	if !strings.Contains(script, `if [ "$REF" != "refs/tags/$tag" ]; then`) {
+		t.Errorf("release.yml's verify job lets a run started by hand build from a branch; the release Environment would refuse its sign job at the end")
+	}
+}
