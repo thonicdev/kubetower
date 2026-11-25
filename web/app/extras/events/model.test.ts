@@ -5,6 +5,7 @@ import {
   BINS,
   NODE_GAP_MS,
   binOf,
+  binSpan,
   causeKey,
   causeLit,
   changeLit,
@@ -73,6 +74,11 @@ describe('cells', () => {
     expect(bins[34]).toBe(10);
     expect(bins[29]).toBe(0);
     expect(bins.reduce((a, b) => a + b, 0)).toBe(50);
+  });
+
+  it('names the slice a cell covers, from its start to its end before now', () => {
+    expect(binSpan(0, AXIS)).toBe('−40 min to 39 min');
+    expect(binSpan(BINS - 1, AXIS)).toBe('−1 min to now');
   });
 
   it('puts a single Event in one cell, and clamps what falls outside the axis', () => {
