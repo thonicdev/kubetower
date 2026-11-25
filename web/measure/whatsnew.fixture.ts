@@ -7,7 +7,16 @@ import type { Release } from '../ui/src/whatsnew/changelog';
  */
 
 export const WHATS_NEW_RELEASES: readonly Release[] = [
-  { version: '0.3.0', highlights: [{ title: 'Saved views per kind and cluster', kind: 'added' }, { title: 'Pod logs that follow a restart', kind: 'fixed' }, { title: 'Node pressure on the overview', kind: 'added' }] },
+  {
+    version: '0.3.0',
+    highlights: [
+      { title: 'Storage Inspector', kind: 'added', extra: 'storage' },
+      { title: 'Mark an extra as a favorite', kind: 'added' },
+      { title: 'An image’s version is always visible', kind: 'added' },
+      { title: 'Installing from Windows finishes', kind: 'fixed' },
+      { title: 'Updates on Linux and macOS say what happened', kind: 'fixed' },
+    ],
+  },
   { version: '0.2.1', highlights: [] },
   { version: '0.2.0', highlights: [{ title: "What's new after an upgrade", kind: 'added' }, { title: 'Install updates from the console', kind: 'fixed' }] },
   { version: '0.1.2', highlights: [] },

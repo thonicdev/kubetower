@@ -6,13 +6,20 @@ import changelog from 'virtual:kubetower-changelog';
  *
  * A highlight is an entry of a release's `### Added`, or of its `### Fixed`
  * when it carries `<!-- highlight -->`. It is drawn as its bold lead (the
- * changelog's own short title) and at most MAX_HIGHLIGHTS per release.
+ * changelog's own short sentence) and at most MAX_HIGHLIGHTS per release. An
+ * entry carrying `<!-- extra: <key> -->` introduces that extra: the dialog
+ * draws it first, as a New extra line (#121), and it is kept before the cut to
+ * MAX_HIGHLIGHTS, wherever the release lists it (#125). Its key is read in
+ * lower case with `_` as `-`; `app/extras/changelog.test.ts` refuses a marker
+ * naming no shipped extra.
  */
 
-/** One highlight: its bold lead, and the section it came from (#107). */
+/** One highlight: its bold lead, the section it came from (#107), and the
+ *  extra it introduces, by key (#121). */
 export interface Highlight {
   title: string;
   kind: 'added' | 'fixed';
+  extra?: string | undefined;
 }
 
 export interface Release {
@@ -24,6 +31,9 @@ export const MAX_HIGHLIGHTS = 5;
 
 const HEADING = /^## +([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/;
 const MARK = '<!-- highlight -->';
+const EXTRA = /<!--\s*extra:\s*([^\s>]+?)\s*-->/;
+/** Any HTML comment: a marker, never a word of the title. */
+const COMMENT = /<!--[\s\S]*?-->/g;
 
 /** The releases of a changelog, newest first as it lists them. */
 export function parseChangelog(text: string): Release[] {
@@ -36,9 +46,12 @@ export function parseChangelog(text: string): Release[] {
     const whole = item.join(' ');
     item = undefined;
     const counts = section === 'added' || (section === 'fixed' && whole.includes(MARK));
-    if (!counts || release.highlights.length >= MAX_HIGHLIGHTS) return;
+    if (!counts) return;
     const title = titleOf(whole);
-    if (title !== '') release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed' });
+    const extra = extraKey(whole);
+    if (title !== '') {
+      release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed', ...(extra === undefined ? {} : { extra }) });
+    }
   };
   for (const line of text.split(/\r?\n/)) {
     const heading = HEADING.exec(line);
@@ -71,12 +84,24 @@ export function parseChangelog(text: string): Release[] {
     if (line.trim() === '' || !/^\s/.test(line)) close();
   }
   close();
+  // The extras first, then the cut: an extra listed sixth is still shown.
+  for (const one of releases) {
+    const extras = one.highlights.filter((highlight) => highlight.extra !== undefined);
+    const rest = one.highlights.filter((highlight) => highlight.extra === undefined);
+    one.highlights = [...extras, ...rest].slice(0, MAX_HIGHLIGHTS);
+  }
   return releases;
+}
+
+/** The key an entry's `<!-- extra: KEY -->` names, in lower case with `_` as `-`. */
+function extraKey(entry: string): string | undefined {
+  const key = EXTRA.exec(entry)?.[1];
+  return key === undefined ? undefined : key.toLowerCase().replaceAll('_', '-');
 }
 
 /** An entry's short title: its bold lead, else its first sentence, as text. */
 function titleOf(entry: string): string {
-  const text = entry.replace(MARK, '').trim();
+  const text = entry.replace(COMMENT, '').trim();
   const bold = /^\*\*(.+?)\*\*/.exec(text);
   const lead = bold?.[1] ?? text.split(/(?<=\.)\s/)[0] ?? text;
   return plain(lead)

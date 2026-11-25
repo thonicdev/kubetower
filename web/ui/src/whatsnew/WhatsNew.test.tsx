@@ -9,7 +9,14 @@ import { resetWhatsNew } from './WhatsNew';
 // A changelog of fake releases, in place of this repository's.
 const real = RELEASES;
 const FAKE: Release[] = [
-  { version: '0.3.0', highlights: [{ title: 'Saved views', kind: 'added' }, { title: 'Pod logs across restarts', kind: 'fixed' }] },
+  {
+    version: '0.3.0',
+    highlights: [
+      { title: 'Saved views', kind: 'added' },
+      { title: 'Pod logs across restarts', kind: 'fixed' },
+      { title: 'Storage Inspector', kind: 'added', extra: 'storage' },
+    ],
+  },
   { version: '0.2.1', highlights: [] },
   { version: '0.2.0', highlights: [{ title: "What's new", kind: 'added' }] },
   { version: '0.1.2', highlights: [] },
@@ -208,7 +215,7 @@ describe("What's new", () => {
     expect(router.state.location.pathname).toBe('/c/prod');
   });
 
-  it("gives What's new its version, an icon and a badge per highlight, and the changelog", async () => {
+  it("lists What's new under New and Fixed, a new extra first, with the changelog", async () => {
     localStorage.setItem('kubetower.seenVersion', '0.1.2');
     console('0.3.0', { desktop: false });
     mountApp('/');
@@ -218,14 +225,29 @@ describe("What's new", () => {
       '0.3.0',
       '0.2.0',
     ]);
-    const items = [...box.querySelectorAll<HTMLElement>('[data-highlight]')];
-    expect(items.map((one) => [one.dataset['highlight'], one.textContent])).toEqual([
-      ['added', 'Saved viewsAdded'],
-      ['fixed', 'Pod logs across restartsFixed'],
-      ['added', "What's newAdded"],
+    // Each release: New, then Fixed; a release with nothing fixed has no Fixed.
+    const groups = (version: string): (string | null | undefined)[][] =>
+      [...box.querySelectorAll<HTMLElement>(`[data-whats-new-release="${version}"] [data-whats-new-group]`)].map((group) => [
+        group.dataset['whatsNewGroup'],
+        group.querySelector('h3')?.textContent,
+      ]);
+    expect(groups('0.3.0')).toEqual([
+      ['added', 'New'],
+      ['fixed', 'Fixed'],
     ]);
-    // Added and Fixed differ by their glyph, not by a sentence.
-    expect(items.map((one) => one.querySelector('use')?.getAttribute('href'))).toEqual(['#i-plus', '#i-check', '#i-plus']);
+    expect(groups('0.2.0')).toEqual([['added', 'New']]);
+    // One line each, the extra first whatever its place in the changelog.
+    const items = [...box.querySelectorAll<HTMLElement>('[data-highlight]')];
+    expect(items.map((one) => [one.dataset['highlight'], one.dataset['highlightExtra'], one.textContent])).toEqual([
+      ['added', 'storage', 'New extra·Storage Inspector'],
+      ['added', undefined, 'Saved views'],
+      ['fixed', undefined, 'Pod logs across restarts'],
+      ['added', undefined, "What's new"],
+    ]);
+    // New and Fixed differ by their glyph: a + and a check, never a sentence.
+    expect(items.map((one) => one.querySelector('use')?.getAttribute('href'))).toEqual(['#i-plus', '#i-plus', '#i-check', '#i-plus']);
+    // The glyph is decoration: a screen reader reads the group's name and the line.
+    for (const one of items) expect(one.querySelector('use')?.closest('[aria-hidden="true"]')).not.toBeNull();
     await waitFor(() => {
       expect(box.querySelector('[data-whats-new-changelog]')?.getAttribute('href')).toBe(
         'https://github.com/thonicdev/kubetower/blob/main/CHANGELOG.md',
@@ -315,7 +337,7 @@ describe("What's new", () => {
     open.focus();
     fireEvent.click(open);
     const box = await shown('news');
-    expect([...box.querySelectorAll<HTMLElement>('[data-highlight]')].map((one) => one.dataset['highlight'])).toEqual(['added', 'fixed']);
+    expect([...box.querySelectorAll<HTMLElement>('[data-highlight]')].map((one) => one.dataset['highlight'])).toEqual(['added', 'added', 'fixed']);
     await waitFor(() => {
       expect(dialog()?.contains(document.activeElement)).toBe(true);
     });

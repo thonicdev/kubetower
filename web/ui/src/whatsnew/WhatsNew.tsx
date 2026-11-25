@@ -231,39 +231,79 @@ function ChangelogLink(): ReactNode {
   );
 }
 
-/** Added and Fixed, told apart by their glyph and their badge. */
-const KIND: Readonly<Record<Highlight['kind'], { icon: IconName; label: string; tone: string }>> = {
-  added: { icon: 'plus', label: 'Added', tone: 'info' },
-  fixed: { icon: 'check', label: 'Fixed', tone: 'ok' },
-};
-
+/**
+ * A release's highlights, as two short lists (#121): New in the accent, each
+ * line a small + and one sentence, a new extra on a slightly larger line of
+ * its own first; then Fixed, each line a green check. The sentence is the
+ * CHANGELOG entry's bold lead: nothing else to keep in step.
+ */
 function News({ releases }: { releases: readonly Release[] }): ReactNode {
   return (
-    <div className="flex flex-col gap-3" data-whats-new-releases="">
-      {releases.map((one) => (
-        <section key={one.version} aria-label={one.version} className="flex min-w-0 flex-col gap-1.5" data-whats-new-release={one.version}>
-          {releases.length > 1 ? (
-            <span className="self-start">
-              <Pill>{one.version}</Pill>
-            </span>
-          ) : null}
-          <ul className="flex flex-col gap-1.5">
-            {one.highlights.map((highlight) => {
-              const kind = KIND[highlight.kind];
-              return (
-                <li key={highlight.title} data-highlight={highlight.kind} className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2.5 py-2">
-                  <span aria-hidden="true" className={`grid size-7 shrink-0 place-items-center rounded-md border ${highlight.kind === 'added' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-ok/40 bg-ok/10 text-ok'}`}>
-                    <Icon name={kind.icon} />
-                  </span>
-                  <span className="min-w-0 flex-1 text-fg">{highlight.title}</span>
-                  <Pill tone={kind.tone}>{kind.label}</Pill>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+    <div className="flex flex-col gap-4" data-whats-new-releases="">
+      {releases.map((one) => {
+        const extras = one.highlights.filter((highlight) => highlight.kind === 'added' && highlight.extra !== undefined);
+        const added = one.highlights.filter((highlight) => highlight.kind === 'added' && highlight.extra === undefined);
+        const fixed = one.highlights.filter((highlight) => highlight.kind === 'fixed');
+        return (
+          <section key={one.version} aria-label={one.version} className="flex min-w-0 flex-col gap-3" data-whats-new-release={one.version}>
+            {releases.length > 1 ? (
+              <span className="self-start">
+                <Pill>{one.version}</Pill>
+              </span>
+            ) : null}
+            {extras.length + added.length === 0 ? null : (
+              <Group kind="added" label="New">
+                {extras.map((highlight) => (
+                  <li key={highlight.title} data-highlight="added" data-highlight-extra={highlight.extra} className="flex min-w-0 items-start gap-2 text-base">
+                    <Glyph kind="added" />
+                    <span className="shrink-0 font-medium text-accent">New extra</span>
+                    <span aria-hidden="true" className="text-muted">
+                      ·
+                    </span>
+                    <span className="min-w-0 font-medium text-fg">{highlight.title}</span>
+                  </li>
+                ))}
+                {added.map((highlight) => (
+                  <li key={highlight.title} data-highlight="added" className="flex min-w-0 items-start gap-2">
+                    <Glyph kind="added" />
+                    <span className="min-w-0 text-fg">{highlight.title}</span>
+                  </li>
+                ))}
+              </Group>
+            )}
+            {fixed.length === 0 ? null : (
+              <Group kind="fixed" label="Fixed">
+                {fixed.map((highlight) => (
+                  <li key={highlight.title} data-highlight="fixed" className="flex min-w-0 items-start gap-2">
+                    <Glyph kind="fixed" />
+                    <span className="min-w-0 text-fg">{highlight.title}</span>
+                  </li>
+                ))}
+              </Group>
+            )}
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+/** One list, under its colored name. */
+function Group({ kind, label, children }: { kind: Highlight['kind']; label: string; children: ReactNode }): ReactNode {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5" data-whats-new-group={kind}>
+      <h3 className={`text-xs font-medium uppercase tracking-wide ${kind === 'added' ? 'text-accent' : 'text-ok'}`}>{label}</h3>
+      <ul className="flex min-w-0 flex-col gap-1.5">{children}</ul>
+    </div>
+  );
+}
+
+/** The line's glyph: a + in the accent, a check in green. */
+function Glyph({ kind }: { kind: Highlight['kind'] }): ReactNode {
+  return (
+    <span aria-hidden="true" className={`flex h-[1lh] shrink-0 items-center [--icon:calc(var(--spacing)*3.5)] ${kind === 'added' ? 'text-accent' : 'text-ok'}`}>
+      <Icon name={kind === 'added' ? 'plus' : 'check'} />
+    </span>
   );
 }
 
