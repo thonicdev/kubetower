@@ -196,6 +196,7 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 	claims := make([]Claim, 0, len(page.Items))
 	labelled := map[string]bool{}
 	ownedBySet := map[string]string{}
+	ownedByPod := map[string]string{}
 	for i := range page.Items {
 		var c corev1.PersistentVolumeClaim
 		if runtime.DefaultUnstructuredConverter.FromUnstructured(page.Items[i].Object, &c) != nil {
@@ -205,8 +206,12 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 		key := claim.Namespace + "/" + claim.Name
 		labelled[key] = len(c.Labels) > 0
 		for _, owner := range c.OwnerReferences {
-			if owner.Kind == "StatefulSet" {
+			switch owner.Kind {
+			case "StatefulSet":
 				ownedBySet[key] = owner.Name
+			case "Pod":
+				// A generic ephemeral volume's claim, owned by its pod.
+				ownedByPod[key] = owner.Name
 			}
 		}
 		claims = append(claims, claim)
@@ -286,6 +291,10 @@ func read(r *http.Request, h extension.Host, cluster, ns string, at time.Time) (
 		c := &claims[i]
 		key := c.Namespace + "/" + c.Name
 		users := mounting[key]
+		if p, ok := pods[c.Namespace+"/"+ownedByPod[key]]; ok && len(users) == 0 && ownedByPod[key] != "" {
+			users = []podInfo{p}
+			mounting[key] = users
+		}
 		switch {
 		case !mountsKnown:
 			c.Mount = MountUnknown
@@ -398,9 +407,10 @@ func tally(a *Answer, claims []Claim, volumes []Volume, classes []Class) {
 	n.Orphans = n.OrphanClaims + n.OrphanVolumes + n.OrphanClasses
 }
 
-// readPods reads the pods in scope, one page at a time, keeping only what
-// mounts a claim. mountsKnown is false when they could not all be read: then
-// no claim is called unmounted.
+// readPods reads the pods in scope, one page at a time, keeping only those
+// that mount a claim: a `persistentVolumeClaim` volume, or a generic ephemeral
+// volume, whose claim Kubernetes names `<pod>-<volume>`. mountsKnown is false
+// when they could not all be read: then no claim is called unmounted.
 func readPods(r *http.Request, h extension.Host, cluster, ns string, a *Answer, incomplete func(string, string)) (map[string]podInfo, bool) {
 	pods := map[string]podInfo{}
 	page, err := h.List(r, cluster, extension.ListQuery{GVR: podsGVR, Namespace: ns, Each: func(o unstructured.Unstructured) error {
@@ -411,11 +421,16 @@ func readPods(r *http.Request, h extension.Host, cluster, ns string, a *Answer, 
 		info := podInfo{namespace: p.Namespace, name: p.Name, node: p.Spec.NodeName,
 			running: p.Status.Phase == corev1.PodRunning, workload: workloadOf(&p)}
 		for _, v := range p.Spec.Volumes {
-			if v.PersistentVolumeClaim != nil {
+			switch {
+			case v.PersistentVolumeClaim != nil:
 				info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+			case v.Ephemeral != nil:
+				info.claims = append(info.claims, p.Name+"-"+v.Name)
 			}
 		}
-		pods[p.Namespace+"/"+p.Name] = info
+		if len(info.claims) > 0 {
+			pods[p.Namespace+"/"+p.Name] = info
+		}
 		return nil
 	}})
 	if err != nil {
@@ -478,8 +493,10 @@ func readSets(r *http.Request, h extension.Host, cluster, ns string, incomplete 
 	return sets, true
 }
 
-// ordinal is the shape a StatefulSet gives its claims: `<template>-<set>-<n>`.
-var ordinal = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?-[0-9]+$`)
+// ordinal is the shape a StatefulSet gives its claims: `<template>-<set>-<n>`,
+// an ordinal of at most four digits - a dated name such as `backup-20241101`
+// is not one.
+var ordinal = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?-[0-9]{1,4}$`)
 
 // gone answers whether an unmounted claim is the claim of a StatefulSet that
 // no longer exists: owned by one that is not there, or named the way a

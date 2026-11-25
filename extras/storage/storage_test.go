@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/thonicdev/kubetower/extension"
@@ -432,5 +433,97 @@ func TestItReadsOnlyWhatItDeclares(t *testing.T) {
 		if !want[q.GVR.Resource] {
 			t.Errorf("it listed %s", q.GVR.Resource)
 		}
+	}
+}
+
+// A generic ephemeral volume's claim is named `<pod>-<volume>` and owned by
+// its pod: the pod mounts it, so it is no orphan, and its kubelet's figure is
+// drawn.
+func TestAnEphemeralVolumesClaimIsMountedByItsPod(t *testing.T) {
+	at(t)
+	h := shop(t)
+	scratch := claim(t, "shop", "job-x-scratch", "gp3", "10Gi", "pv-scratch", nil)
+	scratch.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "job-x", UID: "u-job-x"}})
+	h.add("persistentvolumeclaims", scratch)
+	h.add("pods", obj(t, map[string]any{
+		"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "shop", "name": "job-x"},
+		"spec": map[string]any{"nodeName": "node-a", "containers": []any{map[string]any{"name": "app", "image": "app:1"}},
+			"volumes": []any{map[string]any{"name": "scratch", "ephemeral": map[string]any{"volumeClaimTemplate": map[string]any{
+				"spec": map[string]any{"accessModes": []any{"ReadWriteOnce"}, "resources": map[string]any{"requests": map[string]any{"storage": "10Gi"}}}}}}}},
+		"status": map[string]any{"phase": "Running"},
+	}))
+	h.measured("node-a", "shop/job-x-scratch", 2*gi, 10*gi)
+	a := overview(t, h, "")
+	c := claimNamed(t, a, "shop", "job-x-scratch")
+	if c.Mount != MountMounted || c.Orphan != "" || len(c.Pods) != 1 || c.Pods[0] != "job-x" || c.Fill.State != FillMeasured {
+		t.Errorf("an ephemeral claim = mount %q orphan %q pods %v fill %+v, want mounted by job-x and measured", c.Mount, c.Orphan, c.Pods, c.Fill)
+	}
+	if a.Counts.OrphanClaims != 3 {
+		t.Errorf("orphan claims = %d, want the 3 of shop: the ephemeral claim is not one", a.Counts.OrphanClaims)
+	}
+
+	// Owned by its pod alone, without the volume in the pod's spec, it is
+	// mounted all the same.
+	owned := claim(t, "shop", "job-x-cache", "gp3", "1Gi", "pv-c", nil)
+	owned.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "job-x", UID: "u-job-x"}})
+	h.add("persistentvolumeclaims", owned)
+	if c := claimNamed(t, overview(t, h, ""), "shop", "job-x-cache"); c.Mount != MountMounted || c.Orphan != "" {
+		t.Errorf("a claim its live pod owns = %q %q, want mounted", c.Mount, c.Orphan)
+	}
+}
+
+// Kubelets that failed are not a missing grant: the line says they did not
+// answer, and never asks for nodes/proxy.
+func TestFailedKubeletsAreNotARefusal(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.silent["node-a"], h.silent["node-b"] = errors.New("dial tcp 10.0.0.1:10250: i/o timeout"), errors.New("node is not ready")
+	a := overview(t, h, "")
+	if a.Fill.State != SourceUnreadable || a.Fill.Message != kubeletsFailed || strings.Contains(a.Fill.Message, "nodes/proxy") {
+		t.Errorf("fill = %+v, want unreadable, the kubelets failed", a.Fill)
+	}
+	h.silent = map[string]error{}
+	h.usageErr = errors.New("context deadline exceeded")
+	if a := overview(t, h, ""); a.Fill.Message != kubeletsFailed {
+		t.Errorf("a failed Usage = %+v, want the kubelets failed", a.Fill)
+	}
+	h.usageErr = extension.NotGranted(apierrors.NewForbidden(schema.GroupResource{Resource: "nodes/proxy"}, "node-a", errors.New("no")))
+	if a := overview(t, h, ""); a.Fill.Message != needsNodeProxy {
+		t.Errorf("the console's account refused = %+v, want needs nodes/proxy", a.Fill)
+	}
+}
+
+// A filesystem the kubelet reports with no size is no figure.
+func TestAZeroCapacityIsUnread(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.measured("node-b", "shop/cache", 0, 0)
+	if c := claimNamed(t, overview(t, h, ""), "shop", "cache"); c.Fill.State != FillUnread || c.Fill.UsedBytes != 0 {
+		t.Errorf("capacity 0 = %+v, want unread", c.Fill)
+	}
+}
+
+// A dated name is not a StatefulSet's ordinal.
+func TestADatedClaimIsNotAGoneStatefulSets(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.add("persistentvolumeclaims", claim(t, "shop", "backup-20241101", "gp3", "1Gi", "pv-b", map[string]any{"app": "backup"}))
+	if c := claimNamed(t, overview(t, h, ""), "shop", "backup-20241101"); c.Orphan != OrphanUnmounted {
+		t.Errorf("backup-20241101 = %q, want unmounted", c.Orphan)
+	}
+}
+
+// A catalog the person may not read is a refusal of the snapshots, not a
+// failure.
+func TestARefusedCatalogRefusesTheSnapshots(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.defErr = fmt.Errorf("%w: list customresourcedefinitions", extension.ErrDenied)
+	if s := overview(t, h, "").Snapshots; s.State != StateRefused {
+		t.Errorf("snapshots = %+v, want refused", s)
+	}
+	h.defErr = errors.New("the server is currently unable to handle the request")
+	if s := overview(t, h, "").Snapshots; s.State != StateFailed {
+		t.Errorf("snapshots = %+v, want failed", s)
 	}
 }

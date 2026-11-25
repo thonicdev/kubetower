@@ -55,7 +55,7 @@ func snapshots(r *http.Request, h extension.Host, cluster, ns string, claims []C
 	registry, err := h.Definitions(r, cluster)
 	if err != nil {
 		sec := sectionOf(err)
-		s.State, s.Message, s.Detail = StateFailed, "Unreadable", sec.Detail
+		s.State, s.Message, s.Detail = sec.State, sec.Message, sec.Detail
 		return s, history
 	}
 	lookup := func(kind string) (extension.CRD, error) { return registry.Lookup(r.Context(), kind) }
@@ -66,7 +66,8 @@ func snapshots(r *http.Request, h extension.Host, cluster, ns string, claims []C
 		s.State, s.Message = StateAbsent, "Not installed"
 		return s, history
 	case err != nil:
-		s.State, s.Message, s.Detail = StateFailed, "Unreadable", shortError(err)
+		sec := sectionOf(err)
+		s.State, s.Message, s.Detail = sec.State, sec.Message, sec.Detail
 		return s, history
 	}
 	scope := ns

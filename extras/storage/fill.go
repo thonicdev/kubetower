@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/thonicdev/kubetower/extension"
 	"github.com/thonicdev/kubetower/textutil"
 )
@@ -14,6 +16,7 @@ import (
 // that adds nodes/proxy to the console's role, off by default.
 const (
 	needsNodeProxy = "Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)"
+	kubeletsFailed = "Fill unreadable · the kubelets did not answer"
 	needsNodes     = "Fill unreadable · needs list nodes"
 	notAsked       = "Fill unreadable · not asked"
 	someNodes      = "Fill partial · some kubelets did not answer"
@@ -61,7 +64,7 @@ func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mou
 		case errors.Is(err, extension.ErrUnreviewable):
 			src.Message = notAsked
 		default:
-			src.Message = needsNodeProxy
+			src.Message = unreadableLine(err)
 		}
 		return src
 	}
@@ -94,7 +97,7 @@ func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mou
 	switch {
 	case usage.Answered == 0:
 		src.State = SourceUnreadable
-		src.Message = needsNodeProxy
+		src.Message = unreadableLine(usage.FirstErr)
 		if usage.FirstErr != nil {
 			src.Detail = shortError(usage.FirstErr)
 		}
@@ -106,6 +109,16 @@ func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mou
 		}
 	}
 	return src
+}
+
+// unreadableLine tells a refusal - the proxy forbidden, which a grant fixes -
+// from a failure - a kubelet that timed out or a node that is down, which no
+// grant fixes. Two answers, never one (R5 §5).
+func unreadableLine(err error) string {
+	if err != nil && (apierrors.IsForbidden(err) || errors.Is(err, extension.ErrConsoleNotGranted)) {
+		return needsNodeProxy
+	}
+	return kubeletsFailed
 }
 
 func running(pods []podInfo) bool {

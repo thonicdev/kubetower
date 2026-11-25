@@ -112,12 +112,14 @@ interface TileSpec {
 function tiles(data: Overview): TileSpec[] {
   const c = data.counts;
   const full = c.warn + c.bad;
+  // No kubelet read: how many are full is unknown, never 0.
+  const fillKnown = data.fill.state === 'read' || data.fill.state === 'partial';
   const unread = data.claims.filter((claim) => claim.fill.state === 'unread').length;
   const unsnapshotted = data.snapshots.state === 'read' ? c.claims - c.snapshotted : -1;
   return [
     { show: 'all', label: 'Claims', count: c.claims, tone: c.lost > 0 ? 'bad' : c.pending > 0 ? 'warn' : 'off', hint: `${String(c.bound)} bound · ${String(c.pending)} pending · ${String(c.lost)} lost` },
     { show: 'orphans', label: 'Orphans', count: c.orphans, tone: c.orphans > 0 ? 'warn' : 'off', hint: `${String(c.orphanClaims)} claims · ${String(c.orphanVolumes)} volumes (${String(c.retainedOrphans)} Retain) · ${String(c.orphanClasses)} classes` },
-    { show: 'full', label: '≥ 80 %', count: full, tone: c.bad > 0 ? 'bad' : full > 0 ? 'warn' : 'off', hint: `${String(c.bad)} at 90 % and over` },
+    { show: 'full', label: '≥ 80 %', count: fillKnown ? full : -1, tone: c.bad > 0 ? 'bad' : full > 0 ? 'warn' : 'off', hint: `${String(c.bad)} at 90 % and over` },
     { show: 'unmeasured', label: 'Unread', count: unread, tone: unread > 0 ? 'warn' : 'off', hint: 'Mounted, and no kubelet figure' },
     { show: 'unsnapshotted', label: 'No snapshot', count: unsnapshotted, tone: 'off', hint: 'Claims with no VolumeSnapshot' },
     { show: 'volumes', label: 'Volumes', count: data.volumesRead.state === 'read' ? c.volumes : -1, tone: 'off', hint: 'PersistentVolumes' },

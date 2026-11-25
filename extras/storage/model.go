@@ -265,8 +265,13 @@ func readClass(s *storagev1.StorageClass) Class {
 // capacity: a filesystem far from it is a share, whose figures are about
 // somebody else's disk.
 func measure(used, capacity, declared int64, trustworthy func(declared, measured int64) bool) Fill {
+	// A filesystem of no size is no measurement, as the core's Used column
+	// says (internal/web/volumeusage.go).
+	if capacity <= 0 {
+		return Fill{State: FillUnread}
+	}
 	f := Fill{State: FillMeasured, UsedBytes: used, CapacityBytes: capacity}
-	if capacity <= 0 || (declared > 0 && !trustworthy(declared, capacity)) {
+	if declared > 0 && !trustworthy(declared, capacity) {
 		f.State = FillShared
 		f.CapacityBytes = 0
 		return f

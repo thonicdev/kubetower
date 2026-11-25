@@ -55,6 +55,7 @@ type fakeHost struct {
 	// volumes is each node's kubelet figures, by PVCRef.
 	volumes  map[string]map[string]extension.FS
 	usageErr error
+	defErr   error
 	// silent nodes answer nothing, as a kubelet the proxy cannot reach.
 	silent map[string]error
 	asked  [][]string
@@ -83,6 +84,9 @@ func (h *fakeHost) Client(*http.Request, string) (extension.Clients, error) {
 }
 
 func (h *fakeHost) Definitions(*http.Request, string) (extension.CRDRegistry, error) {
+	if h.defErr != nil {
+		return nil, h.defErr
+	}
 	return h.registry, nil
 }
 

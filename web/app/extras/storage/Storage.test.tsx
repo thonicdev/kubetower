@@ -111,6 +111,9 @@ describe('the Storage Inspector page', () => {
     const line = await screen.findByText('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)');
     expect(line.getAttribute('data-source')).toBe('unreadable');
     expect(line.getAttribute('title')).toContain('nodes/proxy');
+    // How many are full is unknown, never 0.
+    expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
+    expect(document.querySelector('[data-filter="full"]')?.textContent).toContain('–');
   });
 
   it('tells absent snapshot kinds from refused ones', async () => {
@@ -228,5 +231,13 @@ describe('the Overview tile', () => {
     expect(tile.to).toBe('/c/prod/x/storage?show=orphans');
     expect(tile.detail).toContain('rbac.nodeProxy');
     expect(tile.badges).not.toContain(expect.stringContaining('snapshotted'));
+  });
+
+  it('carries no grade, never a green OK, when no kubelet was read and nothing is orphaned', async () => {
+    const counts = { ...STORAGE_BARE.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0 };
+    stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts } } });
+    const tile = await storageTile('prod', new AbortController().signal);
+    expect(tile.status).toBeUndefined();
+    expect(tile.badges).toContain('fill unread');
   });
 });
