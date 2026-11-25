@@ -7,9 +7,17 @@ built from its tag.
 This file is built into the console, whose What's new dialog shows each
 release's highlights: every entry under `### Added`, and an entry under
 `### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
-per release. Keep the bold lead short: it is all the dialog draws.
+per release. Keep the bold lead one short sentence: it is all the dialog draws.
+An entry that introduces an extra carries `<!-- extra: <key> -->`, and the
+dialog draws it first, as a New extra line.
 
 ## Unreleased
+
+### Changed
+
+- **What's new lists New and Fixed.** Each highlight is one line under New,
+  with a blue +, or under Fixed, with a green check; an extra a release
+  introduces comes first, as New extra and its name (#121).
 
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 
@@ -36,7 +44,7 @@ per release. Keep the bold lead short: it is all the dialog draws.
   PersistentVolumes, PersistentVolumeClaims and StorageClasses, their
   orphans, how full each mounted claim is (graded at 80 and 90 %), and each
   claim's last VolumeSnapshot; a Storage tab on claims and pods, and a tile
-  on the Overview. Extras can now draw a tile on the Overview (#90, #95).
+  on the Overview. Extras can now draw a tile on the Overview (#90, #95). <!-- extra: storage -->
 
 ### Fixed
 
