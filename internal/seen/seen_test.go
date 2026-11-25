@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thonicdev/kubetower/internal/statefile"
@@ -28,13 +29,32 @@ func TestTheVersionSeenSurvivesARestart(t *testing.T) {
 
 func TestOnlyAReleaseVersionIsKept(t *testing.T) {
 	s := New(t.TempDir(), nil)
-	for _, bad := range []string{"", "dev", "v0.2.0", "0.2", "0.2.0 ", "0.2.0-rc.1;rm"} {
+	for _, bad := range []string{"", "dev", "v0.2.0", "0.2", "0.2.0 ", "0.2.0-rc.1;rm", "0.2.0-rc-1", "0.2.0-"} {
 		if err := s.Set(bad); err == nil {
 			t.Errorf("%q kept", bad)
 		}
 	}
 	if err := s.Set("0.2.0-rc.1"); err != nil || s.Version() != "0.2.0-rc.1" {
 		t.Fatalf("%v %q", err, s.Version())
+	}
+	// Whatever cmd/ktbuild stamps is kept: release.yml bounds neither the
+	// digits nor the pre-release, so neither does the store.
+	for _, good := range []string{"1234567.0.0", "0.2.0-" + strings.Repeat("rc.10", 10)} {
+		if err := s.Set(good); err != nil || s.Version() != good {
+			t.Errorf("%q: %v %q", good, err, s.Version())
+		}
+	}
+}
+
+// The API contract spells the same rule, so a client that checks it before
+// writing never meets a 400.
+func TestTheContractSpellsTheStoresPattern(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "pattern: '" + Pattern + "'"; !strings.Contains(string(raw), want) {
+		t.Fatalf("api/openapi.yaml does not carry %s", want)
 	}
 }
 

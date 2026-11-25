@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+
+	"github.com/thonicdev/kubetower/internal/seen"
 )
 
 // What this binary is, for the `--version` flag and the startup line.
@@ -63,9 +65,10 @@ func versionLine() string {
 func developmentBuild() bool { return version == devVersion }
 
 // releaseOf is the bare version stamped into this binary, or "" on a
-// development build: the version What's new (#80) compares.
+// development build or a stamp the seen store would refuse: the version What's
+// new (#80) compares.
 func releaseOf() string {
-	if developmentBuild() {
+	if developmentBuild() || !seen.Valid(version) {
 		return ""
 	}
 	return version

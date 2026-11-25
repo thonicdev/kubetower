@@ -41,6 +41,8 @@ import (
 	"runtime"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/thonicdev/kubetower/internal/seen"
 )
 
 // The stamps and the subsystem flag, written out in full: tests in
@@ -60,9 +62,10 @@ const (
 
 // The shapes a stamped value may take. Each ends up inside `-ldflags`, which is
 // split on spaces, so anything wider could add a flag. The version is
-// release.yml's tag rule without the `v`.
+// release.yml's tag rule without the `v`, which is also what the console keeps
+// as the release whose What's new was seen (internal/seen): one rule.
 var (
-	versionShape = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
+	versionShape = regexp.MustCompile(seen.Pattern)
 	builtShape   = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 )
 

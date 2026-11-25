@@ -14,4 +14,9 @@ func TestTheReleaseIsTheStampedVersionOnly(t *testing.T) {
 	if got := releaseOf(); got != "0.2.0" {
 		t.Fatalf("%q, want 0.2.0", got)
 	}
+	// A stamp the seen store would refuse is no release to compare.
+	version = "0.2.0 rc"
+	if got := releaseOf(); got != "" {
+		t.Fatalf("an unkeepable stamp answers %q", got)
+	}
 }

@@ -8621,7 +8621,7 @@ components:
       properties:
         version:
           type: string
-          pattern: '^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,32})?$'
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 
     ColumnResetWrite:
       type: object

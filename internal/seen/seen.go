@@ -18,8 +18,14 @@ import (
 // FileName is the file in the state directory.
 const FileName = "seen.json"
 
-// release is a bare semver, as CHANGELOG.md and the tags spell it.
-var release = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,32})?$`)
+// Pattern is a release version, MAJOR.MINOR.PATCH[-pre] with no `v`: the
+// tag rule of release.yml, which cmd/ktbuild stamps into the binary. It is the
+// one shape every keeper of a release checks - this store, the API's write,
+// cmd/ktbuild - so a stamped release is always one the store accepts.
+// api/openapi.yaml and the console's own memory copy it, and tests pin both.
+const Pattern = `^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`
+
+var release = regexp.MustCompile(Pattern)
 
 // Valid says v is a release version this store keeps.
 func Valid(v string) bool { return release.MatchString(v) }

@@ -2,9 +2,10 @@ package api
 
 import (
 	"net/http"
-	"regexp"
 	"strconv"
 	"unicode/utf8"
+
+	"github.com/thonicdev/kubetower/internal/seen"
 )
 
 // Twelve writes, one cell each, on purpose: a write posting the whole grid
@@ -262,9 +263,6 @@ func (a *API) setColumnDensity(w http.ResponseWriter, r *http.Request) {
 	wrote(w, a.deps.Prefs.SetColumnDensity(body.Density))
 }
 
-// release is a bare semver, as the tags and CHANGELOG.md spell it.
-var release = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,32})?$`)
-
 // setSeenVersion records that this release's "What's new" was seen (#80).
 func (a *API) setSeenVersion(w http.ResponseWriter, r *http.Request) {
 	var body SeenVersionWrite
@@ -272,7 +270,7 @@ func (a *API) setSeenVersion(w http.ResponseWriter, r *http.Request) {
 		!a.prefsOrMissing(w) {
 		return
 	}
-	if !release.MatchString(body.Version) {
+	if !seen.Valid(body.Version) {
 		badRequest(w, "version is a release version, such as 0.2.0")
 		return
 	}
