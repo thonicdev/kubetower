@@ -55,28 +55,59 @@ export function shortDigest(digest: string): string {
  * readable, then the tag - or the short digest - as a badge that is never cut,
  * then a copy of the whole reference. The full reference is the hover.
  */
-export function ImageRef({ image, className = '' }: { image: string | undefined; className?: string }): ReactNode {
+export function ImageRef({
+  image,
+  className = '',
+  copy = true,
+}: {
+  image: string | undefined;
+  className?: string;
+  /** False inside a control of its own (a button), where a second button
+   *  cannot go: the reference is then the hover only. */
+  copy?: boolean;
+}): ReactNode {
   const parts = imageParts(image);
   if (parts.full === '') return null;
+  // The separator is drawn, so a selection made with the mouse reads as a
+  // reference: `repo:tag`, `repo@sha256:…` (the digest's short form there).
+  const separator = parts.tag === '' && parts.digest !== '' ? '@' : ':';
+  const versionTitle = parts.implicit
+    ? 'latest (implicit)'
+    : parts.tag !== '' && parts.digest !== ''
+      ? `${parts.tag}@${parts.digest}`
+      : parts.tag !== ''
+        ? parts.tag
+        : parts.digest;
   return (
     <span data-image={parts.full} className={`flex min-w-0 items-center gap-1.5 ${className}`} title={parts.full}>
-      {/* rtl moves the ellipsis to the left; the bdi keeps the name itself
-          left to right, slashes and dots in place. */}
-      <span data-image-repository="" dir="rtl" className="min-w-0 truncate text-left font-mono text-xs text-muted">
-        <bdi dir="ltr">{parts.repository}</bdi>
+      <span className="flex min-w-0 items-center font-mono text-xs">
+        {/* rtl moves the ellipsis to the left; the bdi keeps the name itself
+            left to right, slashes and dots in place. */}
+        <span data-image-repository="" dir="rtl" className="min-w-0 shrink-[999] truncate text-left text-muted">
+          <bdi dir="ltr">{parts.repository}</bdi>
+        </span>
+        <span data-image-separator="" className="shrink-0 text-muted">
+          {separator}
+        </span>
+        {/* Never cut while the repository can give way: the repository shrinks
+            far faster. A tag longer than the line (up to 128
+            characters) is then cut at its end, inside the line, whole in its
+            hover - the separator and the copy button keep their room. */}
+        <span
+          data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
+          className={`min-w-0 max-w-full shrink truncate rounded-sm border px-1 text-2xs leading-4 ${
+            parts.implicit ? 'border-line text-muted' : 'border-accent/40 bg-accent/10 text-fg'
+          }`}
+          title={versionTitle}
+        >
+          {parts.version}
+        </span>
       </span>
-      <span
-        data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
-        className={`shrink-0 rounded-sm border px-1 font-mono text-2xs leading-4 ${
-          parts.implicit ? 'border-line text-muted' : 'border-accent/40 bg-accent/10 text-fg'
-        }`}
-        title={parts.implicit ? 'latest (implicit)' : parts.digest !== '' ? parts.digest : parts.tag}
-      >
-        {parts.version}
-      </span>
-      <span className="shrink-0">
-        <CopyButton value={parts.full} label="Copy image" />
-      </span>
+      {copy ? (
+        <span className="shrink-0">
+          <CopyButton value={parts.full} label="Copy image" />
+        </span>
+      ) : null}
     </span>
   );
 }

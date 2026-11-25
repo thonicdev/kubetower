@@ -332,6 +332,12 @@ describe('the ways into a terminal on one object', () => {
     // The image beneath each name, which on a pod whose containers are called
     // `app` and `sidecar` is the only thing that says which is which.
     expect(picker.textContent).toContain('envoyproxy/envoy:v1.29');
+    // Drawn by ImageRef without its copy button: each row is a button, and a
+    // button inside a button is invalid and steals the row's click (#110).
+    const sidecar = picker.querySelector('[data-image="envoyproxy/envoy:v1.29"]');
+    expect(sidecar?.querySelector('[data-image-version]')?.textContent).toBe('v1.29');
+    expect(picker.querySelectorAll('button button')).toHaveLength(0);
+    expect(picker.querySelector('[aria-label="Copy image"]')).toBeNull();
 
     fireEvent.click(containerRow('sidecar'));
     await waitFor(() => {

@@ -14,6 +14,7 @@ import { MenuScrim } from '../../components/MenuScrim';
 import { PlanDialog } from '../../components/PlanDialog';
 import { useDockIfPresent } from '../../dock/DockContext';
 import { btn } from '../../components/buttons';
+import { ImageRef } from '../../components/ImageRef';
 import { focusRing } from '../../focus';
 import { watching } from '../../hover';
 import { KeyLayer } from '../../keyboard/layers';
@@ -387,7 +388,7 @@ export function Terminals({
                             without it must draw one line, not the word
                             "undefined" under every row. */}
                         {one.image === undefined || one.image === '' ? null : (
-                          <span className="max-w-full truncate text-xs text-muted">{one.image}</span>
+                          <ImageRef image={one.image} copy={false} className="max-w-full" />
                         )}
                       </button>
                     </li>
