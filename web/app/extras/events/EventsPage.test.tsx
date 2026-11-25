@@ -208,7 +208,7 @@ describe('Event Intelligence', () => {
     const cells = [...document.querySelectorAll<HTMLElement>('[data-lane="shop/api-1/BackOff"] [data-cell][data-count]')];
     expect(cells.length).toBeGreaterThan(1);
     expect(cells.reduce((n, c) => n + Number(c.getAttribute('data-count')), 0)).toBeCloseTo(30, 0);
-    expect(cells[0]?.getAttribute('title')).toMatch(/^(≈ )?\d+ · −\d+ min to \d+ min\nSpread evenly from each object’s first to last Event$/);
+    expect(cells[0]?.getAttribute('title')).toMatch(/^(<1|(≈ )?\d+) · −\d+ min( \d+ s)? to −\d+ min( \d+ s)?\nSpread evenly from each object’s first to last Event$/);
   });
 
   it('hides Normal causes behind a toggle that says how many, and the Type filter overrides it', async () => {
@@ -238,8 +238,10 @@ describe('Event Intelligence', () => {
     await findCause(/BackOff/);
     const marks = [...document.querySelectorAll<HTMLElement>('[data-node-group]')];
     expect(marks.map((m) => `${m.getAttribute('aria-label') ?? ''}:${m.getAttribute('data-nodes') ?? ''}`)).toEqual(['3 nodes added:3', 'node node-9 not ready:1']);
-    expect(marks[0]?.getAttribute('title')).toContain('node-1 · Ready');
-    expect(marks[1]?.getAttribute('title')).toContain('node-9 · NotReady');
+    // The answer holds when a node came, not its state now.
+    expect(marks[0]?.getAttribute('title')).toBe('3 nodes added\nnode-0 · 30 min\nnode-1 · 27 min\nnode-2 · 24 min');
+    expect(marks[1]?.getAttribute('title')).toBe('node node-9 not ready\nnode-9 · 5 min');
+    expect(marks.map((m) => m.getAttribute('data-track'))).toEqual(['0', '0']);
     const row = document.querySelector('[data-nodes-row]')?.textContent ?? '';
     expect(row).toContain('+3');
     expect(row).toContain('!1');
@@ -251,11 +253,13 @@ describe('Event Intelligence', () => {
     const nodes = [0, 1, 2].map((i) => ({ id: `node-added//node-${String(i)}/0`, kind: 'node-added' as const, objectKind: 'Node', name: `node-${String(i)}`, time: at(30 - i * 3), referenced: true }));
     const cilium = (n: string, i: number) => group(n, { namespace: 'kube-system', workloadName: 'cilium', count: 100 + i, since: nodes[i]?.id ?? '' });
     const crash = cause('BackOff', 'Warning', [cilium('cilium-a', 0), cilium('cilium-b', 1), cilium('cilium-c', 2)], { since: nodes[0]?.id ?? '' });
-    stub(answer([crash, backoff, sched], { changes: [ROLLOUT, ...nodes] }));
+    // Another reason on another pod: the card's objects are the lead reason's.
+    const probe = cause('Unhealthy', 'Warning', [group('cilium-x', { namespace: 'kube-system', workloadName: 'cilium', count: 5, since: nodes[1]?.id ?? '' })]);
+    stub(answer([crash, backoff, sched, probe], { changes: [ROLLOUT, ...nodes] }));
     mount();
     await findCause(/FailedScheduling/);
     const cards = [...document.querySelectorAll<HTMLElement>('[data-correlation]')];
-    expect(cards.map((c) => c.textContent)).toEqual(['3 nodes added303BackOff3 objects', 'rollout api rev. 7219BackOff2 objects']);
+    expect(cards.map((c) => c.textContent)).toEqual(['3 nodes added303BackOff3 objectsUnhealthy 5', 'rollout api rev. 7219BackOff2 objects']);
     // The cards come before the timeline.
     const timeline = document.querySelector('[data-timeline]') as HTMLElement;
     expect((cards[0] as HTMLElement).compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -416,6 +420,17 @@ describe('Event Intelligence', () => {
     expect(await screen.findByText('None')).toBeTruthy();
     expect(tile('warnings').textContent).toContain('10');
     expect(document.querySelector('[data-source]')).toBeNull();
+  });
+
+  it('says nothing is none when only Normal Events are there, and offers the toggle', async () => {
+    stub(answer([pulled]));
+    mount();
+    await waitFor(() => expect(document.querySelector('[data-normal-toggle]')).not.toBeNull());
+    const toggle = document.querySelector<HTMLElement>('[data-normal-toggle]') as HTMLElement;
+    expect(toggle.textContent).toBe('Normal1');
+    expect(document.querySelector('[data-none]')).toBeNull();
+    fireEvent.click(toggle);
+    expect(await findCause(/Pulled/)).toBeTruthy();
   });
 
   it('says a refusal of the whole read in its own words', async () => {

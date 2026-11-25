@@ -43,7 +43,7 @@ export default function ActivityView({ cluster, kind, namespace, name }: Extensi
           <Sources answer={answer} />
           <Correlations answer={answer} causes={causes} highlight={highlight} compact />
           <Timeline answer={answer} causes={causes} highlight={highlight} normal={{ on: normal, count: normalCount(narrowed), onToggle: () => setNormal(!normal) }} compact />
-          <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} />
+          <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} hidden={normal ? 0 : normalCount(narrowed)} />
         </>
       )}
     </div>

@@ -28,7 +28,9 @@ import {
   heldOf,
   laneLit,
   lanesOf,
+  maxOf,
   nodeGroupLabel,
+  nodeTracks,
   objectsWord,
   options,
   pluralOf,
@@ -345,7 +347,7 @@ export function Correlations({ answer, causes, highlight, compact = false }: { a
             data-correlation={c.id}
             data-lit={lit || on}
             aria-pressed={on}
-            title={`${c.label} → ${c.reasons.map((r) => `${r.reason} × ${String(r.count)}`).join(' · ')}`}
+            title={`${c.label} → ${c.reasons.map((r) => `${r.reason} × ${String(r.count)} · ${objectsWord({ objects: r.objects, kinds: [] })}`).join('\n')}`}
             onMouseEnter={() => highlight.hover(to)}
             onMouseLeave={() => highlight.hover(null)}
             onClick={() => highlight.pin(to)}
@@ -359,7 +361,7 @@ export function Correlations({ answer, causes, highlight, compact = false }: { a
               <span className="flex min-w-0 items-baseline gap-2">
                 <span className="text-xl font-semibold tabular-nums text-warn">{figure(lead.count)}</span>
                 <span className="truncate text-sm font-semibold">{lead.reason}</span>
-                <span className="shrink-0 text-xs text-muted">{objectsWord({ objects: c.objects, kinds: [] })}</span>
+                <span className="shrink-0 text-xs text-muted">{objectsWord({ objects: lead.objects, kinds: [] })}</span>
               </span>
             )}
             {c.reasons.length > 1 ? (
@@ -432,14 +434,15 @@ export function Timeline({
     return next;
   });
   const drawn = workloads.slice(0, pages * PAGE_WORKLOADS);
-  const laneMax = Math.max(1, ...lanes.flatMap((l) => l.bins));
-  const rowMax = Math.max(1, ...drawn.flatMap((w) => w.bins));
+  const laneMax = useMemo(() => maxOf(lanes.flatMap((l) => l.bins), 1), [lanes]);
+  const rowMax = maxOf(drawn.flatMap((w) => w.bins), 1);
   const nodeBins = useMemo(() => {
     const added = Array.from({ length: BINS }, () => 0);
     const notReady = Array.from({ length: BINS }, () => 0);
     for (const g of nodes.groups) for (const c of g.changes) (g.kind === 'node-added' ? added : notReady)[binOf(Date.parse(c.time), axis)]! += 1;
-    return { added, notReady };
+    return { added, notReady, max: maxOf([...added, ...notReady], 1) };
   }, [nodes.groups, axis]);
+  const tracks = useMemo(() => nodeTracks(nodes.groups, axis), [nodes.groups, axis]);
   const { focus } = highlight;
   const held = heldOf(answer);
   const tick = ticks(axis);
@@ -474,12 +477,14 @@ export function Timeline({
                 <span
                   key={i}
                   className={`h-full min-w-0 flex-1 rounded-xs ${red > 0 ? 'bg-plate-red-pale' : v > 0 ? 'bg-plate-green-pale' : 'bg-panel-2'}`}
-                  style={v + red === 0 ? undefined : { opacity: 0.4 + 0.6 * ((v + red) / Math.max(1, ...nodeBins.added, ...nodeBins.notReady)) }}
+                  style={v + red === 0 ? undefined : { opacity: 0.4 + 0.6 * ((v + red) / nodeBins.max) }}
                 />
               );
             })}
+            <div className="pointer-events-none absolute -inset-y-1 inset-x-0">
             {nodes.groups.map((g) => {
               const from = binOf(g.first, axis);
+              const track = tracks.track.get(g.id) ?? 0;
               const to = binOf(g.last, axis) + 1;
               const lit = focus !== null && g.changes.some((c) => changeLit(focus, c.id, causes));
               const id = g.changes.length === 1 ? (g.changes[0] as Change).id : g.id;
@@ -493,13 +498,15 @@ export function Timeline({
                   data-lit={lit}
                   aria-label={nodeGroupLabel(g)}
                   aria-pressed={same(focus, target.kind, target.id)}
-                  title={[nodeGroupLabel(g), ...g.changes.map((c) => `${c.name} · ${c.kind === 'node-added' ? 'Ready' : 'NotReady'} · ${ago(c.time, answer.generatedAt)}`)].join('\n')}
+                  title={[nodeGroupLabel(g), ...g.changes.map((c) => `${c.name} · ${ago(c.time, answer.generatedAt)}`)].join('\n')}
                   {...hoverable(target)}
-                  className={`absolute -inset-y-1 rounded-sm ${lit ? 'ring-1 ring-fg' : 'hover:ring-1 hover:ring-muted'} ${focusRing}`}
-                  style={{ left: pct(from), width: pct(to - from) }}
+                  data-track={track}
+                  className={`pointer-events-auto absolute rounded-sm ${lit ? 'ring-1 ring-fg' : 'hover:ring-1 hover:ring-muted'} ${focusRing}`}
+                  style={{ left: pct(from), width: pct(to - from), top: `${String((track / tracks.tracks) * 100)}%`, height: `${String(100 / tracks.tracks)}%` }}
                 />
               );
             })}
+            </div>
           </div>
         </Row>
       ) : null}
@@ -731,13 +738,14 @@ function CauseRow({ cluster, answer, cause, highlight, nodeGroups }: { cluster: 
 }
 
 /** The causes, most-warned first as the server sorts them, PAGE_CAUSES at a time. */
-export function Causes({ cluster, answer, causes, highlight }: { cluster: string; answer: Answer; causes: readonly Cause[]; highlight: Highlight }): ReactNode {
+export function Causes({ cluster, answer, causes, highlight, hidden = 0 }: { cluster: string; answer: Answer; causes: readonly Cause[]; highlight: Highlight; /** The Normal Events behind the toggle. */ hidden?: number }): ReactNode {
   const [pages, setPages] = useState(1);
   const nodeGroups = useMemo(() => new Map(groupNodes(answer.changes).groups.flatMap((g) => g.changes.map((c) => [c.id, g] as const))), [answer.changes]);
   const shown = causes.slice(0, pages * PAGE_CAUSES);
   if (causes.length === 0) {
-    // An empty answer over a source that was read is a quiet cluster; over one that was not, there is nothing to call quiet.
-    return answer.sources.events.state === 'read' ? (
+    // An empty answer over a source that was read is a quiet cluster; over one that was not, there is nothing to call quiet;
+    // with Normal Events behind the toggle, the toggle says it.
+    return answer.sources.events.state === 'read' && hidden === 0 ? (
       <p data-none="" className="text-xs text-muted">
         None
       </p>

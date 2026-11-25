@@ -49,7 +49,7 @@ export function EventsBody({
         highlight={highlight}
         normal={filters.type === '' ? { on: normal, count: normalCount(narrowed), onToggle: () => setNormal(!normal) } : undefined}
       />
-      <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} />
+      <Causes cluster={cluster} answer={answer} causes={causes} highlight={highlight} hidden={normal || filters.type !== '' ? 0 : normalCount(narrowed)} />
     </div>
   );
 }

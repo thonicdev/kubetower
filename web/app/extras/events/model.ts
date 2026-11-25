@@ -217,23 +217,54 @@ export function binOf(ms: number, axis: Axis): number {
 }
 
 /**
- * Adds `count` Events to `bins`, spread evenly over the cells from `first` to
+ * Adds `count` Events to `bins`, spread evenly over the time from `first` to
  * `last`: the answer holds an object's first and last Event and their count,
- * never the time of each one.
+ * never the time of each one. Only the share that falls inside the axis is
+ * added, so an object that began days before the window weighs what its rate
+ * says, not its whole count.
  */
 export function spread(bins: number[], first: number, last: number, count: number, axis: Axis): void {
-  const a = binOf(first, axis);
-  const b = binOf(Math.max(first, last), axis);
-  const per = count / (b - a + 1);
-  for (let i = a; i <= b; i++) bins[i] = (bins[i] ?? 0) + per;
+  const span = axis.end - axis.start;
+  if (span <= 0 || count <= 0) return;
+  const end = Math.max(first, last);
+  if (end === first) {
+    if (first >= axis.start && first <= axis.end) bins[binOf(first, axis)] = (bins[binOf(first, axis)] ?? 0) + count;
+    return;
+  }
+  const from = Math.max(first, axis.start);
+  const to = Math.min(end, axis.end);
+  if (to < from) return;
+  const rate = count / (end - first);
+  const step = span / BINS;
+  for (let i = binOf(from, axis); i <= binOf(to, axis); i++) {
+    const lo = Math.max(from, axis.start + step * i);
+    const hi = Math.min(to, axis.start + step * (i + 1));
+    if (hi > lo) bins[i] = (bins[i] ?? 0) + rate * (hi - lo);
+  }
 }
 
-/** What one cell stands for: "−12 to −10 min". */
+/** The largest value of a list, with no spread of arguments: a big answer holds many thousands. */
+export function maxOf(values: Iterable<number>, floor = 0): number {
+  let m = floor;
+  for (const v of values) if (v > m) m = v;
+  return m;
+}
+
+/** What one cell stands for: "−12 min to −10 min". */
 export function binSpan(i: number, axis: Axis): string {
   const step = (axis.end - axis.start) / BINS;
-  const from = tickLabel(axis.start + step * i, axis.end);
-  const to = tickLabel(axis.start + step * (i + 1), axis.end);
-  return `${from} to ${to.replace(/^−/, '')}`;
+  // A cell under a minute wide is said to the second, or both ends read alike.
+  const label = step < 60_000 ? secondsLabel : tickLabel;
+  return `${label(axis.start + step * i, axis.end)} to ${label(axis.start + step * (i + 1), axis.end)}`;
+}
+
+function secondsLabel(ms: number, end: number): string {
+  const s = Math.round((end - ms) / 1000);
+  if (s <= 0) return 'now';
+  const min = Math.floor(s / 60);
+  const rest = s % 60;
+  if (min === 0) return `−${String(rest)} s`;
+  return `−${String(min)} min${rest === 0 ? '' : ` ${String(rest)} s`}`;
 }
 
 /** One reason of one workload: a row of the timeline. */
@@ -360,6 +391,25 @@ export function groupNodes(changes: readonly Change[], gapMs = NODE_GAP_MS): { g
   return { groups, others };
 }
 
+/**
+ * A track per node group, so two groups that share a cell (nodes added and
+ * nodes not ready at once, or two groups in one wide cell) sit one above the
+ * other rather than one over the other; and how many tracks there are.
+ */
+export function nodeTracks(groups: readonly NodeGroup[], axis: Axis): { track: Map<string, number>; tracks: number } {
+  const ends: number[] = [];
+  const track = new Map<string, number>();
+  const sorted = [...groups].sort((a, b) => binOf(a.first, axis) - binOf(b.first, axis) || (a.id < b.id ? -1 : 1));
+  for (const g of sorted) {
+    const from = binOf(g.first, axis);
+    let t = ends.findIndex((end) => end < from);
+    if (t === -1) t = ends.length;
+    ends[t] = binOf(g.last, axis);
+    track.set(g.id, t);
+  }
+  return { track, tracks: Math.max(1, ends.length) };
+}
+
 /** A node group in a few words: "+17 nodes", "node ip-10-0-1-5 not ready". */
 export function nodeGroupLabel(g: NodeGroup): string {
   if (g.changes.length === 1) return changeLabel(g.changes[0] as Change);
@@ -374,7 +424,8 @@ export interface Correlation {
   kind: Change['kind'];
   /** Every change it stands for: one, or a node group's. */
   changes: string[];
-  reasons: { reason: string; count: number }[];
+  /** Each reason, with its Events and its objects. */
+  reasons: { reason: string; count: number; objects: number }[];
   objects: number;
   count: number;
 }
@@ -387,7 +438,7 @@ export function correlations(causes: readonly Cause[], changes: readonly Change[
   const groupOf = new Map<string, NodeGroup>();
   for (const g of groups) for (const c of g.changes) groupOf.set(c.id, g);
   const byId = new Map(changes.map((c) => [c.id, c]));
-  const out = new Map<string, { c: Correlation; reasons: Map<string, number>; objects: Set<string> }>();
+  const out = new Map<string, { c: Correlation; reasons: Map<string, { count: number; objects: Set<string> }>; objects: Set<string> }>();
   for (const cause of causes) {
     if (cause.type !== 'Warning') continue;
     for (const g of cause.groups) {
@@ -404,16 +455,23 @@ export function correlations(causes: readonly Cause[], changes: readonly Change[
         };
         out.set(id, entry);
       }
+      const object = `${g.kind}/${g.namespace}/${g.name}`;
       entry.c.count += g.count;
-      entry.objects.add(`${g.kind}/${g.namespace}/${g.name}`);
-      entry.reasons.set(cause.reason, (entry.reasons.get(cause.reason) ?? 0) + g.count);
+      entry.objects.add(object);
+      let r = entry.reasons.get(cause.reason);
+      if (r === undefined) {
+        r = { count: 0, objects: new Set() };
+        entry.reasons.set(cause.reason, r);
+      }
+      r.count += g.count;
+      r.objects.add(object);
     }
   }
   return [...out.values()]
     .map(({ c, reasons, objects }) => ({
       ...c,
       objects: objects.size,
-      reasons: [...reasons].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1)),
+      reasons: [...reasons].map(([reason, r]) => ({ reason, count: r.count, objects: r.objects.size })).sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1)),
     }))
     .sort((a, b) => b.count - a.count || (a.id < b.id ? -1 : 1));
 }
@@ -424,7 +482,9 @@ export function correlations(causes: readonly Cause[], changes: readonly Change[
  */
 export function heldOf(answer: Pick<Answer, 'truncated' | 'causes' | 'tiles'>): { held: number; total: number } | undefined {
   if (!answer.truncated || answer.tiles.warnings.state !== 'read') return undefined;
-  const held = answer.causes.reduce((n, c) => (c.type === 'Warning' ? n + c.count : n), 0);
+  // The groups the lists hold, not the causes' counts: the server counts those past the groups it keeps.
+  let held = 0;
+  for (const c of answer.causes) if (c.type === 'Warning') for (const g of c.groups) held += g.count;
   return { held, total: Math.max(held, answer.tiles.warnings.count) };
 }
 

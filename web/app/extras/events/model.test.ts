@@ -15,6 +15,8 @@ import {
   heldOf,
   laneLit,
   lanesOf,
+  maxOf,
+  nodeTracks,
   normalCount,
   shownTypes,
   spread,
@@ -57,6 +59,14 @@ describe('groupNodes', () => {
     expect(groups.map((g) => g.changes.length)).toEqual([3, 1]);
   });
 
+  it('puts groups that share a cell on tracks of their own, one track when none do', () => {
+    const { groups } = groupNodes([node('a', 30), node('b', 30, 'node-notready'), node('c', 10)]);
+    const { track, tracks } = nodeTracks(groups, AXIS);
+    expect(tracks).toBe(2);
+    expect(groups.map((g) => track.get(g.id))).toEqual([0, 1, 0]);
+    expect(nodeTracks(groupNodes([node('a', 30), node('c', 10)]).groups, AXIS).tracks).toBe(1);
+  });
+
   it('never mixes added and not-ready nodes, and leaves the other changes as they are', () => {
     const rollout: Change = { id: 'rollout/shop/api/7', kind: 'rollout', objectKind: 'Deployment', namespace: 'shop', name: 'api', time: at(30), referenced: true };
     const { groups, others } = groupNodes([node('a', 30), node('b', 29, 'node-notready'), node('c', 28), rollout]);
@@ -69,16 +79,39 @@ describe('cells', () => {
   it('spreads a count evenly from first to last, and keeps the total', () => {
     const bins = Array.from({ length: BINS }, () => 0);
     // 40 cells over 40 min: one per minute.
-    spread(bins, NOW - 10 * MIN, NOW - 6 * MIN + 1, 50, AXIS);
-    expect(bins.slice(30, 34)).toEqual([10, 10, 10, 10]);
-    expect(bins[34]).toBe(10);
+    spread(bins, NOW - 10 * MIN, NOW - 5 * MIN, 50, AXIS);
+    expect(bins.slice(30, 35).map((v) => Math.round(v * 1000) / 1000)).toEqual([10, 10, 10, 10, 10]);
     expect(bins[29]).toBe(0);
-    expect(bins.reduce((a, b) => a + b, 0)).toBe(50);
+    expect(bins[35]).toBe(0);
+    expect(bins.reduce((a, b) => a + b, 0)).toBeCloseTo(50);
+  });
+
+  it('keeps only the share inside the axis of an object that began long before it', () => {
+    // 480 BackOff over 48 h, last one now, on a 1 h axis: 10 in the hour, 0.25 a cell.
+    const hour: Axis = { start: NOW - 60 * MIN, end: NOW };
+    const bins = Array.from({ length: BINS }, () => 0);
+    spread(bins, NOW - 48 * 60 * MIN, NOW, 480, hour);
+    for (const v of bins) expect(v).toBeCloseTo(0.25);
+    expect(bins.reduce((a, b) => a + b, 0)).toBeCloseTo(10);
+    // Wholly before the axis: nothing.
+    const none = Array.from({ length: BINS }, () => 0);
+    spread(none, NOW - 5 * 60 * MIN, NOW - 2 * 60 * MIN, 99, hour);
+    expect(none.every((v) => v === 0)).toBe(true);
+  });
+
+  it('takes the largest of a hundred thousand cells without spreading them as arguments', () => {
+    const many = Array.from({ length: 200_000 }, (_, i) => i % 97);
+    expect(maxOf(many, 1)).toBe(96);
+    expect(maxOf([], 1)).toBe(1);
   });
 
   it('names the slice a cell covers, from its start to its end before now', () => {
-    expect(binSpan(0, AXIS)).toBe('−40 min to 39 min');
+    expect(binSpan(0, AXIS)).toBe('−40 min to −39 min');
     expect(binSpan(BINS - 1, AXIS)).toBe('−1 min to now');
+    // Cells under a minute: to the second.
+    const short: Axis = { start: NOW - 10 * MIN, end: NOW };
+    expect(binSpan(1, short)).toBe('−9 min 45 s to −9 min 30 s');
+    expect(binSpan(BINS - 1, short)).toBe('−15 s to now');
   });
 
   it('puts a single Event in one cell, and clamps what falls outside the axis', () => {
@@ -143,8 +176,8 @@ describe('correlations', () => {
     const changes = [...nodes, rollout];
     const list = correlations([backoff, unhealthy, scheduled], changes, groupNodes(changes).groups);
     expect(list.map((c) => ({ label: c.label, reasons: c.reasons, objects: c.objects, changes: c.changes.length }))).toEqual([
-      { label: '3 nodes added', reasons: [{ reason: 'BackOff', count: 160 }, { reason: 'Unhealthy', count: 12 }], objects: 2, changes: 3 },
-      { label: 'rollout api rev. 7', reasons: [{ reason: 'BackOff', count: 7 }], objects: 1, changes: 1 },
+      { label: '3 nodes added', reasons: [{ reason: 'BackOff', count: 160, objects: 2 }, { reason: 'Unhealthy', count: 12, objects: 1 }], objects: 2, changes: 3 },
+      { label: 'rollout api rev. 7', reasons: [{ reason: 'BackOff', count: 7, objects: 1 }], objects: 1, changes: 1 },
     ]);
   });
 
@@ -166,7 +199,8 @@ describe('correlations', () => {
 
 describe('the count in place of truncated', () => {
   it('says the Warnings the lists hold against those counted, only for a cut answer', () => {
-    const causes = [cause('BackOff', 'Warning', [group('a', { count: 2012 })]), cause('Pulled', 'Normal', [group('a', { count: 238 })])];
+    // The cause counts past the groups the server kept: the figure is the groups'.
+    const causes = [cause('BackOff', 'Warning', [group('a', { count: 2012 })], { count: 2058 }), cause('Pulled', 'Normal', [group('a', { count: 238 })])];
     const tiles = { warnings: { count: 2058, state: 'read' as const } };
     expect(heldOf({ truncated: true, causes, tiles: tiles as never })).toEqual({ held: 2012, total: 2058 });
     expect(heldOf({ truncated: false, causes, tiles: tiles as never })).toBeUndefined();
