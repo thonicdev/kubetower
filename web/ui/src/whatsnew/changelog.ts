@@ -150,7 +150,7 @@ export function highlightsBetween(releases: readonly Release[], seen: string | u
 /** This build's changelog. */
 export let RELEASES: readonly Release[] = parseChangelog(changelog);
 
-/** The layout harness's seam: draws the banner from fake releases. */
+/** The layout harness's seam: draws the dialog from fake releases. */
 export function replaceReleases(releases: readonly Release[]): void {
   RELEASES = releases;
 }

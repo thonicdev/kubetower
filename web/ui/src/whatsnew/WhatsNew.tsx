@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useSyncExternalStore, type ReactNode } from 'react';
+import { useId, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import { Link, useMatch } from 'react-router';
 
 import { setSeenVersion } from '../api/endpoints';
@@ -14,6 +14,7 @@ import { externalHref } from '../externalHref';
 import { focusRing } from '../focus';
 import { KeyLayer } from '../keyboard/layers';
 import { useSettings } from '../pages/settings/data';
+import { useOpenSettings } from '../shell/settingsOrigin';
 import { compareVersions, highlightsBetween, RELEASES, type Highlight, type Release } from './changelog';
 import { Mark } from './Mark';
 import { rememberSeen, useSeenHere } from './seenMemory';
@@ -37,42 +38,40 @@ import { rememberSeen, useSeenHere } from './seenMemory';
 
 type Shown = { kind: 'welcome' } | { kind: 'news'; releases: Release[] } | { kind: 'tour' };
 
-/** The banner's own state, shared by every surface: opened from About, closed for a release. */
-interface Banner {
+/** The dialog's own state, shared by every surface: opened from About, closed for a release. */
+interface DialogState {
   /** Opened from Settings › Infos, whatever was seen. */
   reopened: boolean;
-  /** How many times it was opened from Infos: each opening, and only it, takes the focus. */
-  opens: number;
   /** The release closed in this page, before the store has answered. */
   closed: string | undefined;
-  /** Why the release closed could not be kept: the banner is back, saying so. */
+  /** Why the release closed could not be kept: the dialog is back, saying so. */
   failed: string | undefined;
 }
 
-const CLOSED: Banner = { reopened: false, opens: 0, closed: undefined, failed: undefined };
-let banner: Banner = CLOSED;
+const CLOSED: DialogState = { reopened: false, closed: undefined, failed: undefined };
+let dialog: DialogState = CLOSED;
 const listeners = new Set<() => void>();
-function setBanner(next: Banner): void {
-  banner = next;
+function setDialog(next: DialogState): void {
+  dialog = next;
   for (const listener of listeners) listener();
 }
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-const current = (): Banner => banner;
+const current = (): DialogState => dialog;
 
-/** Opens the banner again, from About. */
+/** Opens the dialog again, from About. */
 export function openWhatsNew(): void {
-  setBanner({ ...banner, reopened: true, opens: banner.opens + 1, failed: undefined });
+  setDialog({ ...dialog, reopened: true, failed: undefined });
 }
 
 /** Test seam. */
 export function resetWhatsNew(): void {
-  setBanner(CLOSED);
+  setDialog(CLOSED);
 }
 
-/** Automation and an explicit `?welcome=off` show no banner. */
+/** Automation and an explicit `?welcome=off` show no dialog. */
 function suppressed(): boolean {
   try {
     if (typeof navigator !== 'undefined' && navigator.webdriver) return true;
@@ -83,12 +82,10 @@ function suppressed(): boolean {
 }
 const SUPPRESSED = suppressed();
 
-/** What the banner shows now, and how it closes. */
+/** What the dialog shows now, and how it closes. */
 export function useWhatsNew(): {
   release: string | undefined;
   shown: Shown | null;
-  /** Counts the openings from Infos, so focus is taken once per opening. */
-  opens: number;
   failed: string | undefined;
   close: () => void;
 } {
@@ -108,19 +105,19 @@ export function useWhatsNew(): {
       );
     },
     // Not kept: it would come back on the next start unannounced, so it comes back now.
-    onError: (error) => setBanner({ ...banner, closed: undefined, failed: error.message || 'Not saved' }),
+    onError: (error) => setDialog({ ...dialog, closed: undefined, failed: error.message || 'Not saved' }),
   });
   const seen = keeps ? prefs.data?.seenVersion : here;
   const close = (): void => {
     if (release === undefined || release === '') return;
-    setBanner({ ...banner, reopened: false, closed: release, failed: undefined });
+    setDialog({ ...dialog, reopened: false, closed: release, failed: undefined });
     // An older build, opened from Infos, records nothing: the newer release
     // seen stays the one What's new counts from.
     if (seen !== undefined && seen !== '' && compareVersions(release, seen) <= 0) return;
     if (keeps) write.mutate(release);
     else rememberSeen(release);
   };
-  const off = { release, shown: null, opens: state.opens, failed: state.failed, close };
+  const off = { release, shown: null, failed: state.failed, close };
   if (release === undefined || release === '' || SUPPRESSED || capabilities === undefined) return off;
   if (state.reopened) {
     const news = highlightsBetween(RELEASES, undefined, release).filter((one) => one.version === release);
@@ -166,13 +163,23 @@ const CARDS: readonly Card[] = [
 const TAGLINE = 'The free Kubernetes console.';
 const INTRO = 'Every cluster in your kubeconfig in one window, from a single binary on your machine or a Helm chart in your cluster.';
 
-/** Where a card leads, on the cluster in the address when there is one. */
+/**
+ * Where a card leads, on the cluster in the address when there is one.
+ * Settings › Extra is asked for that cluster (`?cluster=`), so its switches are
+ * that cluster's and not the first one listed.
+ */
 function cardHref(card: Card, cluster: string | undefined, on: ReadonlySet<string>): string {
+  const extras = cluster === undefined ? '/settings/extra' : `/settings/extra?cluster=${encodeURIComponent(cluster)}`;
   if (card.key === 'clusters') return '/';
-  if (card.page === undefined) return '/settings/extra';
-  if (cluster === undefined) return card.extra === undefined ? '/' : '/settings/extra';
-  if (card.extra !== undefined && !on.has(card.extra)) return '/settings/extra';
+  if (card.page === undefined) return extras;
+  if (cluster === undefined) return card.extra === undefined ? '/' : extras;
+  if (card.extra !== undefined && !on.has(card.extra)) return extras;
   return card.page === '' ? clusterPath(cluster) : `${clusterPath(cluster)}/${card.page}`;
+}
+
+/** A click the browser keeps for itself: a new tab or window, not this page. */
+function elsewhere(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 }
 
 export function WhatsNewDialog(): ReactNode {
@@ -293,11 +300,19 @@ function Welcome({ onOpen }: { onOpen: () => void }): ReactNode {
  */
 function WelcomeCard({ card, href, onOpen }: { card: Card; href: string; onOpen: () => void }): ReactNode {
   const tip = useId();
+  const openSettings = useOpenSettings().onClick;
+  // A Ctrl-, Shift- or middle-click opens the view elsewhere: this dialog stays,
+  // and nothing is recorded. Settings is opened the console's way, with Back.
+  const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
+    if (elsewhere(event)) return;
+    if (href.startsWith('/settings/')) openSettings(href)(event);
+    onOpen();
+  };
   return (
     <li className="min-w-0">
       <Link
         to={href}
-        onClick={onOpen}
+        onClick={onClick}
         aria-describedby={tip}
         data-whats-new-card={card.key}
         className={`flex h-full min-w-0 flex-col items-center gap-2 rounded-lg border border-line px-2 py-3 text-center hover:border-accent/60 hover:bg-white/5 ${focusRing}`}

@@ -52,7 +52,14 @@ function console(release: string | undefined, where: { desktop: boolean; seen?: 
       case '/api/session':
         return json(200, { identity: 'alice', idleExpiresAt: '2999-01-01T00:00:00Z', absoluteExpiresAt: '2999-01-01T00:00:00Z' });
       case '/api/clusters':
-        return json(200, { state: 'ok', items: [{ name: 'prod', label: 'prod', state: 'ok' }] });
+        // prod is the second cluster: Settings, asked for none, would take dev.
+        return json(200, {
+          state: 'ok',
+          items: [
+            { name: 'dev', label: 'dev', state: 'ok' },
+            { name: 'prod', label: 'prod', state: 'ok' },
+          ],
+        });
       case '/api/capabilities':
         return json(200, {
           mode: where.desktop ? 'desktop' : 'shared',
@@ -90,15 +97,15 @@ function console(release: string | undefined, where: { desktop: boolean; seen?: 
 }
 
 /** The dialog's content box, marked with what it shows. */
-const banner = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-whats-new]');
+const content = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-whats-new]');
 /** The dialog itself: the one an extra's About opens. */
-const dialog = (): HTMLElement | null => banner()?.closest<HTMLElement>('[role="dialog"]') ?? null;
+const dialog = (): HTMLElement | null => content()?.closest<HTMLElement>('[role="dialog"]') ?? null;
 
 async function shown(kind: string): Promise<HTMLElement> {
   await waitFor(() => {
-    expect(banner()?.dataset['whatsNew']).toBe(kind);
+    expect(content()?.dataset['whatsNew']).toBe(kind);
   });
-  return banner() as HTMLElement;
+  return content() as HTMLElement;
 }
 
 /** Long enough for every read to answer: then an absent dialog is a finding. */
@@ -158,15 +165,47 @@ describe("What's new", () => {
     expect(href('clusters')).toBe('/');
     expect(href('overview')).toBe('/c/prod');
     expect(href('runtime')).toBe('/c/prod/x/runtime');
-    expect(href('netinspect')).toBe('/settings/extra');
-    expect(href('extras')).toBe('/settings/extra');
+    // Settings › Extra for this cluster, the second listed, never the first.
+    expect(href('netinspect')).toBe('/settings/extra?cluster=prod');
+    expect(href('extras')).toBe('/settings/extra?cluster=prod');
     fireEvent.click(box.querySelector('[data-whats-new-card="events"]') as HTMLElement);
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/c/prod/x/events');
     });
     // A card closes it for the release, as Get started does.
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
+  });
+
+  it('opens Settings › Extra on the cluster in the address, with its way back', async () => {
+    console('0.3.0', { desktop: false });
+    const { router } = mountApp('/c/prod');
+    const box = await shown('welcome');
+    const card = (): HTMLElement | null => box.querySelector<HTMLElement>('[data-whats-new-card="netinspect"]');
+    await waitFor(() => {
+      expect(card()?.getAttribute('href')).toBe('/settings/extra?cluster=prod');
+    });
+    fireEvent.click(card() as HTMLElement);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/settings/extra');
+    });
+    expect(router.state.location.search).toBe('?cluster=prod');
+    // Opened the console's way: the entry carries where Settings came from.
+    expect(router.state.location.state).not.toBeNull();
+    expect(content()).toBeNull();
+  });
+
+  it('leaves the dialog and the release alone on a click meant for another tab', async () => {
+    console('0.3.0', { desktop: false });
+    const { router } = mountApp('/c/prod');
+    const box = await shown('welcome');
+    const card = box.querySelector<HTMLElement>('[data-whats-new-card="overview"]') as HTMLElement;
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }]) {
+      fireEvent.click(card, modifier);
+    }
+    expect(content()).not.toBeNull();
+    expect(localStorage.getItem('kubetower.seenVersion')).toBeNull();
+    expect(router.state.location.pathname).toBe('/c/prod');
   });
 
   it("gives What's new its version, an icon and a badge per highlight, and the changelog", async () => {
@@ -200,7 +239,7 @@ describe("What's new", () => {
     console('0.3.0', { desktop: false });
     mountApp('/');
     await settled();
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
   });
 
   it('falls back to the cards when nothing notable came since', async () => {
@@ -216,7 +255,7 @@ describe("What's new", () => {
     console(undefined, { desktop: false });
     mountApp('/');
     await settled();
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
   });
 
   it('closes with Get started and stays closed in this browser', async () => {
@@ -224,13 +263,13 @@ describe("What's new", () => {
     const first = mountApp('/');
     await shown('welcome');
     fireEvent.click(screen.getByRole('button', { name: 'Get started' }));
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
     first.view.unmount();
     resetWhatsNew();
     mountApp('/');
     await settled();
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
   });
 
   it('closes on a click on the veil, and not on one inside the box', async () => {
@@ -239,11 +278,11 @@ describe("What's new", () => {
     const box = await shown('welcome');
     fireEvent.mouseDown(box);
     fireEvent.click(box);
-    expect(banner()).not.toBeNull();
+    expect(content()).not.toBeNull();
     const veil = dialog()?.parentElement as HTMLElement;
     fireEvent.mouseDown(veil);
     fireEvent.click(veil);
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
   });
 
@@ -252,7 +291,7 @@ describe("What's new", () => {
     const first = mountApp('/');
     await shown('news');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     await waitFor(() => {
       // Only the What's new write: the desktop's rail writes its own.
       expect(c.sent.filter((one) => one.path === '/api/preferences/seen-version')).toEqual([
@@ -264,7 +303,7 @@ describe("What's new", () => {
     resetWhatsNew();
     mountApp('/');
     await settled();
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
   });
 
   it('opens again from Settings › Infos, takes the focus, and gives it back on close', async () => {
@@ -272,7 +311,7 @@ describe("What's new", () => {
     console('0.3.0', { desktop: false });
     mountApp('/settings/infos');
     const open = await openButton();
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     open.focus();
     fireEvent.click(open);
     const box = await shown('news');
@@ -281,7 +320,7 @@ describe("What's new", () => {
       expect(dialog()?.contains(document.activeElement)).toBe(true);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     await waitFor(() => {
       expect(document.activeElement).toBe(open);
     });
@@ -294,7 +333,7 @@ describe("What's new", () => {
     fireEvent.click(await openButton());
     await shown('news');
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(banner()).toBeNull();
+    expect(content()).toBeNull();
     expect(localStorage.getItem('kubetower.seenVersion')).toBe('0.3.0');
   });
 
