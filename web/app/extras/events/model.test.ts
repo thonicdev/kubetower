@@ -99,6 +99,17 @@ describe('cells', () => {
     expect(none.every((v) => v === 0)).toBe(true);
   });
 
+  it('puts an Event dated past the axis’s end in the last cell, whole', () => {
+    const point = Array.from({ length: BINS }, () => 0);
+    spread(point, NOW + 2 * MIN, NOW + 2 * MIN, 1, AXIS);
+    expect(point[BINS - 1]).toBe(1);
+    expect(point.reduce((a, b) => a + b, 0)).toBe(1);
+    const across = Array.from({ length: BINS }, () => 0);
+    spread(across, NOW - 2 * MIN, NOW + 3 * MIN, 10, AXIS);
+    expect(across.reduce((a, b) => a + b, 0)).toBeCloseTo(10);
+    expect(across.slice(0, BINS - 2).every((v) => v === 0)).toBe(true);
+  });
+
   it('takes the largest of a hundred thousand cells without spreading them as arguments', () => {
     const many = Array.from({ length: 200_000 }, (_, i) => i % 97);
     expect(maxOf(many, 1)).toBe(96);
@@ -205,6 +216,9 @@ describe('the count in place of truncated', () => {
     expect(heldOf({ truncated: true, causes, tiles: tiles as never })).toEqual({ held: 2012, total: 2058 });
     expect(heldOf({ truncated: false, causes, tiles: tiles as never })).toBeUndefined();
     expect(heldOf({ truncated: true, causes, tiles: { warnings: { count: 0, state: 'denied' } } as never })).toBeUndefined();
+    // A cut answer whose lists still hold every Warning counted says nothing.
+    expect(heldOf({ truncated: true, causes, tiles: { warnings: { count: 2012, state: 'read' } } as never })).toBeUndefined();
+    expect(heldOf({ truncated: true, causes, tiles: { warnings: { count: 340, state: 'read' } } as never })).toBeUndefined();
     expect(figure(2012)).toBe('2 012');
     expect(figure(999)).toBe('999');
   });

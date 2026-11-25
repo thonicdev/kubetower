@@ -226,7 +226,9 @@ export function binOf(ms: number, axis: Axis): number {
 export function spread(bins: number[], first: number, last: number, count: number, axis: Axis): void {
   const span = axis.end - axis.start;
   if (span <= 0 || count <= 0) return;
-  const end = Math.max(first, last);
+  // An Event dated past the axis's end (read during the read, or a node's clock ahead) lands in the last cell.
+  first = Math.min(first, axis.end);
+  const end = Math.min(Math.max(first, last), axis.end);
   if (end === first) {
     if (first >= axis.start && first <= axis.end) bins[binOf(first, axis)] = (bins[binOf(first, axis)] ?? 0) + count;
     return;
@@ -485,7 +487,9 @@ export function heldOf(answer: Pick<Answer, 'truncated' | 'causes' | 'tiles'>): 
   // The groups the lists hold, not the causes' counts: the server counts those past the groups it keeps.
   let held = 0;
   for (const c of answer.causes) if (c.type === 'Warning') for (const g of c.groups) held += g.count;
-  return { held, total: Math.max(held, answer.tiles.warnings.count) };
+  // Nothing missing from the lists: no "N of N".
+  if (held >= answer.tiles.warnings.count) return undefined;
+  return { held, total: answer.tiles.warnings.count };
 }
 
 /** What is lit: a change, a cause, or the changes of a correlation. Nothing lit means nothing dims. */

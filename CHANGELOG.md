@@ -74,6 +74,10 @@ per release. Keep the bold lead short: it is all the banner draws.
   process is not offered beside the application (#11, #19, #81, #87).
 - **Postgres (CNPG): Read lag names a read-only cluster as one**, instead of
   "you may not run commands in this pod" (#11, #88).
+- **Event Intelligence: the held badge shows only when the lists miss
+  Warnings**, not "340 of 340" on an answer with nothing cut; and an Event
+  dated after the answer was built (read during the read, or from a node
+  whose clock runs ahead) stays in the last cell of its row (#86, #93).
 
 ## 0.1.2 — signed updates, Redis viewer and Network Inspector fixes
 
