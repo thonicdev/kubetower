@@ -32,6 +32,7 @@ func TestTheWindowsComSlotsAreWhereWebView2PutsThem(t *testing.T) {
 		field   string
 		slot    uintptr // WebView2.idl's order, IUnknown's three first
 	}{
+		{"ICoreWebView2Controller::Close", unsafe.Offsetof(coreWebView2ControllerVtbl{}.close), controller, "Close", 24},
 		{"ICoreWebView2Controller::get_CoreWebView2", unsafe.Offsetof(coreWebView2ControllerVtbl{}.getCoreWebView2), controller, "GetCoreWebView2", 25},
 		{"ICoreWebView2::get_Settings", unsafe.Offsetof(coreWebView2Vtbl{}.getSettings), webView, "GetSettings", 3},
 		{"ICoreWebView2::add_NavigationStarting", unsafe.Offsetof(coreWebView2Vtbl{}.addNavigationStarting), webView, "AddNavigationStarting", 7},
@@ -40,6 +41,8 @@ func TestTheWindowsComSlotsAreWhereWebView2PutsThem(t *testing.T) {
 		{"ICoreWebView2Settings::put_IsWebMessageEnabled", unsafe.Offsetof(coreWebView2SettingsVtbl{}.putIsWebMessageEnabled), settings, "PutIsWebMessageEnabled", 6},
 		// No declaration in the library for these: the IDL's order only.
 		{"ICoreWebView2NavigationStartingEventArgs::get_Uri", unsafe.Offsetof(navigationStartingArgsVtbl{}.getURI), nil, "", 3},
+		{"ICoreWebView2NavigationStartingEventArgs::get_IsUserInitiated", unsafe.Offsetof(navigationStartingArgsVtbl{}.getIsUserInitiated), nil, "", 4},
+		{"ICoreWebView2NewWindowRequestedEventArgs::get_IsUserInitiated", unsafe.Offsetof(newWindowRequestedArgsVtbl{}.getIsUserInitiated), nil, "", 8},
 		{"ICoreWebView2NavigationStartingEventArgs::put_Cancel", unsafe.Offsetof(navigationStartingArgsVtbl{}.putCancel), nil, "", 8},
 		{"ICoreWebView2NewWindowRequestedEventArgs::get_Uri", unsafe.Offsetof(newWindowRequestedArgsVtbl{}.getURI), nil, "", 3},
 		{"ICoreWebView2NewWindowRequestedEventArgs::put_Handled", unsafe.Offsetof(newWindowRequestedArgsVtbl{}.putHandled), nil, "", 6},

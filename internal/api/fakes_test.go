@@ -1495,3 +1495,10 @@ func (f fakeInstaller) OpenUpdateFolder() (UpdateInstall, error) {
 	out.Phase, out.Version, out.Folder = "manual", "0.1.3", "/home/alice/.local/state/kubetower/update/install-1"
 	return out, nil
 }
+
+// fakeToolWindows is the desktop's tool windows, in the native window.
+type fakeToolWindows struct{}
+
+func (fakeToolWindows) Available() bool { return true }
+
+func (fakeToolWindows) OpenToolWindow(string, string, string, bool) error { return nil }

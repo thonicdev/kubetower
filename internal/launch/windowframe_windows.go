@@ -43,7 +43,13 @@ func colourTheFrame(window unsafe.Pointer) {
 		log.Printf("[kubetower] the window has no handle, so its frame keeps Windows' colors")
 		return
 	}
-	hwnd := windows.HWND(uintptr(window))
+	colourTheFrameOf(uintptr(window))
+}
+
+// colourTheFrameOf is colourTheFrame for a window known by its handle (a tool
+// window, #65).
+func colourTheFrameOf(handle uintptr) {
+	hwnd := windows.HWND(handle)
 	var held, refused []string
 	for _, attribute := range frameAttributes() {
 		value := attribute.Value

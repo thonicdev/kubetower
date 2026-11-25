@@ -109,6 +109,17 @@ type Forward struct {
 	OpenedAt *time.Time `json:"openedAt,omitempty"`
 }
 
+// ForwardWindowRequest opens a forward's flow UI in a desktop window
+// (openForwardWindow).
+type ForwardWindowRequest struct {
+	// Tool is "hubble" or "whisker".
+	Tool string `json:"tool"`
+	// Path is the absolute path and query on the forward, "/" when empty.
+	Path string `json:"path,omitempty"`
+	// CloseWithWindow says the forward was opened for this window.
+	CloseWithWindow bool `json:"closeWithWindow,omitempty"`
+}
+
 // ForwardRequest opens one.
 type ForwardRequest struct {
 	Cluster   string `json:"cluster"`

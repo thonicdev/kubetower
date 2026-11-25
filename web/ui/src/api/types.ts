@@ -252,3 +252,5 @@ export type LogPage = Schemas['LogPage'];
  *  would be a second answer to the same question. */
 export type Forward = Schemas['Forward'];
 export type ForwardRequest = Schemas['ForwardRequest'];
+/** A forward's flow UI in a window of the desktop's own (#65). */
+export type ForwardWindowRequest = Schemas['ForwardWindowRequest'];
