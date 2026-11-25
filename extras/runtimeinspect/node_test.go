@@ -508,3 +508,47 @@ func TestTheOpeningScriptPicksTheApplication(t *testing.T) {
 		})
 	}
 }
+
+// An empty chunk writes nothing, so it commits no 200: the snapshot after it
+// is saved whole, and a snapshot of empty chunks only is a problem (#100).
+func TestAnEmptyHeapSnapshotChunkCommitsNothing(t *testing.T) {
+	const path = nodeBase + "/heapsnapshot?confirm=confirm"
+	in := newInspector(t, true)
+	h := newNodeHost(t, in, nodeContainer())
+
+	in.set(func(in *inspector) { in.chunks = []string{"", `{"snapshot":`, "", `{"node_count":2}}`} })
+	rec, broke := aborted(t, h, path)
+	if broke || rec.Code != http.StatusOK || rec.Body.String() != `{"snapshot":{"node_count":2}}` ||
+		!strings.HasPrefix(rec.Header().Get("Content-Disposition"), "attachment;") {
+		t.Errorf("empty chunks among others: broke %v, %d %q", broke, rec.Code, rec.Body)
+	}
+
+	in.set(func(in *inspector) { in.chunks = []string{"", ""} })
+	rec, broke = aborted(t, h, path)
+	if broke || rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), CodeInspectorFailed) ||
+		rec.Header().Get("Content-Disposition") != "" {
+		t.Errorf("only empty chunks: broke %v, %d %s", broke, rec.Code, rec.Body)
+	}
+}
+
+// A chosen pid that has exited is said in one line: with the processes left
+// to choose from, or as no process at all, never as an empty choice (#100).
+func TestAChosenProcessThatExitedIsSaid(t *testing.T) {
+	in := newInspector(t, true)
+	h := newNodeHost(t, in, nodeContainer())
+	chosen := strings.Join(nodeOpenArgv(nodeLaunchers[0], 12), " ")
+
+	h.execs = map[string]execAnswer{chosen: {res: extension.ExecResult{Stdout: []byte(`{"state":"choose","pids":[]}`)}}}
+	rec := post(t, h, nodeBase+"/inspector?confirm=confirm&pid=12", "")
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), CodeNoNodeProcess) ||
+		!strings.Contains(rec.Body.String(), "Process 12 is no longer running") {
+		t.Errorf("gone, none left: %d %s", rec.Code, rec.Body)
+	}
+
+	h.execs = map[string]execAnswer{chosen: {res: extension.ExecResult{Stdout: []byte(`{"state":"choose","pids":[7]}`)}}}
+	rec = post(t, h, nodeBase+"/inspector?confirm=confirm&pid=12", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"pids":[7]`) ||
+		!strings.Contains(rec.Body.String(), "Process 12 is no longer running: choose another.") {
+		t.Errorf("gone, another left: %d %s", rec.Code, rec.Body)
+	}
+}

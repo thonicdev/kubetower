@@ -28,7 +28,7 @@ function save(file: Downloaded): void {
 type Run =
   | { status: 'idle' }
   | { status: 'confirm-open'; pid?: number }
-  | { status: 'choose'; pids: number[] }
+  | { status: 'choose'; pids: number[]; gone?: number | undefined }
   | { status: 'confirm-snapshot' }
   | { status: 'running'; what: string }
   | { status: 'failed'; error: unknown };
@@ -52,7 +52,7 @@ export function NodeInspector({ cluster, namespace, name, container }: { cluster
     try {
       const opened = await openInspector(cluster, namespace, name, container, pid);
       if (opened.state === 'choose') {
-        setRun({ status: 'choose', pids: opened.pids });
+        setRun({ status: 'choose', pids: opened.pids, gone: pid });
         return;
       }
       client.setQueryData(query.queryKey, opened.answer);
@@ -147,7 +147,12 @@ export function NodeInspector({ cluster, namespace, name, container }: { cluster
         <Confirm title={`Heap snapshot of ${container}?`} risks={['process paused', 'memory ×2', 'holds secrets']} go="Snapshot and download" onGo={() => void doDownload('heapsnapshot')} onCancel={() => setRun({ status: 'idle' })} />
       ) : null}
       {run.status === 'choose' ? (
-        <ul data-node-choose="" className="flex flex-wrap gap-1">
+        <ul data-node-choose="" className="flex flex-wrap items-center gap-1">
+          {run.gone === undefined ? null : (
+            <li data-node-gone="">
+              <Pill tone="warn">pid {run.gone} exited</Pill>
+            </li>
+          )}
           {run.pids.map((pid) => (
             <li key={pid}>
               <button type="button" className={btnSecondary} onClick={() => setRun({ status: 'confirm-open', pid })}>

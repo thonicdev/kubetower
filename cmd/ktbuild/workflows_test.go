@@ -2315,6 +2315,67 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 	}
 }
 
+// TestOnlyTheSignJobHoldsTheKey (#70). RELEASE_SIGNING_KEY is a secret of the
+// `release` Environment, which admits release tags only, so a workflow on a
+// pushed branch cannot read it:
+//
+//  1. release.yml's sign job declares `environment: release`;
+//  2. no other job of any workflow names the secret;
+//  3. a run started by hand must be on the tag it builds, or the Environment
+//     refuses the sign job after everything else was built.
+func TestOnlyTheSignJobHoldsTheKey(t *testing.T) {
+	jobs := workflowJobs(t, "release.yml")
+	sign, ok := jobs["sign"]
+	if !ok {
+		t.Fatal("release.yml has no sign job")
+	}
+	env := sign["environment"]
+	if m, ok := env.(map[string]any); ok {
+		env = m["name"]
+	}
+	if env != "release" {
+		t.Errorf("release.yml's sign job runs in environment %v, not release: its key would be a repository secret any branch can read", sign["environment"])
+	}
+
+	files, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Skip(".github/workflows is not in this tree, so where the key is read is UNCHECKED here")
+	}
+	held := 0
+	for _, f := range files {
+		name := filepath.Base(f)
+		for job, body := range workflowJobs(t, name) {
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "RELEASE_SIGNING_KEY") || !strings.Contains(string(raw), "secrets.") {
+				continue
+			}
+			if name != "release.yml" || job != "sign" {
+				t.Errorf("%s's %s job names RELEASE_SIGNING_KEY; only release.yml's sign job, in the release Environment, may", name, job)
+				continue
+			}
+			held++
+		}
+	}
+	if held != 1 {
+		t.Errorf("release.yml's sign job does not read RELEASE_SIGNING_KEY (%d jobs do)", held)
+	}
+
+	i := stepWhere(jobs["verify"], runs(`[[ "$tag" =~ `))
+	if i < 0 {
+		t.Fatal(`release.yml's verify job has no tag step`)
+	}
+	script, _ := steps(jobs["verify"])[i]["run"].(string)
+	if !strings.Contains(script, `if [ "$REF" != "refs/tags/$tag" ]; then`) {
+		t.Errorf("release.yml's verify job lets a run started by hand build from a branch; the release Environment would refuse its sign job at the end")
+	}
+}
+
 // githubPathMatch reads a workflow's `paths` filter as GitHub does: each
 // pattern in order, a `!` one excluding, the last that matches deciding; `*`
 // stops at `/`, `**` does not, and `**/` may match nothing.
@@ -2408,5 +2469,28 @@ func changelogStarts(t *testing.T, workflow string) {
 				t.Errorf("%s's %s trigger %v on a change to %s alone runs: %v, want %v", workflow, event, patterns, file, got, want)
 			}
 		}
+	}
+}
+
+// The release notes point at the signing key at this release's tag, as their
+// text says: unsigned.md names the tag @TAG@, never main, and the draft job
+// puts the tag in once it has read the file and before it uses it (#100).
+func TestTheReleaseNotesLinkTheKeyAtTheTag(t *testing.T) {
+	notes, err := os.ReadFile(filepath.Join("..", "..", "packaging", "release-notes", "unsigned.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(notes), "https://github.com/thonicdev/kubetower/blob/@TAG@/internal/releasesig/release-key.pem") {
+		t.Error("unsigned.md does not link release-key.pem at @TAG@")
+	}
+	if strings.Contains(string(notes), "/blob/main/") {
+		t.Error("unsigned.md links a file on main, not at the release's tag")
+	}
+	run := jobText(workflowJobs(t, "release.yml")["draft"])
+	read := strings.Index(run, `"repos/$REPO/contents/packaging/release-notes/unsigned.md?ref=$TAG" >"$notes"`)
+	put := strings.Index(run, `sed -i "s/@TAG@/$TAG/g" "$notes"`)
+	used := strings.Index(run, `gh release view "$TAG"`)
+	if read < 0 || put < 0 || used < 0 || !(read < put && put < used) {
+		t.Errorf("the draft job does not put the tag into the notes between reading and using them (read %d, sed %d, use %d)", read, put, used)
 	}
 }
