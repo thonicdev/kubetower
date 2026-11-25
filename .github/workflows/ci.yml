@@ -32,11 +32,16 @@
 name: ci
 
 on:
+  # Every path but Markdown, LICENSE and .gitignore - except CHANGELOG.md,
+  # which the front end reads at build time for What's new (#80), so a change
+  # to it alone still builds the front end and runs its tests (#98). The last
+  # pattern that matches decides, so CHANGELOG.md comes after its exclusion.
+  # TestACHANGELOGChangeRunsCI holds it.
   pull_request:
-    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+    paths: ['**', '!**/*.md', '!LICENSE', '!.gitignore', 'CHANGELOG.md']
   push:
     branches: [main]
-    paths-ignore: ['**/*.md', 'LICENSE', '.gitignore']
+    paths: ['**', '!**/*.md', '!LICENSE', '!.gitignore', 'CHANGELOG.md']
   schedule:
     # The full tier, weekly, on the default branch: Sunday 02:00 UTC, which is
     # 03:00 in Paris in winter and 04:00 in summer, outside working hours.

@@ -2314,3 +2314,92 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 		t.Error("the draft attaches the signature before it has checked every asset")
 	}
 }
+
+// githubPathMatch reads a workflow's `paths` filter as GitHub does: each
+// pattern in order, a `!` one excluding, the last that matches deciding; `*`
+// stops at `/`, `**` does not, and `**/` may match nothing.
+func githubPathMatch(t *testing.T, patterns []any, file string) bool {
+	t.Helper()
+	run := false
+	for _, p := range patterns {
+		pat := fmt.Sprint(p)
+		negate := strings.HasPrefix(pat, "!")
+		pat = strings.TrimPrefix(pat, "!")
+		var re strings.Builder
+		re.WriteString("^")
+		for i := 0; i < len(pat); i++ {
+			switch {
+			case strings.HasPrefix(pat[i:], "**/"):
+				re.WriteString("(?:.*/)?")
+				i += 2
+			case strings.HasPrefix(pat[i:], "**"):
+				re.WriteString(".*")
+				i++
+			case pat[i] == '*':
+				re.WriteString("[^/]*")
+			case pat[i] == '?':
+				re.WriteString("[^/]")
+			default:
+				re.WriteString(regexp.QuoteMeta(pat[i : i+1]))
+			}
+		}
+		re.WriteString("$")
+		if regexp.MustCompile(re.String()).MatchString(file) {
+			run = !negate
+		}
+	}
+	return run
+}
+
+// TestACHANGELOGChangeRunsCI (#98). The front end reads CHANGELOG.md at build
+// time for What's new, so a pull request or a push to main changing it alone
+// must run ci.yml - its front-end build and tests - while other Markdown,
+// LICENSE and .gitignore alone still do not.
+func TestACHANGELOGChangeRunsCI(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("ci.yml is not in this tree, so what starts it is UNCHECKED here: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	on, _ := doc["on"].(map[string]any)
+	if on == nil {
+		on, _ = doc["true"].(map[string]any)
+	}
+	for _, event := range []string{"pull_request", "push"} {
+		trigger, _ := on[event].(map[string]any)
+		if trigger == nil {
+			t.Errorf("ci.yml has no %s trigger", event)
+			continue
+		}
+		if _, ok := trigger["paths-ignore"]; ok {
+			t.Errorf("ci.yml's %s trigger has paths-ignore, which cannot let CHANGELOG.md back in", event)
+		}
+		patterns, _ := trigger["paths"].([]any)
+		if len(patterns) == 0 {
+			t.Errorf("ci.yml's %s trigger has no paths filter", event)
+			continue
+		}
+		for file, want := range map[string]bool{
+			"CHANGELOG.md":                     true,
+			"web/ui/src/whatsnew/changelog.ts": true,
+			"internal/web/server.go":           true,
+			".github/workflows/ci.yml":         true,
+			"README.md":                        false,
+			"docs/EXTRAS.md":                   false,
+			"web/ui/README.md":                 false,
+			"LICENSE":                          false,
+			".gitignore":                       false,
+			"docs/CHANGELOG.md":                false,
+		} {
+			if got := githubPathMatch(t, patterns, file); got != want {
+				t.Errorf("ci.yml's %s trigger %v on a change to %s alone runs: %v, want %v", event, patterns, file, got, want)
+			}
+		}
+	}
+}
