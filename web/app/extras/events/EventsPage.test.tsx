@@ -294,6 +294,17 @@ describe('Event Intelligence', () => {
     expect(screen.queryByText('truncated')).toBeNull();
   });
 
+  it("counts a namespace's Warnings against its own tiles once the view is filtered to it", async () => {
+    const tilesOf = (warnings: number) => ({ ...answer([]).tiles, warnings: { count: warnings, state: 'read' as const } });
+    const whole = answer([backoff, sched], { truncated: true, tiles: tilesOf(2058) });
+    stubByNamespace(whole, { batch: answer([sched], { namespace: 'batch', truncated: true, tiles: tilesOf(40) }) });
+    mount();
+    await findCause(/BackOff/);
+    expect(document.querySelector('[data-held]')?.textContent).toBe('224 of 2 058');
+    fireEvent.change(screen.getByLabelText('Namespace'), { target: { value: 'batch' } });
+    await waitFor(() => expect(document.querySelector('[data-held]')?.textContent).toBe('5 of 40'));
+  });
+
   it('shortens a long workload name on the marker and keeps the whole one in the title', async () => {
     const long = 'checkout-payment-gateway-service-blue';
     stub(answer([backoff], { changes: [{ ...ROLLOUT, name: long }] }));

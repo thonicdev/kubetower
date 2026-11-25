@@ -409,10 +409,13 @@ export function Timeline({
   highlight,
   normal,
   compact = false,
+  scope,
 }: {
   answer: Answer;
   causes: readonly Cause[];
   highlight: Highlight;
+  /** A namespace the page is filtered to, and its tiles: null while they are read. */
+  scope?: { namespace: string; tiles: TilesData | null | undefined } | undefined;
   /** The Normal toggle, where the Type filter has not chosen. */
   normal?: { on: boolean; count: number; onToggle: () => void } | undefined;
   /** A narrow container, a panel's: a shorter name column. */
@@ -444,7 +447,7 @@ export function Timeline({
   }, [nodes.groups, axis]);
   const tracks = useMemo(() => nodeTracks(nodes.groups, axis), [nodes.groups, axis]);
   const { focus } = highlight;
-  const held = heldOf(answer);
+  const held = scope === undefined ? heldOf(answer) : scope.tiles ? heldOf(answer, scope.namespace, scope.tiles) : undefined;
   const tick = ticks(axis);
   const addedCount = nodes.groups.filter((g) => g.kind === 'node-added').reduce((n, g) => n + g.changes.length, 0);
   const notReadyCount = nodes.groups.filter((g) => g.kind === 'node-notready').reduce((n, g) => n + g.changes.length, 0);
