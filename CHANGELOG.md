@@ -19,6 +19,19 @@ per release. Keep the bold lead short: it is all the banner draws.
   VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
   Overview. Extras can now draw a tile on the Overview (#90).
 
+### Fixed
+
+- **Updates install from the Windows window.** Installing an update from the
+  window asked KubeTower to stop, but the window ignored it: KubeTower never
+  exited, the setup never ran, and "Installing…" spun for ever. The window
+  now closes, the setup runs, and the new version starts. If KubeTower does
+  not stop within 90 seconds, the install goes back to Ready with the reason,
+  and Install is offered again. Check now no longer loses a downloaded
+  update, its Install button or the "Install updates" setting. Each install's
+  steps are written to `update-install.log` in the state folder (#96).
+  From 0.2.0 on Windows: close the window after Install; the setup then
+  runs. <!-- highlight -->
+
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 
 ### Added

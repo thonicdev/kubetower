@@ -211,6 +211,8 @@ func drawNativeWindow(url string, feed windowSources, toasts bool) bool {
 		}()
 	}
 
+	defer windowStop.hold(view)()
+
 	view.Navigate(url)
 	log.Printf("[kubetower] opened %s in a native window. Closing it stops KubeTower", loggableURL(url))
 	view.Run()
@@ -505,11 +507,19 @@ func windowEventQueryInterface(this *windowEvent, iid *windows.GUID, object *uns
 // count is a constant.
 func windowEventCount(*windowEvent) uintptr { return 1 }
 
-// interruptNativeWindow does nothing on Windows.
+// interruptNativeWindow closes the window, from any goroutine, as a click on
+// its close box would: the message loop ends, drawNativeWindow returns, and
+// the console shuts down.
 //
-// The binary is linked -H windowsgui: there is no console to press Ctrl-C in,
-// and Windows sends no SIGTERM, so no signal can arrive to close the window.
-func interruptNativeWindow() {}
+// No signal reaches a -H windowsgui binary, but the console stops itself: an
+// installed update (internal/updater) puts an interrupt on launch's stop
+// channel and its helper waits for this process to exit before it runs the
+// setup. Doing nothing here left the window, and so the process, up for ever,
+// the helper waiting, and the update never installed (#96).
+//
+// Before the window exists the request is kept, and drawNativeWindow honors
+// it as soon as the loop can take it.
+func interruptNativeWindow() { windowStop.interrupt() }
 
 // refreshNativeWindow has nothing to refresh on Windows; see `nativeWindow`.
 func refreshNativeWindow() {}

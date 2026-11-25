@@ -258,10 +258,12 @@ describe('Settings › Infos', () => {
     console(idle);
     mountApp('/settings/infos');
     await waitFor(() => {
-      expect(document.querySelector('[data-update="newer"] [data-update-download]')).not.toBeNull();
+      expect(document.querySelector('[data-update-action] [data-update-download]')).not.toBeNull();
     });
     const line = document.querySelector('[data-update="newer"]');
     expect(line?.textContent).toContain('View release');
+    // The action is on its own line, never run into the link (#96).
+    expect(line?.querySelector('[data-update-control]')).toBeNull();
     expect(document.querySelector('[data-update-check] button')?.textContent).toBe('Check now');
     expect(document.querySelector<HTMLInputElement>('[data-install-updates] input')?.checked).toBe(true);
   });
@@ -468,7 +470,7 @@ describe('the install timeout', () => {
     try {
       console(installing);
       const { router } = mountApp('/settings/infos');
-      const line = (): Element | null => document.querySelector('[data-update="newer"] [data-update-control]');
+      const line = (): Element | null => document.querySelector('[data-update-action] [data-update-control]');
       await waitFor(() => {
         expect(line()?.querySelector('[data-update-step="installing"]')).not.toBeNull();
       });
@@ -651,5 +653,91 @@ describe('the account menu trigger', () => {
       expect(trigger.getAttribute('aria-describedby')).not.toBeNull();
     });
     expect(document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Update available');
+  });
+});
+
+describe('the update through Check now (#96)', () => {
+  /** Infos' action line, where the buttons are. */
+  const action = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-update-action]');
+  const checkNow = (): void => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('[data-update-check] button')].find((b) => b.textContent === 'Check now');
+    if (button === undefined) throw new Error('no Check now');
+    fireEvent.click(button);
+  };
+  const ready: UpdateInstall = { ...idle, installation: 'windows-setup', phase: 'ready', version: '0.1.3', asset: 'kubetower-0.1.3-setup.exe' };
+
+  it('keeps Install across download, ready, install, Check now and install again', async () => {
+    let checks = 0;
+    const c = console({ ...idle, installation: 'windows-setup' }, (_method, path) => {
+      if (path === '/api/settings/update/download') {
+        return { status: 200, body: { ...ready, phase: 'downloading' }, now: ready };
+      }
+      if (path === '/api/settings/update/install') {
+        return { status: 200, body: { ...ready, phase: 'installing' }, now: { ...ready, phase: 'installing' } };
+      }
+      if (path === '/api/settings/update-check') {
+        checks++;
+        // The first answer as an older server wrote it, with no install; the
+        // second as this one does, with the install as it stands.
+        const install = checks === 1 ? {} : { install: c.now.install };
+        return { status: 200, body: { state: 'newer', latest: '0.1.3', releaseUrl: 'https://github.com/thonicdev/kubetower/releases/tag/0.1.3', checking: false, ...install }, now: c.now.install };
+      }
+      return { status: 404, body: {} };
+    });
+    mountApp('/settings/infos');
+
+    // idle: Download, on its own line, the checkbox beside the check.
+    await waitFor(() => {
+      expect(action()?.querySelector('[data-update-download]') ?? null).not.toBeNull();
+    });
+    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+    fireEvent.click(action()?.querySelector('[data-update-download]') as Element);
+
+    // downloading, then ready: Restart to update.
+    await waitFor(() => {
+      expect(action()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
+    });
+
+    // Check now, answered without install: Install and the checkbox stay.
+    checkNow();
+    await waitFor(() => {
+      expect(c.sent.filter((s) => s.path === '/api/settings/update-check')).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-check] [data-update-checking]')).toBeNull();
+    });
+    expect(action()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
+    expect(banner()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
+    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+
+    // install: Installing…, on the banner and on Infos' line.
+    fireEvent.click(action()?.querySelector('[data-update-restart]') as Element);
+    await waitFor(() => {
+      expect(action()?.querySelector('[data-update-step="installing"]') ?? null).not.toBeNull();
+    });
+    expect(banner()?.querySelector('[data-update-step="installing"]') ?? null).not.toBeNull();
+
+    // Check now while installing, answered with the install: still installing.
+    checkNow();
+    await waitFor(() => {
+      expect(c.sent.filter((s) => s.path === '/api/settings/update-check')).toHaveLength(2);
+    });
+    expect(action()?.querySelector('[data-update-step="installing"]') ?? null).not.toBeNull();
+    expect(document.querySelector('[data-install-updates] input')).not.toBeNull();
+
+    // The console did not stop: back to ready, the reason drawn, Install again.
+    c.now.install = { ...ready, reason: 'KubeTower did not stop to install the update; nothing was installed' };
+    await waitFor(
+      () => {
+        expect(action()?.querySelector('[data-update-restart]') ?? null).not.toBeNull();
+      },
+      { timeout: 3000 },
+    );
+    expect(action()?.querySelector('[data-update-reason]')?.textContent).toContain('did not stop');
+    fireEvent.click(action()?.querySelector('[data-update-restart]') as Element);
+    await waitFor(() => {
+      expect(c.sent.filter((s) => s.path === '/api/settings/update/install')).toHaveLength(2);
+    });
+    expect(c.sent.filter((s) => s.path === '/api/settings/update/download')).toHaveLength(1);
   });
 });

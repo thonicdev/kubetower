@@ -79,3 +79,21 @@ func TestTheManualPhaseCarriesItsFolder(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+// Check now's answer replaces the page's whole update line: it carries the
+// install as the settings read does, or a ready download's Install button,
+// the checkbox and a running install's poll vanished until a reload (#96).
+func TestCheckNowKeepsTheInstall(t *testing.T) {
+	s := &Server{setup: SetupInfo{
+		CheckUpdates: func(context.Context) UpdateReport { return UpdateReport{State: "newer", Latest: "0.2.1"} },
+		Installer:    &fakeUpdater{status: updater.Status{Phase: updater.Ready, Enabled: true, Supported: true, Installation: updater.WindowsSetup, Version: "0.2.1"}},
+	}}
+	got := s.updateCheck().CheckUpdates(context.Background())
+	if got.Install == nil || got.Install.Phase != "ready" || !got.Install.Supported || !got.Install.Enabled {
+		t.Fatalf("Check now's answer = %+v, want the ready install with it", got.Install)
+	}
+	none := &Server{setup: SetupInfo{CheckUpdates: func(context.Context) UpdateReport { return UpdateReport{State: "newer"} }}}
+	if none.updateCheck().CheckUpdates(context.Background()).Install != nil {
+		t.Error("an install member where nothing installs")
+	}
+}
