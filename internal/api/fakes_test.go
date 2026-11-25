@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -1503,3 +1504,25 @@ type fakeToolWindows struct{}
 func (fakeToolWindows) Available() bool { return true }
 
 func (fakeToolWindows) OpenToolWindow(string, string, string, bool) error { return nil }
+
+// fakeMetricsSources carries every member of MetricsSource, for the member
+// test that reads them out of the contract.
+type fakeMetricsSources struct{}
+
+func (fakeMetricsSources) MetricsSource(_ context.Context, _ string) MetricsSource {
+	return MetricsSource{
+		Source: "vm/vmselect-main:8481/select/0/prometheus", Editable: true,
+		Kind: "prometheus", Engine: "victoriametrics", Address: "vm/vmselect-main:8481/select/0/prometheus",
+		Transport: "proxy", Detail: "service vm/vmselect-main:8481/select/0/prometheus found via the source set in Settings, reached by proxy, answered by VictoriaMetrics",
+	}
+}
+
+func (f fakeMetricsSources) SaveMetricsSource(ctx context.Context, cluster, source string) (MetricsSource, error) {
+	if source == "not a target" {
+		return MetricsSource{}, fmt.Errorf("%w: %q is not namespace/service:port[/path]", ErrInvalid, source)
+	}
+	out := f.MetricsSource(ctx, cluster)
+	saved := true
+	out.Persisted, out.Note = &saved, "saved"
+	return out, nil
+}

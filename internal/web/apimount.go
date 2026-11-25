@@ -74,6 +74,7 @@ func (s *Server) mountAPI(mux *http.ServeMux) {
 		Dock:           apiDock{s},
 		Channels:       apiChannels{s},
 		Probe:          s.probe,
+		MetricsSources: s.metricsSources,
 	}).Mount(mux)
 }
 

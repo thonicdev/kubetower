@@ -197,3 +197,25 @@ export function useExtraTab(): ExtraTab {
     items: extensions.data.items,
   };
 }
+
+export type MetricsSource = Schemas['MetricsSource'];
+
+export const metricsSourceKey = (cluster: string) => ['settings', 'metrics-source', cluster] as const;
+
+function metricsSourcePath(cluster: string): string {
+  return path('/api/c/{cluster}/metrics/source').replace('{cluster}', encodeURIComponent(cluster));
+}
+
+/** One cluster's metrics source and what discovery answered with it. */
+export function useMetricsSource(cluster: string): UseQueryResult<MetricsSource> {
+  return useQuery({
+    queryKey: metricsSourceKey(cluster),
+    queryFn: ({ signal }) => request<MetricsSource>(metricsSourcePath(cluster), { signal }),
+    staleTime: 60_000,
+  });
+}
+
+/** Sets one cluster's source, or clears it with an empty one. */
+export function saveMetricsSource(cluster: string, source: string): Promise<MetricsSource> {
+  return request<MetricsSource>(metricsSourcePath(cluster), { method: 'PUT', body: { source } });
+}

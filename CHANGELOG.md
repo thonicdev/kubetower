@@ -20,6 +20,11 @@ dialog draws it first, as a New extra line.
   victoria-metrics-k8s-stack chart and the victoria-metrics-single and
   victoria-metrics-cluster charts install them, and `KT_PROMETHEUS_SERVICE`
   takes a path, `vm/vmselect-main:8481/select/0/prometheus` (#129).
+- **A metrics source per cluster in Settings › General.** A field takes
+  `namespace/service:port[/path]` where discovery cannot find the Service,
+  and a badge says what answers: Prometheus, VictoriaMetrics, metrics-server
+  or no metrics. Under the server profile it shows `KT_PROMETHEUS_SERVICE`,
+  read only (#130).
 
 ### Changed
 

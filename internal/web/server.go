@@ -59,6 +59,9 @@ type Options struct {
 	// its build and not in this one. See bundle.go.
 	UI      fs.FS
 	Metrics Usage
+	// MetricsSources is each cluster's metrics source in Settings › General.
+	// Nil leaves its routes unregistered.
+	MetricsSources api.MetricsSources
 	// Tunnels opens a local address onto a Service inside a cluster. Nil is
 	// valid and means `extension.Host.Forward` answers with a sentence rather
 	// than an address — a page that reaches a workload on a build with no
@@ -363,6 +366,8 @@ type Server struct {
 	ui     fs.FS
 	usage  Usage
 	series Series
+	// metricsSources is Options.MetricsSources.
+	metricsSources api.MetricsSources
 	// windows keeps what usage-window reads came to (metrics.WindowCache).
 	// Nil on a Server built as a literal, which reads every window afresh.
 	windows *metrics.WindowCache
@@ -588,32 +593,33 @@ func New(opts Options) (*Server, error) {
 		usage:    opts.Metrics,
 		tunnels:  countTunnels(opts.Tunnels, maxExtensionTunnels),
 
-		series:     opts.Series,
-		windows:    windows,
-		dns:        metrics.NewDNSCache(windows),
-		claude:     opts.Terminal,
-		setup:      opts.Setup,
-		inCluster:  opts.InCluster,
-		shared:     opts.Shared,
-		replicated: opts.Replicated,
-		bars:       bars,
-		visited:    newVisits(),
-		namespaces: newNamespaceCache(),
-		menuAccess: newMenuAccess(),
-		occupancy:  newOccupancyHold(),
-		views:      newViewMemory(),
-		columns:    cols,
-		plates:     plates,
-		extras:     xtras,
-		kindPrefs:  opts.KindPrefs,
-		seen:       seenOrMemory(opts.Seen),
-		archive:    opts.Archive,
-		forwards:   opts.Forwards,
-		health:     opts.Health,
-		recorder:   opts.Recorder,
-		usageHeld:  map[string]*usageEntry{},
-		kubelets:   newKubeletCache(),
-		custom:     catalogue,
+		series:         opts.Series,
+		metricsSources: opts.MetricsSources,
+		windows:        windows,
+		dns:            metrics.NewDNSCache(windows),
+		claude:         opts.Terminal,
+		setup:          opts.Setup,
+		inCluster:      opts.InCluster,
+		shared:         opts.Shared,
+		replicated:     opts.Replicated,
+		bars:           bars,
+		visited:        newVisits(),
+		namespaces:     newNamespaceCache(),
+		menuAccess:     newMenuAccess(),
+		occupancy:      newOccupancyHold(),
+		views:          newViewMemory(),
+		columns:        cols,
+		plates:         plates,
+		extras:         xtras,
+		kindPrefs:      opts.KindPrefs,
+		seen:           seenOrMemory(opts.Seen),
+		archive:        opts.Archive,
+		forwards:       opts.Forwards,
+		health:         opts.Health,
+		recorder:       opts.Recorder,
+		usageHeld:      map[string]*usageEntry{},
+		kubelets:       newKubeletCache(),
+		custom:         catalogue,
 		// Helm needs no catalog: a release is a core Secret, which is the
 		// whole reason this page is core and the other two are extras.
 		helm: helm.NewReader(opts.Clusters, gate),

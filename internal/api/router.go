@@ -193,6 +193,14 @@ func (a *API) routes() {
 		m.HandleFunc("POST /api/settings/update/open-folder", a.guard(a.openUpdateFolder))
 	}
 	m.HandleFunc("GET /api/health", a.getHealth)
+	if a.deps.MetricsSources != nil {
+		m.HandleFunc("GET /api/c/{cluster}/metrics/source", a.getMetricsSource)
+		// The desktop's choice: under the server profile the deployment's
+		// KT_PROMETHEUS_SERVICE decides, and `kept` is false.
+		if kept {
+			m.HandleFunc("PUT /api/c/{cluster}/metrics/source", a.guard(a.saveMetricsSource))
+		}
+	}
 
 	// Resources.
 	m.HandleFunc("GET /api/c/{cluster}/namespaces", a.listNamespaces)

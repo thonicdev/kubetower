@@ -6,6 +6,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -305,4 +306,63 @@ func (h *harness) askedFor(path string) bool {
 		}
 	}
 	return false
+}
+
+// --- A source set in Settings ------------------------------------------------
+
+// The desktop's choice for one cluster is the only source queried there, even
+// where discovery would find a Prometheus.
+func TestASourceSetInSettingsIsQueriedInsteadOfDiscovery(t *testing.T) {
+	set := &PromTarget{Namespace: "vm", Service: "vmselect-main", Port: 8481, Path: vmselectPath}
+	h := newHarnessWith(t, func(o *Options) {
+		o.Sources = func(cluster string) *PromTarget {
+			if cluster == testCluster {
+				copied := *set
+				return &copied
+			}
+			return nil
+		}
+	}, promService("monitoring", "kps-prometheus", map[string]string{"app": "kube-prometheus-stack-prometheus"}, "http-web", 9090))
+	h.answer(rawAnswers{set.proxyRoot(endpointHealth): {body: []byte(vmHealthy)}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Prometheus.Address() != set.Address() || found.Engine != EngineVictoriaMetrics {
+		t.Fatalf("kind %q target %+v engine %q (%s)", found.Kind, found.Prometheus, found.Engine, found.Detail)
+	}
+	if !strings.Contains(found.Detail, SourceSetting) {
+		t.Errorf("the detail does not say the source was set: %q", found.Detail)
+	}
+	if h.listed() != 0 {
+		t.Errorf("Services were listed although the source was set: %d lists", h.listed())
+	}
+}
+
+// One that does not answer is reported under its own name, not replaced.
+func TestASourceSetInSettingsThatDoesNotAnswerIsNotReplaced(t *testing.T) {
+	set := &PromTarget{Namespace: "vm", Service: "gone", Port: 8428}
+	h := newHarnessWith(t, func(o *Options) {
+		o.Sources = func(string) *PromTarget { copied := *set; return &copied }
+	}, promService("monitoring", "kps-prometheus", map[string]string{"app": "kube-prometheus-stack-prometheus"}, "http-web", 9090))
+	h.tunnels.err = errors.New("no endpoints")
+	h.answer(rawAnswers{})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindUnreachable || found.Prometheus == nil || found.Prometheus.Address() != set.Address() {
+		t.Fatalf("kind %q target %+v (%s)", found.Kind, found.Prometheus, found.Detail)
+	}
+}
+
+// The server profile never reads it: the deployment chooses there.
+func TestTheServerProfileIgnoresSourcesSetInSettings(t *testing.T) {
+	configured := &PromTarget{Namespace: "monitoring", Service: "kps-prometheus", Port: 9090}
+	h := newHarnessWith(t, func(o *Options) {
+		o.Configured, o.Prometheus = true, configured
+		o.Sources = func(string) *PromTarget { return &PromTarget{Namespace: "team-a", Service: "x", Port: 9090} }
+	})
+	h.answer(rawAnswers{configured.proxyPath(endpointHealth): {body: []byte("Prometheus Server is Healthy.")}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Prometheus == nil || found.Prometheus.Address() != configured.Address() {
+		t.Fatalf("target %+v (%s)", found.Prometheus, found.Detail)
+	}
 }
