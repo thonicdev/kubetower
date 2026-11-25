@@ -104,9 +104,12 @@ describe("What's new", () => {
     const box = await shown('welcome');
     expect(box.querySelector('h2')?.textContent).toBe('Welcome to KubeTower');
     const tiles = [...box.querySelectorAll<HTMLElement>('[data-whats-new-tour] li')];
-    expect(tiles.map((tile) => tile.textContent)).toEqual(['Clusters', 'Resources', 'Dock', 'Extras', 'Settings']);
-    // What each holds is a tooltip, not a line under the label.
+    expect(tiles.map((tile) => tile.querySelector('.font-medium')?.textContent)).toEqual(['Clusters', 'Resources', 'Dock', 'Extras', 'Settings']);
+    // What each holds is a tooltip, not a line under the label: a keyboard
+    // reaches it, and a screen reader reads it (#100).
     expect(tiles.every((tile) => (tile.title ?? '') !== '')).toBe(true);
+    expect(tiles.every((tile) => tile.tabIndex === 0)).toBe(true);
+    expect(tiles.every((tile) => tile.querySelector('.sr-only')?.textContent === tile.title)).toBe(true);
   });
 
   it('aggregates the highlights of every release since the one seen, with the changelog', async () => {
@@ -221,6 +224,17 @@ describe("What's new", () => {
     await waitFor(() => {
       expect(box.querySelector('[data-whats-new-failed]')?.textContent).toBe('Not saved');
     });
+    // Inside a status region that was there before it, so it is announced (#100).
+    expect(box.querySelector('[data-whats-new-failed]')?.closest('[role="status"]')).not.toBeNull();
+  });
+
+  it('keeps an empty status region in the banner before anything fails', async () => {
+    console('0.3.0', { desktop: false });
+    mountApp('/');
+    const box = await shown('welcome');
+    const status = box.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status?.textContent).toBe('');
   });
 });
 
