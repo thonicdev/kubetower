@@ -19,6 +19,14 @@ per release. Keep the bold lead short: it is all the banner draws.
   VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
   Overview. Extras can now draw a tile on the Overview (#90).
 
+### Changed
+
+- **Welcome and What's new open in a dialog**, the one an extra's About
+  uses, instead of a band atop the page. Welcome shows the KubeTower mark and
+  a card per view (Clusters, Overview, Network Inspector, Runtime Inspector,
+  Event Intelligence, Extras), each opening its view. What's new marks each
+  highlight Added or Fixed (#107).
+
 ### Fixed
 
 - **Updates install from the Windows window.** Installing an update from the
