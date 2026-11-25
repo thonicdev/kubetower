@@ -9,6 +9,16 @@ release's highlights: every entry under `### Added`, and an entry under
 `### Fixed` that ends with `<!-- highlight -->`, by its bold lead, at most five
 per release. Keep the bold lead short: it is all the banner draws.
 
+## Unreleased
+
+### Added
+
+- **Storage Inspector**, a new read-only extra (key `storage`): the
+  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their orphans,
+  how full each claim is (graded at 80 and 90 %), and each claim's last
+  VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
+  Overview. Extras can now draw a tile on the Overview (#90).
+
 ## 0.2.0 — Runtime Inspector, Event Intelligence timeline and What's new
 
 ### Added
@@ -50,14 +60,6 @@ per release. Keep the bold lead short: it is all the banner draws.
   console shows a tour of the main views, or the highlights of every release
   since the last one seen, read from this file built into the console.
   **Settings › Infos › What's new** opens it again (#80, #83).
-
-### Added
-
-- **Storage Inspector**, a new read-only extra (key `storage`): the
-  PersistentVolumes, PersistentVolumeClaims and StorageClasses, their orphans,
-  how full each claim is (graded at 80 and 90 %), and each claim's last
-  VolumeSnapshot; a Storage tab on claims and pods, and a tile on the
-  Overview. Extras can now draw a tile on the Overview (#90).
 
 ### Changed
 
