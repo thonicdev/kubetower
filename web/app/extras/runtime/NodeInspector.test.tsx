@@ -88,7 +88,7 @@ describe("the Node.js tab's inspector", () => {
 
   it('says in one line that no Node.js process was found', async () => {
     stub({
-      [`GET ${BASE}`]: { body: closed },
+      [`POST ${BASE}`]: { body: closed },
       [`POST ${BASE}/inspector?confirm=confirm`]: { status: 422, body: { code: 'no_node_process', message: 'No Node.js process was found in this container.' } },
     });
     mount(pane);
