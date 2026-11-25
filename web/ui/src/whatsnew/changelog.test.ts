@@ -76,6 +76,23 @@ describe('the changelog', () => {
     ]);
   });
 
+  it('keeps an extra listed past the limit, before the cut (#125)', () => {
+    const plain = ['One', 'Two', 'Three', 'Four', 'Five'].map((word) => `- **${word}.**`).join('\n');
+    const [one] = parseChangelog(`## 1.0.0\n\n### Added\n\n${plain}\n- **Storage Inspector** <!-- extra: storage -->\n`);
+    expect(one?.highlights.map((highlight) => [highlight.title, highlight.extra])).toEqual([
+      ['Storage Inspector', 'storage'],
+      ['One', undefined],
+      ['Two', undefined],
+      ['Three', undefined],
+      ['Four', undefined],
+    ]);
+  });
+
+  it('reads an extra key in lower case, with _ as - (#125)', () => {
+    const [one] = parseChangelog('## 1.0.0\n\n### Added\n\n- **Saved views** <!--extra:Saved_Views-->\n');
+    expect(one?.highlights).toEqual([{ title: 'Saved views', kind: 'added', extra: 'saved-views' }]);
+  });
+
   it('keeps at most MAX_HIGHLIGHTS per release', () => {
     expect(releases[0]?.highlights).toHaveLength(MAX_HIGHLIGHTS);
     expect(releases[0]?.highlights[0]?.title).toBe('Saved views');
