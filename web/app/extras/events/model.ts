@@ -167,80 +167,21 @@ export function objectsWord(cause: Pick<Cause, 'objects' | 'kinds'>): string {
   return `${String(cause.objects)} ${noun}${cause.objects === 1 ? '' : 's'}`;
 }
 
-/** Where on the timeline a time falls, 0 to 100, clamped to the window. */
-export function place(time: string, since: string, until: string): number {
-  const from = Date.parse(since);
-  const span = Date.parse(until) - from;
-  if (!Number.isFinite(span) || span <= 0) return 0;
-  return Math.max(0, Math.min(100, ((Date.parse(time) - from) / span) * 100));
-}
-
-/** A bar's thickness in pixels, growing with the count and bounded. */
-export function thickness(count: number): number {
-  return Math.round(Math.min(10, 2 + Math.log2(Math.max(1, count))));
-}
-
-/** A lane bar's thickness from the density of its Events: the count over its span in minutes. */
-export function densityPx(count: number, first: number, last: number): number {
-  const minutes = Math.max(1, (last - first) / 60_000);
-  return Math.round(Math.min(14, 4 + 3 * Math.log2(1 + count / minutes)));
-}
-
-export interface Bar {
-  /** The workload the objects belong to, or the object itself. */
-  name: string;
-  namespace: string;
-  /** How many objects the lane stands for. */
-  objects: number;
-  count: number;
-  reason: string;
-  type: string;
-  /** The cause it belongs to: reason and message, as the list keys it. */
-  cause: string;
-  /** The changes its groups came after. */
-  sinces: string[];
-  first: number;
-  last: number;
-  px: number;
-}
-
-/** The most lanes the timeline draws; the busiest, the rest stay in the list. */
-export const MAX_BARS = 24;
-
 export function causeKey(c: Pick<Cause, 'reason' | 'message'>): string {
   return `${c.reason}/${c.message}`;
 }
 
 /**
- * The timeline's lanes: one per workload (or object) and cause, from the
- * first to the last seen of its groups, earliest first, the busiest kept.
+ * The causes on screen: Normal ones only once asked for, unless the Type
+ * filter already chose a type.
  */
-export function bars(causes: readonly Cause[]): { drawn: Bar[]; total: number } {
-  const lanes = new Map<string, Bar>();
-  for (const cause of causes) {
-    const cKey = causeKey(cause);
-    for (const group of cause.groups) {
-      const name = group.workloadName !== undefined && group.workloadName !== '' ? group.workloadName : group.name;
-      const key = `${cKey}\u0000${group.namespace}\u0000${name}`;
-      const first = Date.parse(group.firstSeen);
-      const last = Math.max(first, Date.parse(group.lastSeen));
-      const lane = lanes.get(key);
-      if (lane === undefined) {
-        lanes.set(key, { name, namespace: group.namespace, objects: 1, count: group.count, reason: cause.reason, type: cause.type, cause: cKey, sinces: group.since === undefined ? [] : [group.since], first, last, px: 0 });
-        continue;
-      }
-      lane.objects += 1;
-      lane.count += group.count;
-      lane.first = Math.min(lane.first, first);
-      lane.last = Math.max(lane.last, last);
-      if (group.since !== undefined && !lane.sinces.includes(group.since)) lane.sinces.push(group.since);
-    }
-  }
-  const all = [...lanes.values()];
-  for (const b of all) b.px = densityPx(b.count, b.first, b.last);
-  const drawn = all.length > MAX_BARS ? [...all].sort((a, b) => b.count - a.count).slice(0, MAX_BARS) : all;
-  drawn.sort((a, b) => a.first - b.first || b.count - a.count);
-  return { drawn, total: all.length };
+export function shownTypes(causes: readonly Cause[], filters: Pick<Filters, 'type'>, normal: boolean): Cause[] {
+  return filters.type !== '' || normal ? [...causes] : causes.filter((c) => c.type !== 'Normal');
+}
+
+/** The Events of the Normal causes, for the toggle's figure. */
+export function normalCount(causes: readonly Cause[]): number {
+  return causes.reduce((n, c) => (c.type === 'Normal' ? n + c.count : n), 0);
 }
 
 export interface Axis {
@@ -252,17 +193,332 @@ export interface Axis {
 const PAD = 0.04;
 
 /**
- * The axis: from the earliest drawn first-seen or change time, a little
- * before it, to now; never before the window's own start.
+ * The axis: from the earliest first-seen of the causes drawn or change time, a
+ * little before it, to now; never before the window's own start.
  */
-export function axisOf(drawn: readonly Bar[], changes: readonly Change[], since: string, until: string): Axis {
+export function axisOf(causes: readonly Cause[], changes: readonly Change[], since: string, until: string): Axis {
   const end = Date.parse(until);
   const floor = Date.parse(since);
   let earliest = end;
-  for (const b of drawn) earliest = Math.min(earliest, b.first);
+  for (const c of causes) for (const g of c.groups) earliest = Math.min(earliest, Date.parse(g.firstSeen));
   for (const c of changes) earliest = Math.min(earliest, Date.parse(c.time));
   const span = Math.max(60_000, end - earliest);
   return { start: Math.max(floor, earliest - span * PAD), end };
+}
+
+/** The cells each row of the timeline is cut into. */
+export const BINS = 40;
+
+/** The cell a time falls in, clamped to the axis. */
+export function binOf(ms: number, axis: Axis): number {
+  const span = axis.end - axis.start;
+  if (span <= 0) return 0;
+  return Math.max(0, Math.min(BINS - 1, Math.floor(((ms - axis.start) / span) * BINS)));
+}
+
+/**
+ * Adds `count` Events to `bins`, spread evenly over the time from `first` to
+ * `last`: the answer holds an object's first and last Event and their count,
+ * never the time of each one. Only the share that falls inside the axis is
+ * added, so an object that began days before the window weighs what its rate
+ * says, not its whole count.
+ */
+export function spread(bins: number[], first: number, last: number, count: number, axis: Axis): void {
+  const span = axis.end - axis.start;
+  if (span <= 0 || count <= 0) return;
+  const end = Math.max(first, last);
+  if (end === first) {
+    if (first >= axis.start && first <= axis.end) bins[binOf(first, axis)] = (bins[binOf(first, axis)] ?? 0) + count;
+    return;
+  }
+  const from = Math.max(first, axis.start);
+  const to = Math.min(end, axis.end);
+  if (to < from) return;
+  const rate = count / (end - first);
+  const step = span / BINS;
+  for (let i = binOf(from, axis); i <= binOf(to, axis); i++) {
+    const lo = Math.max(from, axis.start + step * i);
+    const hi = Math.min(to, axis.start + step * (i + 1));
+    if (hi > lo) bins[i] = (bins[i] ?? 0) + rate * (hi - lo);
+  }
+}
+
+/** The largest value of a list, with no spread of arguments: a big answer holds many thousands. */
+export function maxOf(values: Iterable<number>, floor = 0): number {
+  let m = floor;
+  for (const v of values) if (v > m) m = v;
+  return m;
+}
+
+/** What one cell stands for: "−12 min to −10 min". */
+export function binSpan(i: number, axis: Axis): string {
+  const step = (axis.end - axis.start) / BINS;
+  // A cell under a minute wide is said to the second, or both ends read alike.
+  const label = step < 60_000 ? secondsLabel : tickLabel;
+  return `${label(axis.start + step * i, axis.end)} to ${label(axis.start + step * (i + 1), axis.end)}`;
+}
+
+function secondsLabel(ms: number, end: number): string {
+  const s = Math.round((end - ms) / 1000);
+  if (s <= 0) return 'now';
+  const min = Math.floor(s / 60);
+  const rest = s % 60;
+  if (min === 0) return `−${String(rest)} s`;
+  return `−${String(min)} min${rest === 0 ? '' : ` ${String(rest)} s`}`;
+}
+
+/** One reason of one workload: a row of the timeline. */
+export interface Lane {
+  /** `<namespace>/<workload>/<reason>/<type>`. */
+  key: string;
+  workload: string;
+  namespace: string;
+  reason: string;
+  type: string;
+  count: number;
+  /** The objects it stands for. */
+  objects: number;
+  bins: number[];
+  /** The changes its groups came after. */
+  sinces: Set<string>;
+  /** The causes it is part of, as the list keys them. */
+  causes: Set<string>;
+  first: number;
+  last: number;
+}
+
+/** The workload a group belongs to: its own, the nodes for a Node, else the object. */
+export function workloadOf(g: Pick<ObjectGroup, 'kind' | 'name' | 'workloadName'>): string {
+  if (g.workloadName !== undefined && g.workloadName !== '') return g.workloadName;
+  return g.kind === 'Node' ? 'nodes' : g.name;
+}
+
+/** The lanes: one per workload, reason and type, binned over the axis, busiest first. */
+export function lanesOf(causes: readonly Cause[], axis: Axis): Lane[] {
+  const lanes = new Map<string, Lane>();
+  for (const c of causes) {
+    const cKey = causeKey(c);
+    for (const g of c.groups) {
+      const workload = workloadOf(g);
+      const key = `${g.namespace}/${workload}/${c.reason}/${c.type}`;
+      let lane = lanes.get(key);
+      if (lane === undefined) {
+        lane = { key, workload, namespace: g.namespace, reason: c.reason, type: c.type, count: 0, objects: 0, bins: Array.from({ length: BINS }, () => 0), sinces: new Set(), causes: new Set(), first: Infinity, last: -Infinity };
+        lanes.set(key, lane);
+      }
+      const first = Date.parse(g.firstSeen);
+      const last = Math.max(first, Date.parse(g.lastSeen));
+      lane.count += g.count;
+      lane.objects += 1;
+      lane.first = Math.min(lane.first, first);
+      lane.last = Math.max(lane.last, last);
+      lane.causes.add(cKey);
+      if (g.since !== undefined && g.since !== '') lane.sinces.add(g.since);
+      spread(lane.bins, first, last, g.count, axis);
+    }
+  }
+  return [...lanes.values()].sort((a, b) => b.count - a.count || a.first - b.first || (a.key < b.key ? -1 : 1));
+}
+
+/** A workload's rows: its lanes, and their sum. */
+export interface WorkloadRow {
+  /** `<namespace>/<workload>`. */
+  key: string;
+  name: string;
+  namespace: string;
+  lanes: Lane[];
+  count: number;
+  bins: number[];
+  /** Warning when any lane is. */
+  type: string;
+}
+
+/** The lanes gathered per workload, busiest first. */
+export function workloadsOf(lanes: readonly Lane[]): WorkloadRow[] {
+  const out = new Map<string, WorkloadRow>();
+  for (const l of lanes) {
+    const key = `${l.namespace}/${l.workload}`;
+    let w = out.get(key);
+    if (w === undefined) {
+      w = { key, name: l.workload, namespace: l.namespace, lanes: [], count: 0, bins: Array.from({ length: BINS }, () => 0), type: l.type };
+      out.set(key, w);
+    }
+    w.lanes.push(l);
+    w.count += l.count;
+    if (l.type === 'Warning') w.type = 'Warning';
+    l.bins.forEach((v, i) => (w.bins[i] = (w.bins[i] ?? 0) + v));
+  }
+  return [...out.values()].sort((a, b) => b.count - a.count || (a.key < b.key ? -1 : 1));
+}
+
+/** The most workloads the timeline draws at first, and how many more each press adds. */
+export const PAGE_WORKLOADS = 24;
+
+/** How long between two node changes of one kind before they stop being one marker. */
+export const NODE_GAP_MS = 5 * 60_000;
+
+export type NodeKind = 'node-added' | 'node-notready';
+
+/** Node changes of one kind, each within NODE_GAP_MS of the one before. */
+export interface NodeGroup {
+  id: string;
+  kind: NodeKind;
+  changes: Change[];
+  first: number;
+  last: number;
+}
+
+const isNode = (c: Change): c is Change & { kind: NodeKind } => c.kind === 'node-added' || c.kind === 'node-notready';
+
+/** The node changes in groups, earliest first; every other change as it is. */
+export function groupNodes(changes: readonly Change[], gapMs = NODE_GAP_MS): { groups: NodeGroup[]; others: Change[] } {
+  const others = changes.filter((c) => !isNode(c));
+  const nodes = changes.filter(isNode).sort((a, b) => Date.parse(a.time) - Date.parse(b.time) || (a.id < b.id ? -1 : 1));
+  const groups: NodeGroup[] = [];
+  const open = new Map<NodeKind, NodeGroup>();
+  for (const c of nodes) {
+    const t = Date.parse(c.time);
+    const g = open.get(c.kind);
+    if (g !== undefined && t - g.last <= gapMs) {
+      g.changes.push(c);
+      g.last = t;
+      continue;
+    }
+    const next: NodeGroup = { id: `nodes/${c.id}`, kind: c.kind, changes: [c], first: t, last: t };
+    groups.push(next);
+    open.set(c.kind, next);
+  }
+  return { groups, others };
+}
+
+/**
+ * A track per node group, so two groups that share a cell (nodes added and
+ * nodes not ready at once, or two groups in one wide cell) sit one above the
+ * other rather than one over the other; and how many tracks there are.
+ */
+export function nodeTracks(groups: readonly NodeGroup[], axis: Axis): { track: Map<string, number>; tracks: number } {
+  const ends: number[] = [];
+  const track = new Map<string, number>();
+  const sorted = [...groups].sort((a, b) => binOf(a.first, axis) - binOf(b.first, axis) || (a.id < b.id ? -1 : 1));
+  for (const g of sorted) {
+    const from = binOf(g.first, axis);
+    let t = ends.findIndex((end) => end < from);
+    if (t === -1) t = ends.length;
+    ends[t] = binOf(g.last, axis);
+    track.set(g.id, t);
+  }
+  return { track, tracks: Math.max(1, ends.length) };
+}
+
+/** A node group in a few words: "+17 nodes", "node ip-10-0-1-5 not ready". */
+export function nodeGroupLabel(g: NodeGroup): string {
+  if (g.changes.length === 1) return changeLabel(g.changes[0] as Change);
+  return `${String(g.changes.length)} nodes ${g.kind === 'node-added' ? 'added' : 'not ready'}`;
+}
+
+/** A change and the Warnings that came after it, as the cards above the timeline say it. */
+export interface Correlation {
+  /** The change's ID, or its node group's. */
+  id: string;
+  label: string;
+  kind: Change['kind'];
+  /** Every change it stands for: one, or a node group's. */
+  changes: string[];
+  /** Each reason, with its Events and its objects. */
+  reasons: { reason: string; count: number; objects: number }[];
+  objects: number;
+  count: number;
+}
+
+/**
+ * The Warning groups that came after a change, gathered per change (a node
+ * group's changes as one), most Events first.
+ */
+export function correlations(causes: readonly Cause[], changes: readonly Change[], groups: readonly NodeGroup[]): Correlation[] {
+  const groupOf = new Map<string, NodeGroup>();
+  for (const g of groups) for (const c of g.changes) groupOf.set(c.id, g);
+  const byId = new Map(changes.map((c) => [c.id, c]));
+  const out = new Map<string, { c: Correlation; reasons: Map<string, { count: number; objects: Set<string> }>; objects: Set<string> }>();
+  for (const cause of causes) {
+    if (cause.type !== 'Warning') continue;
+    for (const g of cause.groups) {
+      const change = g.since === undefined ? undefined : byId.get(g.since);
+      if (change === undefined) continue;
+      const ng = groupOf.get(change.id);
+      const id = ng?.id ?? change.id;
+      let entry = out.get(id);
+      if (entry === undefined) {
+        entry = {
+          c: { id, label: ng === undefined ? changeLabel(change) : nodeGroupLabel(ng), kind: change.kind, changes: ng?.changes.map((x) => x.id) ?? [change.id], reasons: [], objects: 0, count: 0 },
+          reasons: new Map(),
+          objects: new Set(),
+        };
+        out.set(id, entry);
+      }
+      const object = `${g.kind}/${g.namespace}/${g.name}`;
+      entry.c.count += g.count;
+      entry.objects.add(object);
+      let r = entry.reasons.get(cause.reason);
+      if (r === undefined) {
+        r = { count: 0, objects: new Set() };
+        entry.reasons.set(cause.reason, r);
+      }
+      r.count += g.count;
+      r.objects.add(object);
+    }
+  }
+  return [...out.values()]
+    .map(({ c, reasons, objects }) => ({
+      ...c,
+      objects: objects.size,
+      reasons: [...reasons].map(([reason, r]) => ({ reason, count: r.count, objects: r.objects.size })).sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1)),
+    }))
+    .sort((a, b) => b.count - a.count || (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * The Warnings the lists hold against those the tile counted, when the answer
+ * was cut: undefined when it was not, or when the tile has no figure.
+ */
+export function heldOf(answer: Pick<Answer, 'truncated' | 'causes' | 'tiles'>): { held: number; total: number } | undefined {
+  if (!answer.truncated || answer.tiles.warnings.state !== 'read') return undefined;
+  // The groups the lists hold, not the causes' counts: the server counts those past the groups it keeps.
+  let held = 0;
+  for (const c of answer.causes) if (c.type === 'Warning') for (const g of c.groups) held += g.count;
+  return { held, total: Math.max(held, answer.tiles.warnings.count) };
+}
+
+/** What is lit: a change, a cause, or the changes of a correlation. Nothing lit means nothing dims. */
+export type Focus = { kind: 'change' | 'cause'; id: string } | { kind: 'correlation'; id: string; ids: readonly string[] } | null;
+
+/** Whether a change the focus names: itself, one of a correlation's, or the change a focused cause came after. */
+export function changeLit(focus: Focus, id: string, causes: readonly Cause[]): boolean {
+  if (focus === null) return false;
+  if (focus.kind === 'change') return focus.id === id;
+  if (focus.kind === 'correlation') return focus.ids.includes(id);
+  return causes.find((c) => causeKey(c) === focus.id)?.since === id;
+}
+
+/** Whether a lane is lit: it is of the focused cause, or came after a focused change. */
+export function laneLit(focus: Focus, lane: Pick<Lane, 'sinces' | 'causes'>): boolean {
+  if (focus === null) return false;
+  if (focus.kind === 'cause') return lane.causes.has(focus.id);
+  const ids = 'ids' in focus ? focus.ids : [focus.id];
+  for (const s of lane.sinces) if (ids.includes(s)) return true;
+  return false;
+}
+
+/** Whether a cause of the list is lit, or only not dimmed: itself, or after the focused change. */
+export function causeLit(focus: Focus, cause: Cause): boolean {
+  if (focus === null) return false;
+  if (focus.kind === 'cause') return focus.id === causeKey(cause);
+  const ids = 'ids' in focus ? focus.ids : [focus.id];
+  return (cause.since !== undefined && ids.includes(cause.since)) || cause.groups.some((g) => g.since !== undefined && ids.includes(g.since));
+}
+
+/** "1 650", "2 012": thousands apart with a space. */
+export function figure(n: number): string {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
 /** Where a time falls on the axis, 0 to 100. */

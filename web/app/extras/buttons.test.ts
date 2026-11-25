@@ -24,10 +24,11 @@ const BOXED = /\brounded(?:-md|-sm)?(?!-)[^`"']*\bborder\b(?!-)/;
 
 /**
  * Buttons that are not a button's box, named by the attribute that says what
- * they are: a tile with its count (`data-tile`), and the plain arrow back of a
- * page opened from elsewhere (`data-back`).
+ * they are: a tile with its count (`data-tile`), a card with its figure that
+ * lights what came after a change (`data-correlation`), and the plain arrow
+ * back of a page opened from elsewhere (`data-back`).
  */
-const NOT_A_BUTTON = ['data-tile', 'data-back'];
+const NOT_A_BUTTON = ['data-tile', 'data-correlation', 'data-back'];
 
 export function boxedByHand(name: string, text: string): string[] {
   const file = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

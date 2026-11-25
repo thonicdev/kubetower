@@ -12,6 +12,7 @@ import {
 } from './certmanager.fixture';
 import { DNS_ANSWERS, DNS_FAILED, DNS_FORWARD_ANSWERS, DNS_NO_METRICS_ANSWERS, DNS_REFUSED } from './dns.fixture';
 import { EVENTS_ANSWERS, EVENTS_LONG_ANSWERS } from './events.fixture';
+import { EVENTS_NODES_ANSWERS } from './events-nodes.fixture';
 import { jvmClassHistogram } from './jvm-histogram.fixture';
 import { jvmMemoryHistory } from './jvm-history.fixture';
 import { jvmThreadDump } from './jvm-threads.fixture';
@@ -1134,6 +1135,8 @@ export const EXTRA_SCENES = {
   'extra-events-namespace': { key: 'events', answers: EVENTS_ANSWERS(EXTRA_CLUSTER), at: 'x/events?namespace=shop' },
   // The same page with names as long as Kubernetes allows (#34).
   'extra-events-long': { key: 'events', answers: EVENTS_LONG_ANSWERS(EXTRA_CLUSTER) },
+  // 17 nodes added in 20 minutes and about two thousand Events (#86).
+  'extra-events-nodes': { key: 'events', answers: EVENTS_NODES_ANSWERS(EXTRA_CLUSTER) },
   // Not pages: the compact line on a Deployment's Details, and its Events tab, each alone.
   'extra-events-line': {
     key: 'events',
