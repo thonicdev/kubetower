@@ -2375,3 +2375,99 @@ func TestOnlyTheSignJobHoldsTheKey(t *testing.T) {
 		t.Errorf("release.yml's verify job lets a run started by hand build from a branch; the release Environment would refuse its sign job at the end")
 	}
 }
+
+// githubPathMatch reads a workflow's `paths` filter as GitHub does: each
+// pattern in order, a `!` one excluding, the last that matches deciding; `*`
+// stops at `/`, `**` does not, and `**/` may match nothing.
+func githubPathMatch(t *testing.T, patterns []any, file string) bool {
+	t.Helper()
+	run := false
+	for _, p := range patterns {
+		pat := fmt.Sprint(p)
+		negate := strings.HasPrefix(pat, "!")
+		pat = strings.TrimPrefix(pat, "!")
+		var re strings.Builder
+		re.WriteString("^")
+		for i := 0; i < len(pat); i++ {
+			switch {
+			case strings.HasPrefix(pat[i:], "**/"):
+				re.WriteString("(?:.*/)?")
+				i += 2
+			case strings.HasPrefix(pat[i:], "**"):
+				re.WriteString(".*")
+				i++
+			case pat[i] == '*':
+				re.WriteString("[^/]*")
+			case pat[i] == '?':
+				re.WriteString("[^/]")
+			default:
+				re.WriteString(regexp.QuoteMeta(pat[i : i+1]))
+			}
+		}
+		re.WriteString("$")
+		if regexp.MustCompile(re.String()).MatchString(file) {
+			run = !negate
+		}
+	}
+	return run
+}
+
+// TestACHANGELOGChangeRunsCI (#98). The front end reads CHANGELOG.md at build
+// time for What's new, so a pull request or a push to main changing it alone
+// must run ci.yml - its front-end build and tests - and security.yml, whose run
+// release.yml's verify asks for on the tagged commit, while other Markdown,
+// LICENSE and .gitignore alone still do not.
+func TestACHANGELOGChangeRunsCI(t *testing.T) {
+	for _, workflow := range []string{"ci.yml", "security.yml"} {
+		t.Run(workflow, func(t *testing.T) { changelogStarts(t, workflow) })
+	}
+}
+
+func changelogStarts(t *testing.T, workflow string) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", workflow))
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s is not in this tree, so what starts it is UNCHECKED here: %v", workflow, err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	on, _ := doc["on"].(map[string]any)
+	if on == nil {
+		on, _ = doc["true"].(map[string]any)
+	}
+	for _, event := range []string{"pull_request", "push"} {
+		trigger, _ := on[event].(map[string]any)
+		if trigger == nil {
+			t.Errorf("%s has no %s trigger", workflow, event)
+			continue
+		}
+		if _, ok := trigger["paths-ignore"]; ok {
+			t.Errorf("%s's %s trigger has paths-ignore, which cannot let CHANGELOG.md back in", workflow, event)
+		}
+		patterns, _ := trigger["paths"].([]any)
+		if len(patterns) == 0 {
+			t.Errorf("%s's %s trigger has no paths filter", workflow, event)
+			continue
+		}
+		for file, want := range map[string]bool{
+			"CHANGELOG.md":                     true,
+			"web/ui/src/whatsnew/changelog.ts": true,
+			"internal/web/server.go":           true,
+			".github/workflows/ci.yml":         true,
+			"README.md":                        false,
+			"docs/EXTRAS.md":                   false,
+			"web/ui/README.md":                 false,
+			"LICENSE":                          false,
+			".gitignore":                       false,
+			"docs/CHANGELOG.md":                false,
+		} {
+			if got := githubPathMatch(t, patterns, file); got != want {
+				t.Errorf("%s's %s trigger %v on a change to %s alone runs: %v, want %v", workflow, event, patterns, file, got, want)
+			}
+		}
+	}
+}

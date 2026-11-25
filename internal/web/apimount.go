@@ -1127,8 +1127,17 @@ type apiSettings struct{ s *Server }
 // apiUpdates is Check now, over SetupInfo.CheckUpdates.
 type apiUpdates struct{ s *Server }
 
+// It carries the install's state as the settings read does: the page writes
+// this answer over its whole update line, and an answer without it lost the
+// Install button, the checkbox and the running install's poll until a reload
+// (#96).
 func (u apiUpdates) CheckUpdates(ctx context.Context) api.SettingsUpdate {
-	return *settingsUpdate(u.s.setup.CheckUpdates(ctx))
+	out := *settingsUpdate(u.s.setup.CheckUpdates(ctx))
+	if u.s.setup.Installer != nil {
+		install := updateInstallOf(u.s, u.s.setup.Installer.Status())
+		out.Install = &install
+	}
+	return out
 }
 
 // updateCheck is api.Deps.Updates: nil, **as an interface**, where nothing
