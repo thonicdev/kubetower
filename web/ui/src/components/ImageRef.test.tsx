@@ -61,7 +61,8 @@ describe('an image reference', () => {
     expect(repo?.textContent).toBe('registry.internal.example.com:5000/platform-team/payments/checkout-api-service');
     const badge = document.querySelector('[data-image-version]');
     expect(badge?.textContent).toBe('2.14.3-rc.2');
-    expect(badge?.className).toContain('shrink-0');
+    // The repository gives way first: it shrinks far faster than the badge.
+    expect(repo?.className).toContain('shrink-[999]');
     expect(document.querySelector('button[aria-label="Copy image"]')).not.toBeNull();
   });
 

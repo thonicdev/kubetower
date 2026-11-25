@@ -83,18 +83,19 @@ export function ImageRef({
       <span className="flex min-w-0 items-center font-mono text-xs">
         {/* rtl moves the ellipsis to the left; the bdi keeps the name itself
             left to right, slashes and dots in place. */}
-        <span data-image-repository="" dir="rtl" className="min-w-0 truncate text-left text-muted">
+        <span data-image-repository="" dir="rtl" className="min-w-0 shrink-[999] truncate text-left text-muted">
           <bdi dir="ltr">{parts.repository}</bdi>
         </span>
         <span data-image-separator="" className="shrink-0 text-muted">
           {separator}
         </span>
-        {/* Never cut while it fits; a tag longer than the line (up to 128
-            characters) is cut at its end rather than past the tile, whole in
-            its hover. */}
+        {/* Never cut while the repository can give way: the repository shrinks
+            far faster. A tag longer than the line (up to 128
+            characters) is then cut at its end, inside the line, whole in its
+            hover - the separator and the copy button keep their room. */}
         <span
           data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
-          className={`min-w-0 max-w-full shrink-0 truncate rounded-sm border px-1 text-2xs leading-4 ${
+          className={`min-w-0 max-w-full shrink truncate rounded-sm border px-1 text-2xs leading-4 ${
             parts.implicit ? 'border-line text-muted' : 'border-accent/40 bg-accent/10 text-fg'
           }`}
           title={versionTitle}
