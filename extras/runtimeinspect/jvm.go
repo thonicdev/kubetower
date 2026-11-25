@@ -108,7 +108,10 @@ func (JVM) Legacy() []string { return []string{legacyKey} }
 // on the person's click (inspect.go, threads.go, histogram.go), and the heap
 // dump, whose POST answers the file itself (heapdump.go); and Go's pprof
 // through a tunnel to the pod (pprof.go): one GET that asks whether it answers,
-// and POSTs that read it. Nothing here changes a cluster.
+// and POSTs that read it; and Node.js's inspector through the same tunnel
+// (node.go): one GET, the confirmed POST that opens it with a fixed script
+// through Host.Exec, and POSTs that read through it. Nothing here changes a
+// cluster; opening the inspector changes the process, until it restarts.
 func (x JVM) Routes(h extension.Host) []extension.Route {
 	return []extension.Route{
 		{Method: http.MethodGet, Pattern: "/{$}", Handler: x.inventory(h)},
@@ -125,5 +128,8 @@ func (x JVM) Routes(h extension.Host) []extension.Route {
 		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/pprof", Handler: x.pprofState(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/goroutines", Handler: x.pprofGoroutines(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/pprof/{profile}", Handler: x.pprofDownload(h)},
+		{Method: http.MethodGet, Pattern: "/pod/{namespace}/{name}/{container}/node", Handler: x.nodeState(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/inspector", Handler: x.nodeOpen(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/{read}", Handler: x.nodeRead(h)},
 	}
 }

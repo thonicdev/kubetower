@@ -26,8 +26,8 @@ func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 		t.Error("the catalog entry is empty")
 	}
 	routes := x.Routes(newHost(t))
-	if len(routes) != 14 {
-		t.Fatalf("%d routes, want the inventory, the column, one pod, inspect, reveal, threads, history, histogram, the heap dump, the recording, the jcmd probe and the three pprof routes", len(routes))
+	if len(routes) != 17 {
+		t.Fatalf("%d routes, want the inventory, the column, one pod, inspect, reveal, threads, history, histogram, the heap dump, the recording, the jcmd probe, the three pprof routes and the three Node.js routes", len(routes))
 	}
 	// The reads are GETs; the three that run jcmd are POSTs, so the console's
 	// request header and origin check hold them.
@@ -35,7 +35,7 @@ func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 		want := http.MethodGet
 		if strings.HasSuffix(r.Pattern, "/inspect") || strings.HasSuffix(r.Pattern, "/reveal") ||
 			strings.HasSuffix(r.Pattern, "/threads") || strings.HasSuffix(r.Pattern, "/histogram") || strings.HasSuffix(r.Pattern, "/heapdump") ||
-			strings.HasSuffix(r.Pattern, "/recording") || strings.Contains(r.Pattern, "/pprof/") {
+			strings.HasSuffix(r.Pattern, "/recording") || strings.Contains(r.Pattern, "/pprof/") || strings.Contains(r.Pattern, "/node/") {
 			want = http.MethodPost
 		}
 		if r.Method != want {

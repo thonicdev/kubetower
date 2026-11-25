@@ -1040,3 +1040,95 @@ export async function pprofDownload(
     throw problemOf(error);
   }
 }
+
+// --- Node.js's inspector (`node.go`) --------------------------------------------
+
+/** `GET …/{container}/node`: the inspector's port and whether it answers. */
+export interface NodeState {
+  port: number;
+  source: 'command' | 'env' | 'default';
+  started: boolean;
+  sigusr1Disabled: boolean;
+  open: boolean;
+  detail?: string;
+  pid?: number;
+}
+
+/** What opening the inspector answered: open, or the processes to choose from. */
+export type NodeOpened = { state: 'open'; answer: NodeState } | { state: 'choose'; pids: number[] };
+
+/** The diagnostic report, its secret-looking environment values masked. */
+export interface NodeReport {
+  report: Record<string, unknown>;
+  masked: number;
+}
+
+/** The seconds a CPU profile may last: the route refuses any other. */
+export const NODE_PROFILE_SECONDS = [10, 30, 60] as const;
+
+function nodePath(cluster: string, namespace: string, name: string, container: string): string {
+  return `${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/node`;
+}
+
+export function nodeQuery(cluster: string, namespace: string, name: string, container: string) {
+  return queryOptions({
+    queryKey: [KEY, 'node', cluster, namespace, name, container] as const,
+    queryFn: async ({ signal }) => {
+      try {
+        return await request<NodeState>(nodePath(cluster, namespace, name, container), { signal });
+      } catch (error) {
+        throw problemOf(error);
+      }
+    },
+    staleTime: 30_000,
+    gcTime: 60_000,
+    retry: false,
+    // Each probe opens an audited tunnel: once when the tab opens, never
+    // again because the window came back into focus or online.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export async function openInspector(cluster: string, namespace: string, name: string, container: string, pid?: number): Promise<NodeOpened> {
+  const query = new URLSearchParams({ confirm: CONFIRM_WORD });
+  if (pid !== undefined) query.set('pid', String(pid));
+  try {
+    const answer = await request<NodeState>(`${nodePath(cluster, namespace, name, container)}/inspector?${query.toString()}`, { method: 'POST' });
+    return { state: 'open', answer };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      const body = error.body as { pids?: unknown } | undefined;
+      if (Array.isArray(body?.pids)) return { state: 'choose', pids: body.pids as number[] };
+    }
+    throw problemOf(error);
+  }
+}
+
+export async function nodeDownload(
+  cluster: string,
+  namespace: string,
+  name: string,
+  container: string,
+  read: 'heapsnapshot' | 'profile',
+  seconds?: number,
+): Promise<Downloaded> {
+  const query = read === 'heapsnapshot' ? `?confirm=${CONFIRM_WORD}` : `?seconds=${String(seconds ?? NODE_PROFILE_SECONDS[0])}`;
+  const ext = read === 'heapsnapshot' ? '.heapsnapshot' : '.cpuprofile';
+  try {
+    return await download(`${nodePath(cluster, namespace, name, container)}/${read}${query}`, `${name}-${container}${ext}`);
+  } catch (error) {
+    throw problemOf(error);
+  }
+}
+
+export async function nodeReport(cluster: string, namespace: string, name: string, container: string): Promise<NodeReport> {
+  let body: NodeReport;
+  try {
+    body = await request<NodeReport>(`${nodePath(cluster, namespace, name, container)}/report`, { method: 'POST' });
+  } catch (error) {
+    throw problemOf(error);
+  }
+  if (typeof body.report !== 'object' || body.report === null) throw new EnvelopeError('The Runtime Inspector answered without the report', body);
+  return body;
+}

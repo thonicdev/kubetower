@@ -4,11 +4,13 @@ import { Failure, Pending, Pill, type ExtensionTabProps } from '@kubetower/ui';
 
 import { RUNTIME_LABEL, podQuery, type Container, type Runtime } from './data';
 import { GoPprof } from './GoPprof';
+import { NodeInspector } from './NodeInspector';
 
 /**
  * The tab of a runtime other than Java on a pod: which containers the spec
  * says run it, and what that rests on. It reads the spec alone (the same route
- * as the page) and runs nothing in a container. Go adds pprof (GoPprof).
+ * as the page) and runs nothing in a container. Go adds pprof (GoPprof),
+ * Node.js its inspector (NodeInspector).
  */
 function RuntimeTab({ runtime, cluster, namespace, name }: ExtensionTabProps & { runtime: Runtime }): ReactNode {
   if (namespace === undefined || namespace === '') return null;
@@ -45,6 +47,9 @@ function OnPod({ runtime, cluster, namespace, name }: { runtime: Runtime; cluste
         </label>
       ) : null}
       <ContainerFacts runtime={runtime} container={container} />
+      {runtime === 'node' ? (
+        <NodeInspector key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} />
+      ) : null}
       {runtime === 'go' ? (
         <GoPprof key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} />
       ) : null}

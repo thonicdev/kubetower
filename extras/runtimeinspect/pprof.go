@@ -185,16 +185,16 @@ func resolveGo(w http.ResponseWriter, r *http.Request, h extension.Host) (goTarg
 	return goTarget{target: t, port: port, source: source}, true
 }
 
-// tunnelTo opens the tunnel to g's pprof port, or answers w.
-func tunnelTo(w http.ResponseWriter, r *http.Request, h extension.Host, g goTarget) (extension.Tunnel, bool) {
+// tunnelTo opens the tunnel to port of the pod, or answers w.
+func tunnelTo(w http.ResponseWriter, r *http.Request, h extension.Host, cluster, namespace, pod string, port int) (extension.Tunnel, bool) {
 	pods, ok := h.(extension.PodForwarder)
 	if !ok {
 		writeProblem(w, http.StatusNotImplemented, CodeNoTunnel, "This console cannot open a tunnel to a pod.", nil)
 		return extension.Tunnel{}, false
 	}
-	tunnel, err := pods.ForwardPod(r, g.cluster, g.namespace, g.name, g.port)
+	tunnel, err := pods.ForwardPod(r, cluster, namespace, pod, port)
 	if err != nil {
-		writeTunnelFailure(w, g.cluster, err)
+		writeTunnelFailure(w, cluster, err)
 		return extension.Tunnel{}, false
 	}
 	return tunnel, true
@@ -207,7 +207,7 @@ func writeTunnelFailure(w http.ResponseWriter, cluster string, err error) {
 	case errors.Is(err, context.Canceled):
 	case errors.Is(err, extension.ErrDenied):
 		writeProblem(w, http.StatusForbidden, CodeTunnelForbidden,
-			"The cluster says you may not port-forward to this pod, so pprof is not reached.", err)
+			"The cluster says you may not port-forward to this pod.", err)
 	case errors.Is(err, extension.ErrUnreviewable):
 		writeProblem(w, http.StatusServiceUnavailable, CodeTunnelUnreviewed,
 			"The console could not ask the cluster whether you may port-forward to this pod, so it opened nothing. Try again.", err)
@@ -274,7 +274,7 @@ func (JVM) pprofState(h extension.Host) http.Handler {
 		if !ok {
 			return
 		}
-		tunnel, ok := tunnelTo(w, r, h, g)
+		tunnel, ok := tunnelTo(w, r, h, g.cluster, g.namespace, g.name, g.port)
 		if !ok {
 			return
 		}
@@ -299,7 +299,7 @@ func (JVM) pprofGoroutines(h extension.Host) http.Handler {
 		if !ok {
 			return
 		}
-		tunnel, ok := tunnelTo(w, r, h, g)
+		tunnel, ok := tunnelTo(w, r, h, g.cluster, g.namespace, g.name, g.port)
 		if !ok {
 			return
 		}
@@ -347,7 +347,7 @@ func (JVM) pprofDownload(h extension.Host) http.Handler {
 		if !ok {
 			return
 		}
-		tunnel, ok := tunnelTo(w, r, h, g)
+		tunnel, ok := tunnelTo(w, r, h, g.cluster, g.namespace, g.name, g.port)
 		if !ok {
 			return
 		}
