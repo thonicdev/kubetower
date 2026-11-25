@@ -29,6 +29,7 @@ import { ReadingText } from './Reading';
 import { CapacityDonut } from './Donut';
 import { Paged } from './Paged';
 import { ExtraTiles } from './ExtraTiles';
+import { FavouriteExtras } from './FavouriteExtras';
 import { Panel, PanelList, PanelMark, PANEL_FRAME, PANEL_HEAD } from './Panel';
 import { PanelValue } from './PanelValue';
 import { RefLink } from './RefLink';
@@ -217,6 +218,7 @@ function Dashboard({ page, cluster, onRetry }: { page: OverviewPage; cluster?: s
   return (
     <div className="flex flex-col gap-4">
       <ClusterHead page={page} onRetry={onRetry} />
+      {cluster === undefined ? null : <FavouriteExtras cluster={cluster} />}
       <AccessNote page={page} />
       <Workloads page={page} onRetry={onRetry} />
       {cluster === undefined ? null : <ExtraTiles cluster={cluster} />}

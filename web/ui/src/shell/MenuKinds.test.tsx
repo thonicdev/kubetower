@@ -453,3 +453,52 @@ describe('a favorite is listed whatever it holds', () => {
     expect(localStorage.getItem('kubetower.kinds')).toBeNull();
   });
 });
+
+describe('a favourite extra (#111)', () => {
+  const section = (): Element | null => menu().querySelector('section[data-group="favourites"]');
+  const hrefs = (): (string | null)[] => [...(section()?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'));
+
+  it('carries the star, joins Favorites in the order marked beside the kinds, and stays in its own group', async () => {
+    localStorage.setItem('kubetower.kinds', JSON.stringify({ showUnused: true, favourites: {} }));
+    stub();
+    await arrived();
+    expect(star('extra:an-extra').getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(star('jobs'));
+    fireEvent.click(star('extra:an-extra'));
+    await waitFor(() => {
+      expect(hrefs()).toEqual(['/c/prod/jobs', '/c/prod/x/an-extra']);
+    });
+    expect(star('extra:an-extra').getAttribute('aria-pressed')).toBe('true');
+    expect(menu().querySelector('details[data-group="cluster"] a[href="/c/prod/x/an-extra"]')).not.toBeNull();
+    // Kept in this browser, with the kinds, per cluster.
+    expect(JSON.parse(localStorage.getItem('kubetower.kinds') ?? '{}')).toMatchObject({ favourites: { prod: ['jobs', 'extra:an-extra'] } });
+
+    fireEvent.click(section()?.querySelector('button[data-favourite="extra:an-extra"]') as Element);
+    await waitFor(() => {
+      expect(hrefs()).toEqual(['/c/prod/jobs']);
+    });
+  });
+
+  it('is read back on the next visit', async () => {
+    localStorage.setItem('kubetower.kinds', JSON.stringify({ showUnused: true, favourites: { prod: ['extra:an-extra', 'pods'] } }));
+    stub();
+    await arrived();
+    await waitFor(() => {
+      expect(hrefs()).toEqual(['/c/prod/x/an-extra', '/c/prod/pods']);
+    });
+  });
+
+  it('is written to the server where the server keeps the favourites', async () => {
+    const puts = stub({
+      '/api/capabilities': { body: { kindPreferences: true } },
+      '/api/me/kinds': { body: { showUnused: false, favourites: {} } },
+    });
+    await arrived();
+    fireEvent.click(star('extra:an-extra'));
+    await waitFor(() => {
+      expect(puts).toEqual([{ showUnused: false, favourites: { prod: ['extra:an-extra'] } }]);
+    });
+    expect(localStorage.getItem('kubetower.kinds')).toBeNull();
+  });
+});

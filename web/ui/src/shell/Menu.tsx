@@ -6,6 +6,7 @@ import { useIntentPrefetch } from '../router/prefetch';
 // It is imported from the route table and not copied here so that the page
 // list and the menu's idea of it are one fact.
 import { NON_KIND_SEGMENTS } from '../router/routes';
+import { extraFavouriteOfHref } from './favouriteExtras';
 import {
   createContext,
   useContext,
@@ -393,7 +394,8 @@ const Sieve = createContext<SieveValue>({
 /** The kind a menu row opens, or `undefined` where it is not a kind: Overview
  *  (no segment), and Helm, port-forwards and an extension's pages, which the
  *  route table mounts under the cluster (`NON_KIND_SEGMENTS`). Only a kind has
- *  an occupancy, and only a kind can be a favorite. */
+ *  an occupancy. An extension's page can be a favorite too, kept beside the
+ *  kinds (`favouriteExtras.ts`). */
 function kindSlugOf(href: string | undefined): string | undefined {
   const slug = kindOfHref(href);
   return slug === undefined || NON_KIND_SEGMENTS.includes(slug) ? undefined : slug;
@@ -992,7 +994,7 @@ function favouriteRows(groups: readonly NavGroup[], slugs: readonly string[]): R
   const found = new Map<string, Ref>();
   const walk = (group: NavGroup): void => {
     for (const item of group.items) {
-      const slug = kindSlugOf(item.href);
+      const slug = kindSlugOf(item.href) ?? extraFavouriteOfHref(item.href);
       if (slug !== undefined && !found.has(slug)) found.set(slug, item);
     }
     (group.groups ?? []).forEach(walk);
@@ -1486,7 +1488,9 @@ function Entry({
   // answers by warming nothing - which is also what an inert row asks of it.
   const intent = useIntentPrefetch(live ? href : undefined);
   const sieve = useContext(Sieve);
-  const slug = kindSlugOf(item.href);
+  // A kind's row, or an extra's (#111): both carry the star.
+  const kind = kindSlugOf(item.href);
+  const slug = kind ?? extraFavouriteOfHref(item.href);
 
   // The tooltip is the server's hint, where there is one.
   const label = item.hint;
@@ -1562,9 +1566,13 @@ function Entry({
         aria-pressed={favourite}
         aria-label={`Favorite: ${item.text}`}
         title={
-          favourite
-            ? 'A favorite: always listed. Press to unmark it.'
-            : 'Mark as a favorite: always listed, even holding nothing.'
+          kind === undefined
+            ? favourite
+              ? 'A favorite. Press to unmark it.'
+              : 'Mark as a favorite'
+            : favourite
+              ? 'A favorite: always listed. Press to unmark it.'
+              : 'Mark as a favorite: always listed, even holding nothing.'
         }
         data-favourite={slug}
         disabled={!sieve.canMark}
