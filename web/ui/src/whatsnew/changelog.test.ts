@@ -26,6 +26,8 @@ Every release, newest first.
 
 ### Added
 
+- **Storage Inspector**, a new extra. <!-- extra: storage -->
+  Claims and volumes (#90).
 - **What's new** after an upgrade, from the [changelog](CHANGELOG.md) (#80).
 
 ### Fixed
@@ -54,11 +56,24 @@ describe('the changelog', () => {
     expect(releases.map((one) => one.version)).toEqual(['0.3.0', '0.2.0', '0.1.2', '0.1.0']);
     // Each says which section it came from, so Added and Fixed draw apart (#107).
     expect(releases[1]?.highlights).toEqual([
+      { title: 'Storage Inspector', kind: 'added', extra: 'storage' },
       { title: "What's new", kind: 'added' },
       { title: 'aws eks get-token arguments read as the CLI reads them', kind: 'fixed' },
     ]);
     expect(releases[2]?.highlights).toEqual([]);
     expect(releases[3]?.highlights).toEqual([]);
+  });
+
+  it('names the extra an entry introduces, and never draws a marker as a word (#121)', () => {
+    const [one] = parseChangelog('## 1.0.0\n\n### Added\n\n- **Saved views** <!-- extra: views --> and <!-- a note -->.\n- **Plain.**\n');
+    expect(one?.highlights).toEqual([
+      { title: 'Saved views', kind: 'added', extra: 'views' },
+      { title: 'Plain', kind: 'added' },
+    ]);
+    // A lead with no bold: its first sentence, the markers gone.
+    expect(parseChangelog('## 1.0.0\n\n### Added\n\n- Saved views <!-- extra: views -->. More.\n')[0]?.highlights).toEqual([
+      { title: 'Saved views', kind: 'added', extra: 'views' },
+    ]);
   });
 
   it('keeps at most MAX_HIGHLIGHTS per release', () => {
@@ -96,6 +111,12 @@ describe('the changelog', () => {
     expect(released?.highlights.slice(0, 2).map((one) => one.title)).toEqual(['Releases are signed', 'The desktop updates itself']);
     expect(released?.highlights).toHaveLength(MAX_HIGHLIGHTS);
     for (const one of RELEASES) expect(one.highlights.length).toBeLessThanOrEqual(MAX_HIGHLIGHTS);
+    // 0.2.1 introduced Storage Inspector, marked for the dialog's New extra line.
+    expect(RELEASES.find((one) => one.version === '0.2.1')?.highlights.find((one) => one.extra !== undefined)).toEqual({
+      title: 'Storage Inspector',
+      kind: 'added',
+      extra: 'storage',
+    });
   });
 });
 
