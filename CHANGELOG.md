@@ -13,6 +13,14 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+### Added
+
+- **VictoriaMetrics as a metrics source.** Discovery finds vmsingle and
+  vmselect where no Prometheus runs, as vm-operator, the
+  victoria-metrics-k8s-stack chart and the victoria-metrics-single and
+  victoria-metrics-cluster charts install them, and `KT_PROMETHEUS_SERVICE`
+  takes a path, `vm/vmselect-main:8481/select/0/prometheus` (#129).
+
 ### Changed
 
 - **What's new lists New and Fixed.** Each highlight is one line under New,

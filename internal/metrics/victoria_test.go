@@ -1,0 +1,308 @@
+package metrics
+
+// VictoriaMetrics serves the Prometheus HTTP API: vmsingle at its root on
+// 8428, vmselect under /select/<tenant>/prometheus on 8481. Discovery finds
+// either where no Prometheus is, and a target may carry the path.
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+)
+
+const vmHealthy = "VictoriaMetrics is Healthy.\n"
+
+// The Services as vm-operator and the two charts create them.
+func vmsingleOperator() *corev1.Service {
+	return promService("vm", "vmsingle-main", map[string]string{
+		"app.kubernetes.io/name": "vmsingle", "app.kubernetes.io/instance": "main",
+		"app.kubernetes.io/component": "monitoring", "managed-by": "vm-operator",
+	}, "http", 8428)
+}
+
+// vmsingleOperatorNow is vm-operator's Service as current releases publish
+// it: the API on 8429, and 8428 an alias some release may drop.
+func vmsingleOperatorNow(alias bool) *corev1.Service {
+	svc := vmsingleOperator()
+	svc.Spec.Ports = []corev1.ServicePort{{Name: "http", Port: 8429, TargetPort: intstr.FromInt32(8429)}}
+	if alias {
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{Name: "http-alias", Port: 8428, TargetPort: intstr.FromInt32(8429)})
+	}
+	return svc
+}
+
+func vmselectOperator() *corev1.Service {
+	return promService("vm", "vmselect-main", map[string]string{
+		"app.kubernetes.io/name": "vmselect", "app.kubernetes.io/instance": "main",
+		"app.kubernetes.io/component": "monitoring", "managed-by": "vm-operator",
+	}, "http", 8481)
+}
+
+func vmsingleChart() *corev1.Service {
+	svc := promService("vm", "r-victoria-metrics-single-server", map[string]string{
+		"app.kubernetes.io/name": "victoria-metrics-single", "app.kubernetes.io/component": "server",
+	}, "http", 8428)
+	svc.Spec.Ports[0].TargetPort = intstr.FromString("http")
+	return svc
+}
+
+func vmclusterChart(component string, port int32) *corev1.Service {
+	return promService("vm", "r-victoria-metrics-cluster-"+component, map[string]string{
+		"app.kubernetes.io/name": "victoria-metrics-cluster", "app.kubernetes.io/component": component,
+	}, "http", port)
+}
+
+func TestVictoriaMetricsIsFoundAsEachInstallLabelsIt(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		services []*corev1.Service
+		want     string
+		selector string
+	}{
+		{"vm-operator vmsingle", []*corev1.Service{vmsingleOperator()}, "vm/vmsingle-main:8428", "app.kubernetes.io/name=vmsingle"},
+		{"vm-operator vmsingle on 8429 with the alias", []*corev1.Service{vmsingleOperatorNow(true)}, "vm/vmsingle-main:8429", "app.kubernetes.io/name=vmsingle"},
+		{"vm-operator vmsingle on 8429 alone", []*corev1.Service{vmsingleOperatorNow(false)}, "vm/vmsingle-main:8429", "app.kubernetes.io/name=vmsingle"},
+		{"vm-operator vmselect", []*corev1.Service{vmselectOperator()}, "vm/vmselect-main:8481/select/0/prometheus", "app.kubernetes.io/name=vmselect"},
+		{"victoria-metrics-single chart", []*corev1.Service{vmsingleChart()}, "vm/r-victoria-metrics-single-server:8428", "victoria-metrics-single"},
+		{
+			// vminsert and vmstorage carry the same name label and are not the
+			// query API.
+			"victoria-metrics-cluster chart",
+			[]*corev1.Service{vmclusterChart("vminsert", 8480), vmclusterChart("vmstorage", 8482), vmclusterChart("vmselect", 8481)},
+			"vm/r-victoria-metrics-cluster-vmselect:8481/select/0/prometheus", "app.kubernetes.io/component=vmselect",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			objects := make([]corev1.Service, len(c.services))
+			for i, svc := range c.services {
+				objects[i] = *svc
+			}
+			h := newHarness(t, toObjects(objects)...)
+			h.answer(rawAnswers{
+				// vmselect answers its health at the root, not under the path.
+				pathFree(c.want) + "/proxy" + endpointHealth: {body: []byte(vmHealthy)},
+			})
+
+			found := h.metrics.Discover(context.Background(), testCluster, false)
+			if found.Kind != KindPrometheus || found.Prometheus == nil {
+				t.Fatalf("kind %q (%s), want the Prometheus API", found.Kind, found.Detail)
+			}
+			if got := found.Prometheus.Address(); got != c.want {
+				t.Errorf("target %q, want %q", got, c.want)
+			}
+			if found.Engine != EngineVictoriaMetrics {
+				t.Errorf("engine %q, want %q", found.Engine, EngineVictoriaMetrics)
+			}
+			if !strings.Contains(found.Detail, c.selector) || !strings.Contains(found.Detail, "VictoriaMetrics") {
+				t.Errorf("detail does not say what was found and how: %q", found.Detail)
+			}
+		})
+	}
+}
+
+// pathFree is the proxy root of an address `ns/svc:port[/path]`.
+func pathFree(address string) string {
+	ns, rest, _ := strings.Cut(address, "/")
+	svcPort, _, _ := strings.Cut(rest, "/")
+	return "/api/v1/namespaces/" + ns + "/services/" + svcPort
+}
+
+func toObjects(services []corev1.Service) []runtime.Object {
+	out := make([]runtime.Object, len(services))
+	for i := range services {
+		out[i] = &services[i]
+	}
+	return out
+}
+
+// A cluster running both keeps Prometheus, and VictoriaMetrics in another
+// namespace does not make it ambiguous.
+func TestPrometheusIsPreferredToVictoriaMetrics(t *testing.T) {
+	h := newHarness(t,
+		vmsingleOperator(),
+		promService("monitoring", "kps-prometheus", map[string]string{"app": "kube-prometheus-stack-prometheus"}, "http-web", 9090),
+	)
+	chosen := &PromTarget{Namespace: "monitoring", Service: "kps-prometheus", Port: 9090}
+	h.answer(rawAnswers{chosen.proxyPath(endpointHealth): {body: []byte("Prometheus Server is Healthy.\n")}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Prometheus == nil || found.Prometheus.Address() != chosen.Address() {
+		t.Fatalf("kind %q target %+v (%s); want %s", found.Kind, found.Prometheus, found.Detail, chosen.Address())
+	}
+	if found.Engine != EnginePrometheus {
+		t.Errorf("engine %q", found.Engine)
+	}
+}
+
+// The same rule as for Prometheus: a label cannot tell the real one from a
+// tenant's.
+func TestVictoriaMetricsInTwoNamespacesIsNotChosen(t *testing.T) {
+	other := vmsingleOperator()
+	other.Namespace = "team-a"
+	h := newHarness(t, vmsingleOperator(), other)
+	h.answer(rawAnswers{metricsAPIPath: {err: notFound(metricsAPIPath)}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindNone || found.Prometheus != nil || !strings.Contains(found.Detail, "team-a") {
+		t.Fatalf("kind %q target %+v (%s); want none chosen, naming the namespaces", found.Kind, found.Prometheus, found.Detail)
+	}
+}
+
+func TestAVictoriaMetricsServiceOnAnotherPortIsNotTheAPI(t *testing.T) {
+	h := newHarness(t, promService("vm", "vmsingle-main", map[string]string{"app.kubernetes.io/name": "vmsingle"}, "metrics", 8080))
+	h.answer(rawAnswers{metricsAPIPath: {err: notFound(metricsAPIPath)}})
+
+	if found := h.metrics.Discover(context.Background(), testCluster, false); found.Kind != KindNone {
+		t.Fatalf("kind %q (%s), want none", found.Kind, found.Detail)
+	}
+}
+
+func TestEveryVictoriaMetricsSelectorIsCoveredByAQuery(t *testing.T) {
+	for _, s := range vmSelectors {
+		parsed := mustCompile(t, s.selector)
+		requirements, _ := parsed.Requirements()
+		labelled := map[string]string{}
+		for _, r := range requirements {
+			labelled[r.Key()] = r.Values().List()[0]
+		}
+		covered := false
+		for _, query := range promQueries {
+			if mustCompile(t, query).Matches(labels.Set(labelled)) {
+				covered = true
+			}
+		}
+		if !covered {
+			t.Errorf("no query returns a Service matching %q", s.selector)
+		}
+	}
+}
+
+// --- A target with a path ----------------------------------------------------
+
+func TestATargetWithAPathIsReadAsAddressWritesIt(t *testing.T) {
+	for _, raw := range []string{
+		"vm/vmselect-main:8481/select/0/prometheus",
+		"monitoring/prometheus:9090/prom",
+		"vm/vmselect-main:8481/select/team-a.b_c~1/prometheus",
+	} {
+		got, err := ParseTarget(raw)
+		if err != nil || got.Address() != raw {
+			t.Errorf("%q: got %+v, %v", raw, got, err)
+		}
+	}
+	got, _ := ParseTarget("vm/vmselect-main:8481/select/0/prometheus")
+	if got.Path != "/select/0/prometheus" || got.Port != 8481 {
+		t.Errorf("parsed as %+v", got)
+	}
+	for _, bad := range []string{
+		"vm/vmselect:8481/",                     // trailing slash, empty path
+		"vm/vmselect:8481/select//prometheus",   // empty segment
+		"vm/vmselect:8481/select/0/prometheus/", // trailing slash
+		"vm/vmselect:8481/../../secrets",        // leaves the proxy path
+		"vm/vmselect:8481/select/./prometheus",  // dot segment
+		"vm/vmselect:8481/select?x=1",           // a query
+		"vm/vmselect:8481/select#x",             // a fragment
+		"vm/vmselect:8481/sel ect",              // a space
+		"vm/vmselect:8481/%2e%2e",               // an escape
+		"vm/vmselect:08481/select",              // a port written oddly
+		"vm/vmselect:8481/" + strings.Repeat("a", maxTargetPath),
+	} {
+		if target, err := ParseTarget(bad); err == nil {
+			t.Errorf("%q was accepted as %+v", bad, target)
+		}
+	}
+}
+
+func TestAPathIsUnderTheServiceProxy(t *testing.T) {
+	target := &PromTarget{Namespace: "vm", Service: "vmselect-main", Port: 8481, Path: "/select/0/prometheus"}
+	want := "/api/v1/namespaces/vm/services/vmselect-main:8481/proxy/select/0/prometheus/api/v1/query"
+	if got := target.proxyPath(endpointQuery); got != want {
+		t.Fatalf("proxy path %q, want %q", got, want)
+	}
+}
+
+// Queries go under the path on both transports; the health check finds the
+// root when the path has none.
+func TestAPathIsUsedThroughThePortForward(t *testing.T) {
+	var asked []string
+	vmselect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+		switch r.URL.Path {
+		case endpointHealth:
+			w.Write([]byte(vmHealthy))
+		case vmselectPath + endpointQuery:
+			w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		default:
+			http.Error(w, "unsupported path", http.StatusBadRequest)
+		}
+	}))
+	defer vmselect.Close()
+
+	h := newHarness(t, vmselectOperator())
+	h.tunnels.addr = strings.TrimPrefix(vmselect.URL, "http://")
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Transport != TransportForward || found.Engine != EngineVictoriaMetrics {
+		t.Fatalf("kind %q transport %q engine %q (%s)", found.Kind, found.Transport, found.Engine, found.Detail)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := h.metrics.Query(ctx, testCluster, "up"); err != nil {
+		t.Fatalf("query: %v (asked %v)", err, asked)
+	}
+	if last := asked[len(asked)-1]; last != vmselectPath+endpointQuery {
+		t.Errorf("the query went to %q", last)
+	}
+	h.metrics.Close()
+}
+
+// A Prometheus served under --web.route-prefix answers its health under the
+// path, and is not asked at the root.
+func TestAPrometheusUnderARoutePrefixIsAskedUnderIt(t *testing.T) {
+	target, err := ParseTarget("monitoring/prometheus:9090/prom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarnessWith(t, func(o *Options) { o.Configured, o.Prometheus = true, target })
+	h.answer(rawAnswers{target.proxyPath(endpointHealth): {body: []byte("Prometheus Server is Healthy.\n")}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Transport != TransportProxy || found.Engine != EnginePrometheus {
+		t.Fatalf("kind %q transport %q engine %q (%s)", found.Kind, found.Transport, found.Engine, found.Detail)
+	}
+	if h.askedFor(target.proxyRoot(endpointHealth)) {
+		t.Errorf("the root was asked although the path answered: %v", h.paths)
+	}
+}
+
+func TestTheEngineIsReadFromTheHealthAnswer(t *testing.T) {
+	for _, c := range []struct{ body, fallback, want string }{
+		{vmHealthy, EnginePrometheus, EngineVictoriaMetrics},
+		{"Prometheus Server is Healthy.\n", EngineVictoriaMetrics, EnginePrometheus},
+		{"OK", EngineVictoriaMetrics, EngineVictoriaMetrics},
+		{"", "", EnginePrometheus},
+	} {
+		if got := engineOf([]byte(c.body), c.fallback); got != c.want {
+			t.Errorf("engineOf(%q, %q) = %q, want %q", c.body, c.fallback, got, c.want)
+		}
+	}
+}
+
+func (h *harness) askedFor(path string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, p := range h.paths {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
