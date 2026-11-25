@@ -598,13 +598,14 @@ describe('a list the server cut says so on its last page', () => {
 });
 
 describe('a metrics backend found and not reached (#127)', () => {
-  const dashboard = (history: unknown): StubReply => ({
+  const dashboard = (history: unknown, top?: unknown): StubReply => ({
     body: {
       state: 'ok',
       data: {
         cluster: 'prod',
         counts: { state: 'ok', items: [{ kind: 'nodes', label: 'Nodes', count: 6 }] },
         history,
+        ...(top === undefined ? {} : { top }),
         events: { state: 'empty', items: [] },
       },
     },
@@ -638,6 +639,22 @@ describe('a metrics backend found and not reached (#127)', () => {
     await waitFor(() => {
       expect(asked.length).toBe(before + 1);
     });
+  });
+
+  it('never draws a pending Most used as No metrics available', async () => {
+    counted(
+      dashboard(
+        { state: 'absent', reason: { code: 'not_installed', message: 'this cluster keeps no series' } },
+        { state: 'pending', reason: { code: 'not_probed_yet', message: 'the first round has not reached this cluster', retryable: true } },
+      ),
+    );
+    mountApp('/c/prod');
+    await waitFor(() => {
+      expect([...page().querySelectorAll('h2')].map((heading) => heading.textContent?.trim())).toContain('Most used');
+      expect(page().querySelector('[data-state="pending"]')).not.toBeNull();
+    });
+    expect(page().querySelector('[data-no-metrics]')).toBeNull();
+    expect(page().textContent).not.toContain('No metrics available');
   });
 
   it('never draws a pending history as No metrics available', async () => {
