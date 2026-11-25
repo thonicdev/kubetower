@@ -14,6 +14,7 @@
 package boundary_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -226,4 +227,30 @@ func routeFor(t *testing.T, routes []extension.Route, pattern string) extension.
 	}
 	t.Fatalf("no route with pattern %q in %d routes", pattern, len(routes))
 	return extension.Route{}
+}
+
+// A read-only cluster's refusal is ErrReadOnly, which is also ErrDenied: an
+// extra in another module that asks ErrReadOnly first tells the marking from
+// a missing grant, and one that asks only ErrDenied still reads a refusal.
+func TestAReadOnlyRefusalIsTellableFromOutside(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{fmt.Errorf("%w: a-cluster is marked read-only in KT_READONLY_CLUSTERS", extension.ErrReadOnly), "exec=read-only"},
+		{fmt.Errorf("exec: %w", extension.ErrDenied), "exec=not permitted"},
+	} {
+		host := newRecordingHost()
+		host.execErr = c.err
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.SetPathValue("cluster", "a-cluster")
+		routeFor(t, boundary.Consumer{}.Routes(host), "/exec").Handler.ServeHTTP(rec, req)
+		if got := rec.Body.String(); rec.Code != http.StatusOK || got != c.want {
+			t.Errorf("%v answered %d %q, want %q", c.err, rec.Code, got, c.want)
+		}
+	}
+	if !errors.Is(extension.ErrReadOnly, extension.ErrDenied) {
+		t.Error("ErrReadOnly is no longer an ErrDenied: a page that asks only ErrDenied reads it as a failure")
+	}
 }
