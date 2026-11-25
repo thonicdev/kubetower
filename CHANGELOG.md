@@ -21,6 +21,11 @@ per release. Keep the bold lead short: it is all the banner draws.
 
 ### Fixed
 
+- **An image's version is always visible.** Wherever a container's image is
+  shown - a Pod's and a workload's containers, the Runtime Inspector - its
+  tag, or a short digest, is a badge of its own that is never cut, the
+  repository is cut from the left (…/team/app), and the full reference is
+  on hover with a copy (#110).
 - **Updates install from the Windows window.** Installing an update from the
   window asked KubeTower to stop, but the window ignored it: KubeTower never
   exited, the setup never ran, and "Installing…" spun for ever. The window

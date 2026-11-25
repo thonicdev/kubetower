@@ -578,3 +578,37 @@ export function podsManyAnswers(length = 5000): Readonly<Record<string, unknown>
 
 export const DEPLOYMENTS_PATH = `/c/${CLUSTER}/deployments`;
 export const CLUSTER_ROLES_PATH = `/c/${CLUSTER}/clusterroles`;
+
+/**
+ * A pod whose containers' images hold every shape #110 names: a long
+ * repository with a tag, a digest alone, a tag and a digest, and no tag at all
+ * (the runtime pulls latest). Fabricated; the names are only plausible.
+ */
+const IMAGE_POD = 'checkout-api-7d9f8c6b5-x2kq';
+export const IMAGE_SHAPES: readonly { container: string; image: string }[] = [
+  { container: 'api', image: 'registry.internal.example.com:5000/platform-team/payments/checkout-api-service:2.14.3-rc.2' },
+  { container: 'envoy', image: 'docker.io/envoyproxy/envoy@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' },
+  { container: 'log-shipper', image: 'ghcr.io/observability-collective/log-shipper:1.8.0@sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae' },
+  { container: 'debug', image: 'busybox' },
+];
+
+export function podImageAnswers(): Readonly<Record<string, unknown>> {
+  return {
+    ...podsAnswers(false),
+    [`/api/c/${CLUSTER}/r/pods/shop-prod/${IMAGE_POD}`]: {
+      state: 'ok',
+      data: {
+        kind: 'pods',
+        namespace: 'shop-prod',
+        name: IMAGE_POD,
+        title: 'Pod',
+        tabs: [],
+        sections: [],
+        containers: IMAGE_SHAPES.map(({ container, image }) => ({ ...running(container), image })),
+        actions: [],
+      },
+    },
+  };
+}
+
+export const POD_IMAGE_PAGE = `/c/${CLUSTER}/pods/shop-prod/${IMAGE_POD}`;

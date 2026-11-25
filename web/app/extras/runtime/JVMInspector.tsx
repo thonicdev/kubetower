@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router';
 import {
   Failure,
   FilterBox,
+  ImageRef,
   Pending,
   Pill,
   TABLE,
@@ -613,9 +614,7 @@ function Row({
         <span className="block max-w-48 truncate" title={c.name}>
           {c.name}
         </span>
-        <span className="block max-w-48 truncate text-2xs text-muted" title={c.image}>
-          {c.image}
-        </span>
+        <ImageRef image={c.image} className="max-w-56" />
       </td>
       <td className={`${bodyCell(true)} wrap align-top`}>
         <MemoryBar c={c} />
