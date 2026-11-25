@@ -1,5 +1,5 @@
-// Settings › General's metrics source per cluster: four clusters, one of each
-// answer, on the desktop and under the server profile. Every name is made up.
+// Settings › General's Monitoring tile, one scene per answer, on the desktop
+// and under the server profile. Every name is made up.
 
 const SETTINGS = {
   general: { archiveEnabled: true, captureLogs: false, retentionDays: 7 },
@@ -23,57 +23,69 @@ const SETTINGS = {
   },
 };
 
+const SESSION = { identity: 'alice', idleExpiresAt: '2999-01-01T00:00:00Z', absoluteExpiresAt: '2999-01-01T00:00:00Z' };
+
 const CLUSTERS = {
   state: 'ok',
   items: [
     { name: 'prod-eu', label: 'prod-eu', state: 'ok' },
-    { name: 'prod-us', label: 'prod-us', state: 'ok' },
     { name: 'staging', label: 'staging', state: 'ok' },
-    { name: 'lab', label: 'lab', state: 'ok' },
   ],
 };
 
-function sources(editable: boolean): Record<string, unknown> {
-  return {
-    '/api/c/prod-eu/metrics/source': {
-      source: 'vm/vmselect-main:8481/select/0/prometheus',
-      editable,
-      kind: 'prometheus',
-      engine: 'victoriametrics',
-      address: 'vm/vmselect-main:8481/select/0/prometheus',
-      transport: 'proxy',
-      detail: 'service vm/vmselect-main:8481/select/0/prometheus found via the source set in Settings, reached by proxy, answered by VictoriaMetrics',
-    },
-    '/api/c/prod-us/metrics/source': {
-      source: '',
-      editable,
-      kind: 'prometheus',
-      engine: 'prometheus',
-      address: 'monitoring/kps-prometheus:9090',
-      transport: 'port-forward',
-      detail: 'service monitoring/kps-prometheus:9090 found via app=kube-prometheus-stack-prometheus, reached by port-forward',
-    },
-    '/api/c/staging/metrics/source': {
-      source: '',
-      editable,
-      kind: 'metrics-server',
-      detail: 'metrics-server answers; instant usage available, no history',
-    },
-    '/api/c/lab/metrics/source': {
-      source: '',
-      editable,
-      kind: 'none',
-      detail: 'the cluster answered: no Prometheus service matched, and metrics.k8s.io is not registered',
-    },
-  };
-}
+/** What prod-eu's Monitoring tile reads, one per case. */
+const CASES: Readonly<Record<string, Record<string, unknown>>> = {
+  // Discovery found Prometheus: the badge alone.
+  prometheus: {
+    source: '',
+    editable: true,
+    kind: 'prometheus',
+    engine: 'prometheus',
+    address: 'monitoring/kps-prometheus:9090',
+    transport: 'port-forward',
+    detail: 'service monitoring/kps-prometheus:9090 found via app=kube-prometheus-stack-prometheus, reached by port-forward',
+  },
+  // Discovery found VictoriaMetrics: the badge alone.
+  victoriametrics: {
+    source: '',
+    editable: true,
+    kind: 'prometheus',
+    engine: 'victoriametrics',
+    address: 'vm/vmsingle-main:8429',
+    transport: 'proxy',
+    detail: 'service vm/vmsingle-main:8429 found via app.kubernetes.io/name=vmsingle, reached by proxy, answered by VictoriaMetrics',
+  },
+  'metrics-server': {
+    source: '',
+    editable: true,
+    kind: 'metrics-server',
+    detail: 'metrics-server answers; instant usage available, no history',
+  },
+  // Nothing found: the field.
+  none: {
+    source: '',
+    editable: true,
+    kind: 'none',
+    detail: 'the cluster answered: no Prometheus service matched, and metrics.k8s.io is not registered',
+  },
+  // A source set by hand: the field, holding it, so it can be cleared.
+  manual: {
+    source: 'vm/vmselect-main:8481/select/0/prometheus',
+    editable: true,
+    kind: 'prometheus',
+    engine: 'victoriametrics',
+    address: 'vm/vmselect-main:8481/select/0/prometheus',
+    transport: 'proxy',
+    detail: 'service vm/vmselect-main:8481/select/0/prometheus found via the source set in Settings, reached by proxy, answered by VictoriaMetrics',
+  },
+};
 
-const SESSION = { identity: 'alice', idleExpiresAt: '2999-01-01T00:00:00Z', absoluteExpiresAt: '2999-01-01T00:00:00Z' };
+export const MONITORING_CASES = Object.keys(CASES);
 
-export function metricsSourceAnswers(editable: boolean): Record<string, unknown> {
-  if (!editable) {
+export function monitoringAnswers(which: string): Record<string, unknown> {
+  if (which === 'server') {
     // The server profile: one cluster, the one the console runs in, whose
-    // source is the deployment's KT_PROMETHEUS_SERVICE.
+    // source is the deployment's KT_PROMETHEUS_SERVICE, read only.
     return {
       '/api/session': SESSION,
       '/api/capabilities': { mode: 'shared' },
@@ -90,5 +102,10 @@ export function metricsSourceAnswers(editable: boolean): Record<string, unknown>
       },
     };
   }
-  return { '/api/session': SESSION, '/api/clusters': CLUSTERS, '/api/settings': SETTINGS, ...sources(true) };
+  return {
+    '/api/session': SESSION,
+    '/api/clusters': CLUSTERS,
+    '/api/settings': SETTINGS,
+    '/api/c/prod-eu/metrics/source': CASES[which],
+  };
 }

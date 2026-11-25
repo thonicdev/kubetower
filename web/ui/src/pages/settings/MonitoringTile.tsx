@@ -1,65 +1,52 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { useClusters } from '../../api';
 import { Pill } from '../../components/Pill';
 import { btnPrimary } from '../../components/buttons';
 import { focusRingTight } from '../../focus';
-import { arrange } from '../../shell/clusterState';
-import { metricsSourceKey, saveMetricsSource, useMetricsSource, type MetricsSource } from './data';
+import { metricsSourceKey, saveMetricsSource, useMetricsSource, useSettingsCluster, type MetricsSource } from './data';
 
 /**
- * Settings › General: where each cluster's charts read their history from.
+ * Settings › General's Monitoring tile: where the current cluster's charts read
+ * their history from.
  *
- * One row per cluster: its name, the source (`namespace/service:port[/path]`,
- * empty for discovery) and a badge for what answers. The desktop edits the
- * field; under the server profile the deployment's `KT_PROMETHEUS_SERVICE` is
- * the source of every cluster and the row only reads it (`editable: false`).
+ * A badge for what answers, the discovery's line in its tooltip. The field
+ * (`namespace/service:port[/path]`) is drawn only where it is needed: nothing
+ * was found, or a source is already set and may be cleared. Under the server
+ * profile the deployment's `KT_PROMETHEUS_SERVICE` is read, never edited.
  */
-export function MetricsSources(): ReactNode {
-  const clusters = useClusters();
-  const listed = clusters.data?.state === 'ok' ? arrange(clusters.data.items) : [];
-  if (listed.length === 0) return null;
+export function MonitoringTile(): ReactNode {
+  const cluster = useSettingsCluster();
+  if (cluster === undefined) return null;
+  return <Tile key={cluster.name} cluster={cluster.name} label={cluster.label} />;
+}
+
+function Tile({ cluster, label }: { cluster: string; label: string }): ReactNode {
+  const source = useMetricsSource(cluster);
+  const current = source.data;
+  const found = current !== undefined && current.kind !== 'none' && current.kind !== 'unreachable' && current.kind !== 'unauthorised';
+  const editing = current?.editable === true && (!found || current.source !== '');
   return (
-    <section data-settings="metrics-sources" className="rounded-lg border border-line bg-panel p-3 xl:col-span-2">
-      <h2 className="text-base font-medium">Metrics source</h2>
-      <ul className="mt-2 flex flex-col divide-y divide-line">
-        {listed.map((cluster) => (
-          <SourceRow key={cluster.name} cluster={cluster.name} label={cluster.label} />
-        ))}
-      </ul>
+    <section data-settings="monitoring" data-monitoring-cluster={cluster} className="rounded-lg border border-line bg-panel p-3">
+      <div className="flex items-center gap-2">
+        <h2 className="text-base font-medium">Monitoring</h2>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={cluster}>
+          {label}
+        </span>
+        <SourceBadge source={current} failed={source.isError} />
+      </div>
+      {current === undefined ? null : editing ? (
+        <SourceForm cluster={cluster} current={current} />
+      ) : !current.editable && current.source !== '' ? (
+        <code className="mt-2 block truncate font-mono text-xs text-muted" title={current.source}>
+          {current.source}
+        </code>
+      ) : null}
     </section>
   );
 }
 
 const PLACEHOLDER = 'namespace/service:port/path';
-
-function SourceRow({ cluster, label }: { cluster: string; label: string }): ReactNode {
-  const source = useMetricsSource(cluster);
-  const current = source.data;
-  return (
-    <li
-      data-metrics-source={cluster}
-      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 py-2 text-sm sm:grid-cols-[8rem_minmax(0,1fr)_10rem]"
-    >
-      <span className="min-w-0 truncate font-medium" title={cluster}>
-        {label}
-      </span>
-      <div className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">
-        {current === undefined ? null : current.editable ? (
-          <SourceForm cluster={cluster} current={current} />
-        ) : (
-          <code className="block truncate font-mono text-xs text-muted" title={current.source}>
-            {current.source === '' ? '—' : current.source}
-          </code>
-        )}
-      </div>
-      <div className="col-start-2 row-start-1 justify-self-end sm:col-start-3">
-        <SourceBadge source={current} failed={source.isError} />
-      </div>
-    </li>
-  );
-}
 
 function SourceForm({ cluster, current }: { cluster: string; current: MetricsSource }): ReactNode {
   const cache = useQueryClient();
@@ -78,11 +65,11 @@ function SourceForm({ cluster, current }: { cluster: string; current: MetricsSou
         event.preventDefault();
         save.mutate(value.trim());
       }}
-      className="flex min-w-0 flex-wrap items-center gap-2"
+      className="mt-2 flex flex-wrap items-center gap-2"
     >
       <input
         name="source"
-        aria-label={`Metrics source, ${cluster}`}
+        aria-label="Metrics service"
         value={value}
         onChange={(event) => {
           setValue(event.target.value);

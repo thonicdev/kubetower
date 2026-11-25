@@ -11,7 +11,7 @@ import {
 import { PlanDialog } from '../../components/PlanDialog';
 import { btnDanger, btnPrimary } from '../../components/buttons';
 import { focusRing, focusRingTight } from '../../focus';
-import { MetricsSources } from './MetricsSources';
+import { MonitoringTile } from './MonitoringTile';
 import { saveNodeShell, saveSettings, settingsKey, type Settings, type SettingsWrite } from './data';
 import { formatDay } from '../../components/instant';
 
@@ -52,7 +52,7 @@ export function GeneralTab({ settings }: { settings: Settings }): ReactNode {
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <NothingKept />
         {keeps ? <NodeShellForm settings={settings} /> : null}
-        <MetricsSources />
+        <MonitoringTile />
       </div>
     );
   }
@@ -84,7 +84,7 @@ export function GeneralTab({ settings }: { settings: Settings }): ReactNode {
           )}
         </section>
         <ArchiveFacts settings={settings} canEmpty={false} />
-        <MetricsSources />
+        <MonitoringTile />
       </div>
     );
   }
@@ -93,7 +93,7 @@ export function GeneralTab({ settings }: { settings: Settings }): ReactNode {
       <ArchiveForm settings={settings} />
       <ArchiveFacts settings={settings} canEmpty />
       <NodeShellForm settings={settings} />
-      <MetricsSources />
+      <MonitoringTile />
     </div>
   );
 }

@@ -155,6 +155,24 @@ export function useUpdateWatch(): void {
  * read: the tab is not drawn yet, and an address that names it waits rather
  * than being sent to General before the answer is in.
  */
+/** The cluster a Settings page is about: under the server profile the one
+ *  the console runs in, elsewhere the address's `?cluster=` (the cluster
+ *  Settings was opened from) when it names one, else the first in the rail's
+ *  order. */
+function chosenCluster(shared: boolean, data: Parameters<typeof onlyCluster>[0], listed: readonly Cluster[], asked: string | null): string | undefined {
+  return shared ? onlyCluster(data)?.name : (listed.find((one) => one.name === asked) ?? listed[0])?.name;
+}
+
+/** The cluster Settings › General's Monitoring tile is about, with its label. */
+export function useSettingsCluster(): Cluster | undefined {
+  const shared = useCapabilities().data?.mode === 'shared';
+  const clusters = useClusters();
+  const [params] = useSearchParams();
+  const listed = clusters.data?.state === 'ok' ? arrange(clusters.data.items) : [];
+  const name = chosenCluster(shared, clusters.data, listed, params.get(CLUSTER_PARAM));
+  return listed.find((one) => one.name === name);
+}
+
 export type ExtraTab =
   | { readonly state: 'deciding' }
   | { readonly state: 'none' }
@@ -180,10 +198,7 @@ export function useExtraTab(): ExtraTab {
   const [params] = useSearchParams();
 
   const listed = clusters.data?.state === 'ok' ? arrange(clusters.data.items) : [];
-  const asked = params.get(CLUSTER_PARAM);
-  const cluster = shared
-    ? onlyCluster(clusters.data)?.name
-    : (listed.find((one) => one.name === asked) ?? listed[0])?.name;
+  const cluster = chosenCluster(shared, clusters.data, listed, params.get(CLUSTER_PARAM));
   const extensions = useExtensions(cluster, profileRead);
 
   if (!profileRead) return DECIDING;
