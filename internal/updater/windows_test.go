@@ -213,3 +213,31 @@ func TestAZipEntryOverTheLimitIsRefused(t *testing.T) {
 		t.Errorf("left %v", entries)
 	}
 }
+
+// The Windows wiring (#122), exercised everywhere: on quit the helper is
+// started without stopping anything and starts nothing after; otherwise it
+// stops KubeTower and starts the new build.
+func TestTheWindowsHelperFollowsTheMoment(t *testing.T) {
+	var stopped, quit []string
+	stopping := func(s string) error { stopped = append(stopped, s); return nil }
+	quitting := func(s string) error { quit = append(quit, s); return nil }
+	plan := Plan{File: `C:\s\setup.exe`, Installation: Installation{Path: `C:\k\kubetower.exe`}, Log: `C:\s\log`}
+	onQuit := plan
+	onQuit.Quit = true
+	for _, script := range []string{setupHelper(onQuit, 3, nil), swapHelper(onQuit, `C:\k\.next.exe`, 3, nil)} {
+		if strings.Contains(script, "starting ") || !strings.Contains(script, "nothing started") {
+			t.Errorf("on quit: %s", script)
+		}
+	}
+	for _, script := range []string{setupHelper(plan, 3, nil), swapHelper(plan, `C:\k\.next.exe`, 3, nil)} {
+		if !strings.Contains(script, `Start-Process -FilePath 'C:\k\kubetower.exe'`) {
+			t.Errorf("not started again: %s", script)
+		}
+	}
+	if err := handOver(onQuit, "q", stopping, quitting); err != nil || len(quit) != 1 || len(stopped) != 0 {
+		t.Fatalf("on quit: %v %v %v", err, quit, stopped)
+	}
+	if err := handOver(plan, "s", stopping, quitting); err != nil || len(stopped) != 1 || len(quit) != 1 {
+		t.Fatalf("restart: %v %v %v", err, quit, stopped)
+	}
+}

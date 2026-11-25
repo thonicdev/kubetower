@@ -2,9 +2,11 @@ package updater
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/thonicdev/kubetower/internal/update"
+	"github.com/thonicdev/kubetower/safego"
 	"github.com/thonicdev/kubetower/textutil"
 )
 
@@ -38,8 +40,13 @@ func (u *Updater) autoStep(ctx context.Context, latest func() string, open func(
 	}
 	switch s.Phase {
 	case Idle, Failed:
+		// A helper that could not be stopped keeps its file (#106): a new
+		// download would remove it from under it.
+		if s.Phase == Failed && s.Reason == errHelperAlive.Error() {
+			return
+		}
 		next := latest()
-		if next == "" || !update.IsNewer(next, u.o.Version) || !u.once(&u.autoDownloaded, next) {
+		if next == "" || !update.IsNewer(next, u.o.Version) || next == u.failedAtQuit() || !u.once(&u.autoDownloaded, next) {
 			return
 		}
 		if _, err := u.Download(); err != nil {
@@ -56,10 +63,18 @@ func (u *Updater) autoStep(ctx context.Context, latest func() string, open func(
 		if !u.once(&u.autoInstalled, s.Version) {
 			return
 		}
-		if _, err := u.Install(ctx); err != nil {
+		now := func(s Status) bool { return s.Enabled && s.When == WhenNow && !s.Password }
+		if _, err := u.install(ctx, now); err != nil {
 			u.logf("update: the automatic install did not start: %s", textutil.FirstLine(err.Error()))
 		}
 	}
+}
+
+// failedAtQuit is the release kept as not installed at the last quit.
+func (u *Updater) failedAtQuit() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.held.FailedOnQuit
 }
 
 // once records version in *held and says whether it was not already there.
@@ -79,13 +94,19 @@ func (u *Updater) logf(format string, args ...any) {
 	}
 }
 
-// QuitWait bounds InstallOnQuit: quitting is never held longer than this.
+// QuitWait bounds InstallOnQuit, the copy and the installer together:
+// quitting is never held longer than this.
 var QuitWait = time.Minute
 
 // InstallOnQuit installs a verified update as KubeTower quits, where the
 // automatic setting says WhenQuit and no password is needed: the new build is
 // put in place, nothing is started, and the next start runs it. It says
 // whether it installed. internal/launch calls it once the server has stopped.
+//
+// A failure is kept in updater.json (failedOnQuit): the next start says it,
+// and neither downloads that release again nor tries it at the next quit
+// until a person asks. A folder that cannot be written was settled at the
+// download already (the manual phase), so it does not get here.
 func (u *Updater) InstallOnQuit(ctx context.Context) bool {
 	u.mu.Lock()
 	s := u.status
@@ -107,25 +128,41 @@ func (u *Updater) InstallOnQuit(ctx context.Context) bool {
 		u.mu.Lock()
 		u.status.Phase, u.status.Reason = Failed, reason
 		u.mu.Unlock()
+		u.failedOnQuit(plan.Version, reason)
 		return false
 	}
 	if !update.IsNewer(plan.Version, u.o.Version) {
 		return fail(ErrNotNewer.Error())
 	}
-	staged, err := u.stage(plan)
-	if err != nil {
-		return fail(textutil.FirstLine(err.Error()))
-	}
-	plan.File = staged
-	useLog(plan.Log)
 	install := u.installer()
 	if install == nil {
 		return fail(ErrUnsupported.Error())
 	}
 	bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), QuitWait)
 	defer cancel()
-	if err := install(bounded, plan); err != nil {
-		return fail(textutil.FirstLine(err.Error()))
+	done := make(chan error, 1)
+	safego.Go("update install on quit", func() error {
+		staged, err := u.stage(plan)
+		if err != nil {
+			done <- err
+			return nil
+		}
+		plan.File = staged
+		useLog(plan.Log)
+		done <- install(bounded, plan)
+		return nil
+	}, func(err error) {
+		if err != nil {
+			done <- err
+		}
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			return fail(textutil.FirstLine(err.Error()))
+		}
+	case <-bounded.Done():
+		return fail(fmt.Sprintf("not done within %s", QuitWait))
 	}
 	u.step("installed on quit; the next start runs %s", plan.Version)
 	u.logf("update: %s installed; the next start runs it", plan.Version)

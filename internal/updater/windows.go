@@ -116,3 +116,24 @@ func swapScript(pid int, next, exe string, args []string, log string, restart bo
 		psQuote("KubeTower exited; moving "+next+" over "+exe), psQuote(next), psQuote(exe)) +
 		startScript(exe, args, restart)
 }
+
+// setupHelper is the setup's helper script for plan: it starts the new build
+// afterwards, except while KubeTower quits (InstallOnQuit).
+func setupHelper(plan Plan, pid int, args []string) string {
+	return setupScript(pid, plan.File, plan.Installation.Path, args, plan.Log, !plan.Quit)
+}
+
+// swapHelper is the zip's helper script for plan, as setupHelper.
+func swapHelper(plan Plan, next string, pid int, args []string) string {
+	return swapScript(pid, next, plan.Installation.Path, args, plan.Log, !plan.Quit)
+}
+
+// handOver starts the helper the way the moment asks: while KubeTower quits
+// (InstallOnQuit) quitting starts it and asks nothing more, since the process
+// is exiting already; otherwise stopping starts it and stops this process.
+func handOver(plan Plan, script string, stopping, quitting func(string) error) error {
+	if plan.Quit {
+		return quitting(script)
+	}
+	return stopping(script)
+}

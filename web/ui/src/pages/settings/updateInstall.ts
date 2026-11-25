@@ -57,7 +57,9 @@ export function waitsOn(install: UpdateInstall): 'password' | 'open' | undefined
 export function needsPerson(install: UpdateInstall, newer: boolean): boolean {
   if (!install.supported) return false;
   if (!install.enabled) return newer || install.phase !== 'idle';
-  return waitsOn(install) !== undefined || install.phase === 'failed' || install.phase === 'manual';
+  // Ready again with a reason (an install that did not finish) is said too.
+  const unfinished = install.phase === 'ready' && (install.reason ?? '') !== '';
+  return waitsOn(install) !== undefined || unfinished || install.phase === 'failed' || install.phase === 'manual';
 }
 
 export function getUpdateInstall(signal?: AbortSignal): Promise<UpdateInstall> {

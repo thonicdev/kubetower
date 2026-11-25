@@ -828,6 +828,14 @@ describe('automatic updates (#122)', () => {
     expect(infosControl()?.querySelector('[data-update-on-quit]')).toBeNull();
   });
 
+  it('on quit, ready again with a reason: said in the banner', async () => {
+    console({ ...ready, reason: 'KubeTower did not stop to install the update; nothing was installed' });
+    mountApp('/settings/infos');
+    await waitFor(() => {
+      expect(control()?.querySelector('[data-update-reason]')?.textContent).toContain('did not stop');
+    });
+  });
+
   it('a running automatic download is drawn in Infos and not in a banner', async () => {
     console({ ...ready, phase: 'downloading', done: 1024 * 1024, total: 4 * 1024 * 1024 });
     mountApp('/settings/infos');

@@ -2,6 +2,9 @@ package updater
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,6 +179,170 @@ func TestOnQuitInstallsTheReadyUpdateAndStartsNothing(t *testing.T) {
 		t.Fatal("a failed install reported installed")
 	}
 	if s := w.Status(); s.Phase != Failed || s.Reason == "" {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// readyOn downloads the fake's release into a fresh updater on rec.
+func readyOn(t *testing.T, f *fake, dir string, rec *recorder, over func(*Options)) *Updater {
+	t.Helper()
+	u := f.updater(dir, rec, over)
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, u); s.Phase != Ready {
+		t.Fatalf("%+v", s)
+	}
+	return u
+}
+
+// B1 of #124's review: a folder that cannot be written is settled at the
+// download, while KubeTower runs - the manual phase, Open folder - and on
+// quit nothing is tried.
+func TestANotWritableFolderIsTheManualPhaseBeforeAnyQuit(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	u := f.updater(t.TempDir(), rec, func(o *Options) { o.Writable = func() bool { return false } })
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	s := settle(t, u)
+	if s.Phase != Manual || s.Folder == "" || s.Version != "0.1.3" {
+		t.Fatalf("%+v", s)
+	}
+	if u.InstallOnQuit(context.Background()) || len(plans(rec)) != 0 {
+		t.Fatal("tried on quit")
+	}
+}
+
+// A failure at quit is kept: the next start says it, the automatic update
+// neither downloads that release again nor tries it, and a person's download
+// clears it.
+func TestAFailedInstallOnQuitIsKeptAndNotRepeated(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	u := readyOn(t, f, dir, &recorder{err: errors.New("the setup refused")}, nil)
+	if u.InstallOnQuit(context.Background()) {
+		t.Fatal("reported installed")
+	}
+	next := f.updater(dir, &recorder{}, nil)
+	if s := next.Status(); s.Phase != Failed || s.Version != "0.1.3" || !strings.Contains(s.Reason, "the setup refused") {
+		t.Fatalf("the next start: %+v", s)
+	}
+	f.mu.Lock()
+	asked := len(f.hits)
+	f.mu.Unlock()
+	next.autoStep(context.Background(), func() string { return "0.1.3" }, nothingOpen)
+	f.mu.Lock()
+	again := len(f.hits)
+	f.mu.Unlock()
+	if again != asked || next.Status().Phase != Failed {
+		t.Fatalf("downloaded again: %d then %d requests, %+v", asked, again, next.Status())
+	}
+	// Retry, by a person: the failure is forgotten.
+	if _, err := next.Download(); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, next)
+	deadline := time.Now().Add(2 * time.Second)
+	for f.updater(dir, &recorder{}, nil).Status().Phase == Failed && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s := f.updater(dir, &recorder{}, nil).Status(); s.Phase == Failed {
+		t.Fatalf("still failed after a download: %+v", s)
+	}
+}
+
+// pkexec is never started without a click, on quit either.
+func TestOnQuitNeverInstallsAPackage(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	deb := f.updater(t.TempDir(), rec, func(o *Options) { o.Installation.Kind = LinuxDeb })
+	deb.mu.Lock()
+	deb.status.Phase, deb.status.Version = Ready, "0.1.3"
+	deb.planned = Plan{Version: "0.1.3", File: "/nowhere", Installation: deb.o.Installation}
+	deb.mu.Unlock()
+	if deb.InstallOnQuit(context.Background()) || len(plans(rec)) != 0 {
+		t.Fatal("a package installed on quit")
+	}
+}
+
+// The installer reads the copy staged for this install, never the verified
+// path a swap could reach; and never a release that is not newer.
+func TestOnQuitInstallsTheStagedCopyOfANewerRelease(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	u := readyOn(t, f, t.TempDir(), rec, nil)
+	checked := u.planned.File
+	if !u.InstallOnQuit(context.Background()) {
+		t.Fatal("not installed")
+	}
+	got := plans(rec)
+	if len(got) != 1 || got[0].File == checked || !strings.HasPrefix(filepath.Base(filepath.Dir(got[0].File)), "install-") {
+		t.Fatalf("installed %+v, checked %s", got, checked)
+	}
+
+	older := &recorder{}
+	same := readyOn(t, f, t.TempDir(), older, nil)
+	same.mu.Lock()
+	same.planned.Version = "0.1.2"
+	same.mu.Unlock()
+	if same.InstallOnQuit(context.Background()) || len(plans(older)) != 0 {
+		t.Fatal("installed a release that is not newer")
+	}
+	if s := same.Status(); s.Phase != Failed || !strings.Contains(s.Reason, "not newer") {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// QuitWait bounds the whole install: quitting is not held by an installer
+// that does not return.
+func TestOnQuitIsBounded(t *testing.T) {
+	f := newFake(t)
+	was := QuitWait
+	QuitWait = 50 * time.Millisecond
+	t.Cleanup(func() { QuitWait = was })
+	u := readyOn(t, f, t.TempDir(), &recorder{}, func(o *Options) {
+		o.Install = func(ctx context.Context, _ Plan) error { <-ctx.Done(); time.Sleep(time.Second); return nil }
+	})
+	start := time.Now()
+	if u.InstallOnQuit(context.Background()) {
+		t.Fatal("reported installed")
+	}
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Fatalf("held quitting for %s", took)
+	}
+}
+
+// A switch to off, or to on quit, just before the automatic install starts
+// is honored: the conditions are checked again under the lock that starts it.
+func TestTheAutomaticInstallChecksTheSettingAgain(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	u := readyOn(t, f, t.TempDir(), rec, nil)
+	if _, err := u.Set(true, WhenNow); err != nil {
+		t.Fatal(err)
+	}
+	u.autoStep(context.Background(), func() string { return "0.1.3" }, func() (int, int) {
+		_, _ = u.Set(false, "")
+		return 0, 0
+	})
+	time.Sleep(50 * time.Millisecond)
+	if n := len(plans(rec)); n != 0 {
+		t.Fatalf("installed after the switch went off: %d", n)
+	}
+}
+
+// A helper that could not be stopped keeps its file (#106): no automatic
+// download removes it.
+func TestNoAutomaticDownloadBesideAHelperStillAlive(t *testing.T) {
+	f := newFake(t)
+	u := f.updater(t.TempDir(), &recorder{}, nil)
+	u.mu.Lock()
+	u.status.Phase, u.status.Reason = Failed, errHelperAlive.Error()
+	u.mu.Unlock()
+	u.autoStep(context.Background(), func() string { return "0.1.3" }, nothingOpen)
+	if s := u.Status(); s.Phase != Failed || s.Reason != errHelperAlive.Error() {
 		t.Fatalf("%+v", s)
 	}
 }

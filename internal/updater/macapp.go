@@ -32,7 +32,10 @@ const mountPrefix = "kubetower-update-"
 func installApp(ctx context.Context, plan Plan) error {
 	bundle := plan.Installation.Path
 	if translocated(bundle) || !writableBeside(bundle) {
-		_, _ = runTool(ctx, "/usr/bin/open", plan.File)
+		// Never the Finder at quit, unasked: the next start says Not writable.
+		if !plan.Quit {
+			_, _ = runTool(ctx, "/usr/bin/open", plan.File)
+		}
 		return fmt.Errorf("%w: %w", ErrNotWritable, ErrNotInPlace)
 	}
 	mount, err := os.MkdirTemp("", mountPrefix)
@@ -53,8 +56,13 @@ func installApp(ctx context.Context, plan Plan) error {
 		_ = os.RemoveAll(next)
 		return err
 	}
+	return openAgainUnlessQuit(plan, bundle)
+}
+
+// openAgainUnlessQuit opens the new bundle once this process has exited,
+// except while KubeTower quits (InstallOnQuit): the next start opens it.
+func openAgainUnlessQuit(plan Plan, bundle string) error {
 	if plan.Quit {
-		// KubeTower is quitting: the next start opens the new bundle.
 		return nil
 	}
 	if err := restart("/usr/bin/open", append([]string{"-n", bundle, "--args"}, os.Args[1:]...)); err != nil {
