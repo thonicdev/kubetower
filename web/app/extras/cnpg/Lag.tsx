@@ -102,6 +102,7 @@ function Row({ r }: { r: ReplicaLag }): ReactNode {
 /** What each failure of the read is called: one pill, the sentence on hover. */
 const WORD: Readonly<Record<string, { label: string; tone?: 'warn' | 'bad' }>> = {
   exec_forbidden: { label: 'Refused: no exec on the primary', tone: 'warn' },
+  read_only: { label: 'Read-only cluster', tone: 'warn' },
   exec_unreviewed: { label: 'Not reviewed: try again', tone: 'warn' },
   no_psql: { label: 'No psql in the image', tone: 'warn' },
   exec_timed_out: { label: 'Timed out', tone: 'bad' },

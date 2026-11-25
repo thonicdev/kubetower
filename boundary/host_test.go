@@ -40,6 +40,7 @@ type recordingHost struct {
 	window    extension.Window
 	revealErr error
 	logsErr   error
+	execErr   error
 }
 
 func newRecordingHost() *recordingHost {
@@ -100,6 +101,9 @@ func (h *recordingHost) Reveal(r *http.Request, cluster, namespace, name, key st
 
 func (h *recordingHost) Exec(r *http.Request, cluster string, q extension.ExecQuery) (extension.ExecResult, error) {
 	h.note("Exec")
+	if h.execErr != nil {
+		return extension.ExecResult{}, h.execErr
+	}
 	return extension.ExecResult{Stdout: []byte("ok\n"), ExitCode: 3}, nil
 }
 

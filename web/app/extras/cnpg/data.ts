@@ -225,7 +225,7 @@ export interface PodAnswer {
 export type ProblemKind = 'absent' | 'refusal' | 'failure';
 
 const ABSENT = new Set(['kind_unknown', 'kind_not_served', 'unknown_cluster', 'not_found', 'not_instance', 'gate']);
-const REFUSED = new Set(['list_forbidden', 'list_unreviewed', 'secret_denied', 'secret_unreviewed', 'tunnel_refused', 'pod_unknown', 'exec_forbidden', 'exec_unreviewed']);
+const REFUSED = new Set(['list_forbidden', 'list_unreviewed', 'secret_denied', 'secret_unreviewed', 'tunnel_refused', 'pod_unknown', 'exec_forbidden', 'exec_unreviewed', 'read_only']);
 const ABSENT_SQL = new Set(['no_credential', 'no_such_table']);
 
 export class CnpgProblem extends Error {

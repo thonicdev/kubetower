@@ -127,6 +127,7 @@ func TestLagEveryFailureHasItsOwnAnswer(t *testing.T) {
 		code   string
 	}{
 		{"refused", extension.ExecResult{}, fmt.Errorf("exec: %w", extension.ErrDenied), http.StatusForbidden, CodeExecForbidden},
+		{"read-only", extension.ExecResult{}, fmt.Errorf("%w: prod is marked read-only", extension.ErrReadOnly), http.StatusForbidden, CodeReadOnly},
 		{"unreviewable", extension.ExecResult{}, fmt.Errorf("exec: %w", extension.ErrUnreviewable), http.StatusServiceUnavailable, CodeExecUnreviewed},
 		{"no psql", extension.ExecResult{}, extension.ErrNoSuchCommand, http.StatusUnprocessableEntity, CodeNoPsql},
 		{"timeout", extension.ExecResult{}, extension.ErrExecTimedOut, http.StatusGatewayTimeout, CodeExecTimedOut},
