@@ -590,6 +590,8 @@ export const IMAGE_SHAPES: readonly { container: string; image: string }[] = [
   { container: 'envoy', image: 'docker.io/envoyproxy/envoy@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' },
   { container: 'log-shipper', image: 'ghcr.io/observability-collective/log-shipper:1.8.0@sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae' },
   { container: 'debug', image: 'busybox' },
+  // A tag as long as a tag may be (128 characters): cut at its end, never past the tile.
+  { container: 'nightly', image: `ghcr.io/team/app:${'build-2026-11-25-'.repeat(7)}x`.slice(0, 'ghcr.io/team/app:'.length + 128) },
 ];
 
 export function podImageAnswers(): Readonly<Record<string, unknown>> {

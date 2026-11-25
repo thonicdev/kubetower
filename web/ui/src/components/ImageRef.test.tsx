@@ -62,8 +62,41 @@ describe('an image reference', () => {
     const badge = document.querySelector('[data-image-version]');
     expect(badge?.textContent).toBe('2.14.3-rc.2');
     expect(badge?.className).toContain('shrink-0');
-    expect(badge?.className).not.toContain('truncate');
     expect(document.querySelector('button[aria-label="Copy image"]')).not.toBeNull();
+  });
+
+  it('reads as a reference when selected: the separator is drawn', () => {
+    for (const [image, read] of [
+      ['ghcr.io/team/app:1.2.3', 'ghcr.io/team/app:1.2.3'],
+      [`docker.io/envoyproxy/envoy@${DIGEST}`, 'docker.io/envoyproxy/envoy@sha256:9f86d081'],
+      [`ghcr.io/team/app:1.8.0@${DIGEST}`, 'ghcr.io/team/app:1.8.0'],
+      ['busybox', 'busybox:latest'],
+    ] as const) {
+      render(<ImageRef image={image} />);
+      const line = document.querySelector('[data-image-repository]')?.parentElement;
+      expect(line?.textContent).toBe(read);
+      cleanup();
+    }
+  });
+
+  it('cuts a tag longer than the line at its end, whole in its hover', () => {
+    const tag = 'v'.repeat(128);
+    render(<ImageRef image={`ghcr.io/team/app:${tag}`} />);
+    const badge = document.querySelector('[data-image-version]');
+    expect(badge?.className).toContain('truncate');
+    expect(badge?.className).toContain('max-w-full');
+    expect(badge?.getAttribute('title')).toBe(tag);
+  });
+
+  it('names a tag and its digest in the badge\'s hover', () => {
+    render(<ImageRef image={`ghcr.io/team/app:1.8.0@${DIGEST}`} />);
+    expect(document.querySelector('[data-image-version]')?.getAttribute('title')).toBe(`1.8.0@${DIGEST}`);
+  });
+
+  it('draws no copy button inside a control of its own', () => {
+    render(<ImageRef image="ghcr.io/team/app:1" copy={false} />);
+    expect(document.querySelector('button')).toBeNull();
+    expect(document.querySelector('[data-image]')?.getAttribute('title')).toBe('ghcr.io/team/app:1');
   });
 
   it('marks the implicit latest, and draws nothing for no image', () => {
