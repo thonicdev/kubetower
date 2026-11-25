@@ -124,7 +124,6 @@ const TOUR: readonly { icon: IconName; label: string; caption: string }[] = [
 
 export function WhatsNewBanner(): ReactNode {
   const { release, shown, reopened, close } = useWhatsNew();
-  const repository = externalHref(useSettings().data?.info.repositoryUrl);
   const box = useRef<HTMLElement>(null);
   // Opened from About: focus moves to it. Shown on its own, it takes nothing.
   useEffect(() => {
@@ -138,7 +137,6 @@ export function WhatsNewBanner(): ReactNode {
   };
   const title =
     shown.kind === 'welcome' ? 'Welcome to KubeTower' : shown.kind === 'news' ? "What's new" : 'KubeTower';
-  const changelog = repository === undefined ? undefined : `${repository.replace(/\/+$/, '')}/blob/main/CHANGELOG.md`;
   return (
     <section
       ref={box}
@@ -153,21 +151,31 @@ export function WhatsNewBanner(): ReactNode {
           {title}
         </h2>
         <Pill tone="info">{release}</Pill>
-        {shown.kind === 'news' && changelog !== undefined ? (
-          <a
-            href={changelog}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`text-accent underline underline-offset-2 ${focusRing}`}
-            data-whats-new-changelog=""
-          >
-            Changelog
-          </a>
-        ) : null}
+        {shown.kind === 'news' ? <ChangelogLink /> : null}
         <CloseButton onClick={close} size="inline" escape className="ml-auto" />
       </div>
       {shown.kind === 'news' ? <News releases={shown.releases} /> : <Tour />}
     </section>
+  );
+}
+
+/**
+ * The repository's CHANGELOG, from the settings read: asked only once news is
+ * drawn, so a page with no banner reads nothing more.
+ */
+function ChangelogLink(): ReactNode {
+  const repository = externalHref(useSettings().data?.info.repositoryUrl);
+  if (repository === undefined) return null;
+  return (
+    <a
+      href={`${repository.replace(/\/+$/, '')}/blob/main/CHANGELOG.md`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`text-accent underline underline-offset-2 ${focusRing}`}
+      data-whats-new-changelog=""
+    >
+      Changelog
+    </a>
   );
 }
 
