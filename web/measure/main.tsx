@@ -37,6 +37,7 @@ import { redis } from '../app/extras/redis';
 
 import { ACTIVITY_EXTRA, activityAnswers, activityPath } from './events.fixture';
 import { UPDATE_STEPS, updateSettings } from './update.fixture';
+import { NewsProposal, UpdatesProposal, UpdatesSheet, type AutoStep } from './proposals';
 import { replaceReleases } from '../ui/src/whatsnew/changelog';
 import { WHATS_NEW_RELEASES, whatsNewAnswers } from './whatsnew.fixture';
 import { LONG_ARN, LONG_NAME_ANSWERS } from './clusters.fixture';
@@ -1450,7 +1451,22 @@ const CONSOLES: Readonly<
     extra: { [`/x/${OVERVIEW_CLUSTER}/pending/cells?kind=deployments`]: pendingDeploymentCells(OVERVIEW_CLUSTER) },
   },
 };
-const consoleScene = CONSOLES[scene];
+// The 0.2.2 proposals (#121, #122), over the real console.
+const proposal = /^proposal-(news|updates)-([abc])(?:-([a-z]+))?$/.exec(scene);
+const PROPOSAL_INSTALL: Readonly<Record<string, keyof typeof UPDATE_STEPS>> = {
+  off: 'idle', current: 'idle', downloading: 'downloading', waiting: 'ready', password: 'ready',
+  onquit: 'ready', installing: 'installing', failed: 'failed',
+};
+const proposalConsole =
+  proposal === null || proposal[3] === 'sheet'
+    ? undefined
+    : proposal[1] === 'news'
+      ? { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_ANSWERS }
+      : {
+    at: '/settings/infos',
+    answers: { ...OVERVIEW_ANSWERS, ...updateSettings(UPDATE_STEPS[PROPOSAL_INSTALL[proposal[3] ?? 'waiting'] ?? 'ready']) },
+  };
+const consoleScene: (typeof CONSOLES)[string] | undefined = proposalConsole ?? CONSOLES[scene];
 if (consoleScene !== undefined) answerFromFixture(consoleScene.answers);
 if (consoleScene?.extra !== undefined) answerExtra(consoleScene.extra);
 
@@ -1668,8 +1684,17 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={createQueryClient()}>
       <KeyboardStack>
-        {consoleScene !== undefined ? (
-          <ConsoleScene at={consoleScene.at} {...(consoleScene.extensions === undefined ? {} : { extensions: consoleScene.extensions })} />
+        {proposal !== null && proposal[3] === 'sheet' ? (
+          <>
+            <IconSprite />
+            <UpdatesSheet variant={proposal[2] ?? 'a'} />
+          </>
+        ) : consoleScene !== undefined ? (
+          <>
+            <ConsoleScene at={consoleScene.at} {...(consoleScene.extensions === undefined ? {} : { extensions: consoleScene.extensions })} />
+            {proposal?.[1] === 'news' ? <NewsProposal variant={proposal[2] ?? 'a'} /> : null}
+            {proposal?.[1] === 'updates' ? <UpdatesProposal variant={proposal[2] ?? 'a'} step={(proposal[3] ?? 'waiting') as AutoStep} /> : null}
+          </>
         ) : scene === 'redis-hash' ? (
           <RedisScene />
         ) : extraScene !== undefined ? (
