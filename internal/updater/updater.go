@@ -365,8 +365,9 @@ func (u *Updater) Download() (Status, error) {
 	}
 	u.forget()
 	u.status.Phase = Downloading
-	if u.held.FailedOnQuit != "" || u.held.InstalledOnQuit != "" {
-		u.held.FailedOnQuit, u.held.FailedReason, u.held.InstalledOnQuit = "", "", ""
+	// InstalledOnQuit needs nothing here: New settles it at every start.
+	if u.held.FailedOnQuit != "" {
+		u.held.FailedOnQuit, u.held.FailedReason = "", ""
 		safego.Go("update settings", u.saveSettings, nil)
 	}
 	safego.Go("update download", func() error { u.download(); return nil }, func(err error) {

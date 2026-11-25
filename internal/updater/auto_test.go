@@ -452,3 +452,31 @@ func TestTheSettingOnDiskIsTheLastOne(t *testing.T) {
 		t.Fatalf("on disk %v/%s, in memory %v/%s", got.Enabled, got.When, want.Enabled, want.When)
 	}
 }
+
+// At once, turned on after a download by hand: the folder is settled before
+// the install starts, and one that cannot be written is the manual phase, with
+// no installer run (on macOS, no disk image opened unasked).
+func TestAtOnceSettlesTheFolderBeforeInstalling(t *testing.T) {
+	f := newFake(t)
+	rec := &recorder{}
+	writable := true
+	u := f.updater(t.TempDir(), rec, func(o *Options) { o.Writable = func() bool { return writable } })
+	if _, err := u.Set(false, WhenNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, u); s.Phase != Ready {
+		t.Fatalf("%+v", s)
+	}
+	writable = false
+	if _, err := u.Set(true, WhenNow); err != nil {
+		t.Fatal(err)
+	}
+	u.autoStep(context.Background(), func() string { return "0.1.3" }, nothingOpen)
+	time.Sleep(50 * time.Millisecond)
+	if s := u.Status(); s.Phase != Manual || s.Folder == "" || len(plans(rec)) != 0 {
+		t.Fatalf("%+v, %d installs", s, len(plans(rec)))
+	}
+}
