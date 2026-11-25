@@ -2314,3 +2314,26 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 		t.Error("the draft attaches the signature before it has checked every asset")
 	}
 }
+
+// The release notes point at the signing key at this release's tag, as their
+// text says: unsigned.md names the tag @TAG@, never main, and the draft job
+// puts the tag in once it has read the file and before it uses it (#100).
+func TestTheReleaseNotesLinkTheKeyAtTheTag(t *testing.T) {
+	notes, err := os.ReadFile(filepath.Join("..", "..", "packaging", "release-notes", "unsigned.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(notes), "https://github.com/thonicdev/kubetower/blob/@TAG@/internal/releasesig/release-key.pem") {
+		t.Error("unsigned.md does not link release-key.pem at @TAG@")
+	}
+	if strings.Contains(string(notes), "/blob/main/") {
+		t.Error("unsigned.md links a file on main, not at the release's tag")
+	}
+	run := jobText(workflowJobs(t, "release.yml")["draft"])
+	read := strings.Index(run, `"repos/$REPO/contents/packaging/release-notes/unsigned.md?ref=$TAG" >"$notes"`)
+	put := strings.Index(run, `sed -i "s/@TAG@/$TAG/g" "$notes"`)
+	used := strings.Index(run, `gh release view "$TAG"`)
+	if read < 0 || put < 0 || used < 0 || !(read < put && put < used) {
+		t.Errorf("the draft job does not put the tag into the notes between reading and using them (read %d, sed %d, use %d)", read, put, used)
+	}
+}
