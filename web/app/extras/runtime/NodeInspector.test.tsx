@@ -81,7 +81,21 @@ describe("the Node.js tab's inspector", () => {
       expect(document.querySelector('[data-node-state="open"]')).not.toBeNull();
     });
     expect(asked.find((a) => a.call.startsWith('POST'))?.marked).toBe(true);
+    // The confirmation travels with the open, which the server checks.
+    expect(asked.map((a) => a.call)).toContain(`POST ${BASE}/inspector?confirm=confirm`);
     expect((screen.getByRole('button', { name: 'Diagnostic report' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says in one line that no Node.js process was found', async () => {
+    stub({
+      [`GET ${BASE}`]: { body: closed },
+      [`POST ${BASE}/inspector?confirm=confirm`]: { status: 422, body: { code: 'no_node_process', message: 'No Node.js process was found in this container.' } },
+    });
+    mount(pane);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open inspector' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(await screen.findByText(/No Node.js process was found/)).toBeDefined();
+    expect(document.querySelector('[data-node-choose]')).toBeNull();
   });
 
   it('asks which process when there are several', async () => {

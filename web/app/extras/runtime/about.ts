@@ -45,7 +45,7 @@ export const about: ExtensionAbout = {
   ],
   permissions: [
     'create pods/exec, for the Node.js tab, which opens the inspector with node in the container on a confirmed click (process._debugProcess, recorded)',
-    'create pods/portforward, for the Go tab, which reads net/http/pprof through a tunnel to the pod (Goroutines, Heap profile, CPU profile, Trace)',
+    'create pods/portforward, for the Go tab, which reads net/http/pprof through a tunnel to the pod (Goroutines, Heap profile, CPU profile, Trace), and for the Node.js tab, which reaches the inspector through one (Heap snapshot, CPU profile, Diagnostic report)',
     'list pods',
     'list pods (metrics.k8s.io), for the working sets',
     'create pods/exec, for the JVM tab on a pod, which runs jcmd in the container (Inspect, Thread dump, Class histogram)',

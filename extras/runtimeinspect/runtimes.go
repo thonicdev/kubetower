@@ -117,12 +117,18 @@ func detect(c corev1.Container, annotated map[string]string) detection {
 	if isSidecar(c) {
 		return detection{}
 	}
-	// Java is read as the JVM Inspector read it, and nothing but another
-	// runtime's own interpreter, started as the program, takes a container
-	// with a Java hint away from it: a package manager (Hadoop's `yarn`), a
-	// Go variable or a word among the arguments does not.
-	if java := hints(c); len(java) > 0 && !startsAnInterpreter(c) {
-		return detection{runtime: runtimeJava, hints: java}
+	// Java is read as the JVM Inspector read it, and only a program that
+	// runs another runtime, started as the program, takes a container with
+	// a Java hint away from it (takesFromJava): Hadoop's `yarn`, a Go
+	// variable or a word among the arguments does not. A runtime this page
+	// does not read (Deno, Bun) leaves the container unread rather than Java.
+	if java := hints(c); len(java) > 0 {
+		switch taker := programTakingFromJava(c); {
+		case taker == "":
+			return detection{runtime: runtimeJava, hints: java}
+		case otherRuntimes[taker]:
+			return detection{}
+		}
 	}
 	best, bestRank := detection{}, 0
 	for _, p := range providers {
@@ -196,26 +202,34 @@ var (
 func programs(c corev1.Container) []program {
 	var out []program
 	at := -1 // the program the next arguments belong to, if any
-	start, wrapped, shell := true, false, false
-	reset := func() { at, start, wrapped, shell = -1, true, false, false }
+	start, wrapped, shell, optionArg := true, false, false, false
+	reset := func() { at, start, wrapped, shell, optionArg = -1, true, false, false, false }
 	for _, token := range commandLine(c) {
 		switch token {
-		case "&&", "||", ";", "|", "&":
+		case "&&", "||", "|", "&":
 			reset()
 			continue
 		}
+		// A `;`, alone or ending a word, ends the command.
 		token, end := strings.CutSuffix(token, ";")
 		switch {
 		case token == "":
 		case shell:
-			if isFlag(token) {
-				if !strings.HasPrefix(token, "--") && strings.Contains(token, "c") {
-					shell, start = false, true
-				}
-				break
+			switch {
+			case optionArg:
+				// The value of -o, -O or --rcfile: `bash -o pipefail -c …`.
+				optionArg = false
+			case token == "--rcfile" || token == "--init-file":
+				optionArg = true
+			case strings.HasPrefix(token, "--"):
+			case strings.HasPrefix(token, "-") && strings.Contains(token, "c"):
+				shell, start = false, true
+			case isFlag(token) || strings.HasPrefix(token, "+"):
+				optionArg = strings.ContainsAny(token[1:], "oO")
+			default:
+				// The shell runs a script file: the program is the shell.
+				shell, start = false, false
 			}
-			// The shell runs a script file: the program is the shell.
-			shell, start = false, false
 		case start:
 			switch base := path.Base(token); {
 			case isFlag(token) && wrapped, isAssignment(token):
@@ -256,10 +270,20 @@ func isAssignment(token string) bool {
 	return true
 }
 
-// interpreters are the runtimes' own programs, which alone take a container
-// with a Java hint away from Java (detect).
+// isInterpreter is a runtime's own program: given nothing to run after an
+// entrypoint, it is the entrypoint's subcommand (runsAScript).
 func isInterpreter(base string) bool {
 	return base == "node" || base == "nodejs" || isPythonInterpreter(base)
+}
+
+// otherRuntimes run a runtime this page does not read.
+var otherRuntimes = map[string]bool{"deno": true, "bun": true}
+
+// takesFromJava is a program that runs another runtime: its interpreter, a
+// Python server, or a Node.js package manager. Not `yarn`, which is also
+// Hadoop's YARN, started with JAVA_HOME set.
+func takesFromJava(base string) bool {
+	return isInterpreter(base) || pythonServers[base] || base == "npm" || base == "npx" || base == "pnpm" || otherRuntimes[base]
 }
 
 // runsAScript is whether an interpreter read after an entrypoint is given
@@ -296,15 +320,15 @@ func programHint(c corev1.Container, isProgram func(base string) bool, isScript 
 	return Hint{}, false
 }
 
-// startsAnInterpreter is whether c's command line starts Node.js or Python
-// itself.
-func startsAnInterpreter(c corev1.Container) bool {
+// programTakingFromJava is the base of the first program of c that takes it
+// from Java (takesFromJava), or "".
+func programTakingFromJava(c corev1.Container) string {
 	for _, p := range programs(c) {
-		if base := path.Base(p.words[0]); isInterpreter(base) && counts(p, base) {
-			return true
+		if base := path.Base(p.words[0]); takesFromJava(base) && counts(p, base) {
+			return base
 		}
 	}
-	return false
+	return ""
 }
 
 // --- Node.js -----------------------------------------------------------------
