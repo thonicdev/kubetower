@@ -21,11 +21,18 @@ dialog draws it first, as a New extra line.
 
 ### Fixed
 
-- **Missing metrics read as one quiet line.** Where Prometheus or
-  metrics-server is absent or cannot be reached, the Overview's Over time and
-  Most used, a Node or Pod's Metrics tab, KubeAdjust and the Runtime
-  Inspector's week say No metrics available, with the reason on hover and a
-  small retry where one could help, instead of a red box (#127). <!-- highlight -->
+- **Missing metrics read as one quiet line.** Where a metrics read is
+  absent, unreachable, unreadable or refused, the console says No metrics
+  available in muted text, with the reason on hover (#127). <!-- highlight -->
+  - The Overview's Over time and Most used, and a Node's or Pod's Metrics tab
+    on its first read, drop the red boxed notice, its sentence written twice and
+    its Try again button for that line, and a small retry icon where the
+    reason says asking again could help.
+  - KubeAdjust's red "not measured" pill and red sentence on a page nothing
+    could measure, and the Runtime Inspector's "No Prometheus" and red
+    "Prometheus unreadable" pills, become the same words as a neutral badge or
+    line, with no retry.
+  - A page built from the cluster's own refusal keeps that refusal's notice.
 
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 

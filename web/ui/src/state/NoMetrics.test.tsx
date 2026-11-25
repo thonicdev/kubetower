@@ -38,7 +38,7 @@ describe('NoMetrics', () => {
     expect(screen.queryByRole('button')).toBeNull();
 
     cleanup();
-    render(<NoMetrics state="pending" reason={{ code: 'timeout', message: 'm', retryable: true }} onRetry={retry} />);
+    render(<NoMetrics state="pending" reason={{ code: 'not_probed_yet', message: 'm', retryable: true }} onRetry={retry} />);
     expect(screen.queryByRole('button')).toBeNull();
   });
 
