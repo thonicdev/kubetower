@@ -393,7 +393,11 @@ verb and the same held answers:
   Configuration is what closes it; RBAC alone does not. The desktop is one
   person's console over their own kubeconfig, and keeps looking: there it
   refuses to choose when Services in more than one namespace claim to be
-  Prometheus, and says which. An answer larger than 16 MiB is refused on both
+  Prometheus, and says which - and the same across engines (#133): Services
+  claiming to be Prometheus in one namespace and VictoriaMetrics in another are
+  refused alike, since a Service labelled `app=prometheus` in a tenant's
+  namespace beside a real vmsingle elsewhere is the same decoy; the two in one
+  namespace keep Prometheus. An answer larger than 16 MiB is refused on both
   transports.
 - **A tunnel is reviewed as the request it is**: `terminal.Forwarder.Forward`
   reads the Service and its pods for whoever the context carries and digs the
