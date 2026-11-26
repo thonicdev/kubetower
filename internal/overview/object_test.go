@@ -77,14 +77,15 @@ func matrix(t *testing.T, values ...[2]any) []byte {
 	return raw
 }
 
-// exported builds the probe's answer: `count by (__name__)` over the counters
-// this cluster holds. A name not listed is one its Prometheus has never seen.
+// exported builds the probe's answer: one count per counter this cluster
+// holds, named in the probe's label. A name not listed is one its Prometheus
+// has never seen.
 func exported(t *testing.T, present ...string) []byte {
 	t.Helper()
 	rows := make([]any, 0, len(present))
 	for _, name := range present {
 		rows = append(rows, map[string]any{
-			"metric": map[string]string{"__name__": name},
+			"metric": map[string]string{probeLabel: name},
 			"value":  []any{1.0, "12"},
 		})
 	}
@@ -276,16 +277,23 @@ func TestAvailabilityCostsOneInstantQuery(t *testing.T) {
 	if strings.Contains(m.probes[0], "rate(") || strings.Contains(m.probes[0], "[5m]") {
 		t.Errorf("the probe is a range question dressed as an instant one:\n  %s", m.probes[0])
 	}
-	// PromQL's set operators match on the label set *excluding* the metric
-	// name, so two `count by (__name__)` aggregations have the same empty
-	// signature and a plain `or` throws away every sub-answer after the first.
-	// A cluster holding 1 836 series of container_network_transmit_bytes_total
-	// would then report it as not exported, which would gray out the network
-	// chart on exactly the clusters where it works.
-	if strings.Count(m.probes[0], "count by (__name__)") > 1 &&
-		!strings.Contains(m.probes[0], "or on(__name__)") {
-		t.Errorf("the probe joins its sub-questions with a bare `or`, which keeps only the first "+
-			"answer and reports every other counter as absent:\n  %s", m.probes[0])
+	// Set operators match on the label set *excluding* the metric name, so
+	// sub-answers told apart by __name__ alone have the same empty signature
+	// and `or` throws away every one after the first. Prometheus can be told
+	// `or on(__name__)`; VictoriaMetrics ignores __name__ in on(). A cluster
+	// holding 1 836 series of container_network_transmit_bytes_total would then
+	// report it as not exported, graying the network chart on exactly the
+	// clusters where it works. Each sub-answer names its counter in an ordinary
+	// label, which both engines tell apart.
+	parts := strings.Split(m.probes[0], " or ")
+	if len(parts) < 2 {
+		t.Fatalf("the probe asks one question:\n  %s", m.probes[0])
+	}
+	for _, part := range parts {
+		if !strings.HasPrefix(part, "label_replace(count(") || !strings.Contains(part, `"`+probeLabel+`"`) ||
+			strings.Contains(part, "__name__") {
+			t.Errorf("a sub-question is not told apart by the %s label:\n  %s", probeLabel, part)
+		}
 	}
 }
 

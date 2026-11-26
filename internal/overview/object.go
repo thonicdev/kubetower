@@ -614,11 +614,15 @@ func noHistory(err error) bool {
 
 // probeQuery asks in one instant query whether this Prometheus holds the
 // series the charts depend on, in the shape each query needs: one
-// `count by (__name__) (<probe>)` per series, joined with `or on(__name__)`.
+// `label_replace(count(<probe>), "kt_metric", "<name>", "", "")` per series,
+// joined with `or`.
 //
-// The on(__name__) matters: set operators match on labels excluding the metric
-// name, so a plain `or` would see every sub-answer as the same empty signature
-// and keep only the first, graying charts that work.
+// The name rides in a label of its own, kt_metric, rather than in __name__:
+// set operators match on labels excluding the metric name, so sub-answers told
+// apart by __name__ alone look alike to `or` and only the first is kept,
+// graying charts that work. Prometheus can be told `or on(__name__)`;
+// VictoriaMetrics ignores __name__ in on() and keeps the first all the same.
+// An ordinary label is told apart by both.
 //
 // It returns "" when no series declared a probe, so the cluster's CPU and
 // memory cost no extra query.
@@ -630,12 +634,21 @@ func probeQuery(specs []seriesSpec) string {
 			continue
 		}
 		seen[spec.probe] = true
-		parts = append(parts, fmt.Sprintf(`count by (__name__) (%s)`, spec.probe))
+		parts = append(parts, fmt.Sprintf(`label_replace(count(%s), %q, %q, "", "")`, spec.probe, probeLabel, probeName(spec.probe)))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, " or on(__name__) ")
+	return strings.Join(parts, " or ")
+}
+
+// probeLabel carries each probe's metric name in its answer.
+const probeLabel = "kt_metric"
+
+// probeName is the metric a probe selects: every probe is `name{matchers}`.
+func probeName(probe string) string {
+	name, _, _ := strings.Cut(probe, "{")
+	return name
 }
 
 // probeMetrics runs the probe and returns the names that came back with a

@@ -34,7 +34,7 @@ type cgroupSeries struct {
 // evaluates the subset of PromQL this package sends for the cluster's history:
 // `sum(…)`, `max by (…) (…)`, `avg without (…) (…)`, `rate(<selector>[…])`, a
 // selector with `=`, `!=`, `=~` and `!~` matchers, and the probe's
-// `count by (__name__) (…)` joined by `or on(__name__)`.
+// `label_replace(count(…), "kt_metric", …)` joined by `or`.
 //
 // Unlike recordingMetrics, which answers every question with the same body, this
 // one answers each query from the series: whether a selector matches a pod's
@@ -70,18 +70,19 @@ func (p *cadvisorProm) Query(_ context.Context, _, promQL string) ([]byte, error
 	}
 
 	rows := []any{}
-	for _, part := range strings.Split(promQL, " or on(__name__) ") {
-		inner, ok := strings.CutPrefix(part, "count by (__name__) (")
-		if !ok || !strings.HasSuffix(inner, ")") {
+	for _, part := range strings.Split(promQL, " or ") {
+		inner, ok := strings.CutPrefix(part, "label_replace(count(")
+		selector, label, found := strings.Cut(inner, "), ")
+		if !ok || !found || !strings.HasPrefix(label, `"`+probeLabel+`", "`) {
 			p.t.Errorf("the fake Prometheus does not understand this probe: %s", promQL)
 			return nil, fmt.Errorf("unsupported probe")
 		}
-		name, matched := p.selectSeries(strings.TrimSuffix(inner, ")"))
+		name, matched := p.selectSeries(selector)
 		if len(matched) == 0 {
 			continue
 		}
 		rows = append(rows, map[string]any{
-			"metric": map[string]string{"__name__": name},
+			"metric": map[string]string{probeLabel: name},
 			"value":  []any{1.0, strconv.Itoa(len(matched))},
 		})
 	}

@@ -54,7 +54,8 @@ func (f *promFake) Query(context.Context, string, string) ([]byte, error) {
 	rows := make([]any, 0, len(names))
 	for _, name := range names {
 		rows = append(rows, map[string]any{
-			"metric": map[string]string{"__name__": name},
+			// The label internal/overview's probe names each counter in.
+			"metric": map[string]string{"kt_metric": name},
 			"value":  []any{1.0, "12"},
 		})
 	}
