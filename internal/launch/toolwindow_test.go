@@ -2,6 +2,8 @@ package launch
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -321,7 +323,9 @@ func TestEmbedGivesBackWhatItsLoopTook(t *testing.T) {
 		want                           embedOutcome
 	}{
 		{"built", true, false, true, embedOutcome{usable: true, wakeDispatch: true}},
-		{"stopped on WM_QUIT, Init panicked", false, true, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		{"upstream: stopped on WM_QUIT, Init panicked", false, true, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		// The patched copy: stopped on WM_QUIT, which it posted again itself.
+		{"the copy: stopped on WM_QUIT, reposted by it", false, false, false, embedOutcome{wakeDispatch: true}},
 		{"stopped with no controller", true, false, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
 		{"refused before its loop", false, false, false, embedOutcome{wakeDispatch: true}},
 		{"panicked once built", false, true, true, embedOutcome{wakeDispatch: true}},
@@ -538,5 +542,35 @@ func TestARefusedWindowNeverClosesItsTunnel(t *testing.T) {
 	tw.closed(2)
 	if len(tunnels.closed) != 1 {
 		t.Errorf("closed closed %v", tunnels.closed)
+	}
+}
+
+// The patched go-webview2 (#84) keeps the two promises afterEmbed and
+// openWindow rely on. Windows-only code, which no CI here runs, so the copy's
+// source is read: a re-vendoring that drops either patch fails here.
+//   - Embed's loop posts WM_QUIT again when it takes it, or closing the
+//     console while a tool window is built leaves KubeTower running unseen.
+//   - A window that failed to embed is destroyed at once, never left blank
+//     on screen beside the browser fallback.
+func TestTheWebView2CopyKeepsItsPatches(t *testing.T) {
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "third_party", "go-webview2", p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	chromium := read(filepath.Join("pkg", "edge", "chromium.go"))
+	quit := strings.Index(chromium, "if r == 0 {")
+	if quit < 0 || !strings.Contains(chromium[quit:quit+300], "User32PostQuitMessage.Call(msg.WParam)") {
+		t.Error("Embed's loop no longer posts WM_QUIT again")
+	}
+	webview := read("webview.go")
+	embed := strings.Index(webview, "if !w.browser.Embed(w.hwnd) {")
+	if embed < 0 || !strings.Contains(webview[embed:embed+80], "w.discard()") {
+		t.Error("a window that failed to embed is not discarded")
+	}
+	if !strings.Contains(webview, "setWindowContext(w.hwnd, nil)\n\t_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)") {
+		t.Error("discard no longer destroys the window at once, without posting WM_QUIT")
 	}
 }

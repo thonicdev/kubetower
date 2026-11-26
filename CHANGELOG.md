@@ -31,7 +31,8 @@ dialog draws it first, as a New extra line.
   controller (a locked or full data folder, a policy), the library KubeTower
   draws its windows with called `log.Fatalf` and the whole console exited, its
   tunnels with it. A tool window is now refused (409) and its tunnel stays
-  open; the console's own window falls back to a browser window. The library
+  open; the console's own window falls back to a browser window, and the
+  window that failed is closed rather than left blank on screen. The library
   is carried patched in `third_party/go-webview2` until upstream takes the
   change (#84).
 

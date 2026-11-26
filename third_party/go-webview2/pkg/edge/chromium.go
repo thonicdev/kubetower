@@ -109,6 +109,9 @@ func (e *Chromium) Embed(hwnd uintptr) bool {
 			0,
 		)
 		if r == 0 {
+			// WM_QUIT belongs to the caller's loop: post it again, as a
+			// nested loop must, or the application never stops.
+			_, _, _ = w32.User32PostQuitMessage.Call(msg.WParam)
 			break
 		}
 		_, _, _ = w32.User32TranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))

@@ -67,16 +67,11 @@ func nativeWindow(url string, feed windowSources) bool {
 // webView2Usable reads the runtime's own answer about itself and decides whether
 // it is worth calling into the library at all.
 //
-// It exists because guardWindow's recover cannot cover everything: go-webview2
-// reports most construction failures with log.Fatal, which is os.Exit(1). No
-// deferred function runs, no recover sees it, no fallback happens, and a console
-// serving terminals and log streams simply stops.
-//
-// This closes what the loader can see: no runtime, an unreadable registration,
-// a version string that is not one. A runtime that reports a version and then
-// fails to create a controller still reaches log.Fatal, which only a window in a
-// child process could prevent; the library's message then goes through this
-// process's logger, so kubetower.log holds it before the exit.
+// Upstream go-webview2 reports a failed environment or controller with
+// log.Fatal; the patched copy in third_party returns nil instead (#84), which
+// openWindow handles by falling back to a browser window. This check still
+// spares a call into the loader on a machine with no runtime, an unreadable
+// registration, or a version string that is not one.
 //
 // It takes the loader's two return values so it can be tested: the real loader
 // reads the registry of a host with a healthy runtime.
@@ -108,8 +103,8 @@ func webView2Usable(version string, err error) (note string, ok bool) {
 // The panic becomes false, which openWindow already handles by falling back to
 // a browser window, so such a machine behaves like one with no WebView2.
 //
-// It covers a panic and nothing else: log.Fatal is not observable (see
-// webView2Usable).
+// It covers a panic; a failed environment or controller is a nil view from
+// the patched copy (see webView2Usable).
 //
 // A function taking a closure, not a defer inside nativeWindow, because
 // nativeWindow cannot be called in a test: it would open a real window and

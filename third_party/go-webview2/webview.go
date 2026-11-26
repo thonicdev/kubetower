@@ -115,7 +115,7 @@ func NewWithOptions(options WebViewOptions) WebView {
 		// The settings could not be read: the window is drawn, so it is
 		// destroyed and no webview is returned, as for a failed embed.
 		log.Printf("GetSettings: %v", err)
-		w.Destroy()
+		w.discard()
 		return nil
 	}
 	// disable context menu
@@ -123,14 +123,14 @@ func NewWithOptions(options WebViewOptions) WebView {
 	if err != nil {
 		// Not a window with settings other than those asked for.
 		log.Printf("PutAreDefaultContextMenusEnabled: %v", err)
-		w.Destroy()
+		w.discard()
 		return nil
 	}
 	// disable developer tools
 	err = settings.PutAreDevToolsEnabled(options.Debug)
 	if err != nil {
 		log.Printf("PutAreDevToolsEnabled: %v", err)
-		w.Destroy()
+		w.discard()
 		return nil
 	}
 
@@ -347,10 +347,20 @@ func (w *webview) CreateWithOptions(opts WindowOptions) bool {
 	_, _, _ = w32.User32SetFocus.Call(w.hwnd)
 
 	if !w.browser.Embed(w.hwnd) {
+		w.discard()
 		return false
 	}
 	w.browser.Resize()
 	return true
+}
+
+// discard destroys a window that will never be returned, at once: Destroy
+// posts WM_CLOSE, which no loop would process, and the window would stay on
+// screen. Its context is dropped first, so WM_DESTROY does not post WM_QUIT
+// to the caller's loop.
+func (w *webview) discard() {
+	setWindowContext(w.hwnd, nil)
+	_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)
 }
 
 func (w *webview) Destroy() {

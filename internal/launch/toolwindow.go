@@ -463,11 +463,15 @@ func (b *handOutBudget) allow(raw string, userInitiated bool, now time.Time) (bo
 // Embed builds the engine inside a GetMessage loop of its own, on the
 // console's thread, until the controller exists. That loop hands every
 // message to DispatchMessage, which drops the WM_APP thread message the
-// console window's Dispatch posts, and it stops on WM_QUIT, the console
-// window closing, after which go-webview2 calls Init on a web view that does
-// not exist and panics. So, whatever happened, Dispatch is woken again
-// (wakeDispatch); and when the loop stopped with no controller, it stopped on
-// WM_QUIT, which is posted again (repostQuit) so the console's own loop ends.
+// console window's Dispatch posts. So, whatever happened, Dispatch is woken
+// again (wakeDispatch).
+//
+// The loop also stops on WM_QUIT, the console window closing. The patched
+// copy (third_party/go-webview2) then posts WM_QUIT again itself and returns
+// false, so that row needs nothing more here. Upstream instead called Init on
+// a web view that did not exist and panicked: a return or a panic with no
+// controller is still read as that stop, and WM_QUIT posted again
+// (repostQuit), for a copy dropped once upstream has the fix.
 type embedOutcome struct {
 	usable       bool
 	repostQuit   bool
@@ -506,8 +510,7 @@ type buildingWindows map[uintptr]struct{}
 
 // closeHonoured says whether a close request (the title bar's X, Alt+F4)
 // may destroy the window: not while it is built, for the engine would then be
-// asked for a controller on a window that no longer exists, and go-webview2
-// ends the process on that failure.
+// asked for a controller on a window that no longer exists.
 func (b buildingWindows) closeHonoured(handle uintptr) bool {
 	_, building := b[handle]
 	return !building

@@ -8,9 +8,11 @@ Changed: no failure of the WebView2 runtime ends the process any more.
 - `pkg/edge/chromium.go`: a failed environment or controller creation is
   recorded instead of `log.Fatalf`; `Embed` returns false and `Error()` says
   why. `Eval`, `WebResourceRequested` and `AddWebResourceRequestedFilter` log
-  instead of `log.Fatal`.
-- `webview.go`: a settings read or write that fails destroys the window and
-  `NewWithOptions` returns nil, as for a failed `Embed`.
+  instead of `log.Fatal`. `Embed`'s loop posts WM_QUIT again when it takes
+  it, so the caller's loop still ends.
+- `webview.go`: a failed `Embed`, or a settings read or write that fails,
+  destroys the window at once (`discard`, without posting WM_QUIT) and
+  `NewWithOptions` returns nil.
 - `cmd/` (the demo) and `.github/` (upstream's own CI) are left out, and every
   file is gofmt'd (old `// +build` lines gain `//go:build`), as KubeTower's CI
   asks of the whole tree.
