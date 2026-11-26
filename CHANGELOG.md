@@ -18,6 +18,11 @@ dialog draws it first, as a New extra line.
 - **What's new lists New and Fixed.** Each highlight is one line under New,
   with a blue +, or under Fixed, with a green check; an extra a release
   introduces comes first, as New extra and its name (#121).
+- **A container's image has a line of its own.** On a pod's Containers tab,
+  the image moves under the container's name: the repository stays readable,
+  cut in its middle when it is too long, then the version badge and the copy
+  of the exact reference, which go under the repository when both do not fit
+  (#136).
 
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 

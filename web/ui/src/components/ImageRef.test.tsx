@@ -1,7 +1,7 @@
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ImageRef, imageParts, shortDigest } from './ImageRef';
+import { ImageLine, ImageRef, imageParts, shortDigest } from './ImageRef';
 
 afterEach(cleanup);
 
@@ -112,3 +112,79 @@ describe('an image reference', () => {
     expect(document.querySelector('[data-image]')).toBeNull();
   });
 });
+
+/**
+ * A container's image on a line of its own (#136): the repository cut in its
+ * middle, its last segment kept apart so it stays; the version as a badge; the
+ * copy of the exact reference.
+ */
+describe('an image line', () => {
+  const LONG = 'registry.internal.example.com:5000/platform-team/payments/checkout-api-service:2.14.3-rc.2';
+
+  it('keeps the path start and the image name apart, so the cut falls in the middle', () => {
+    render(<ImageLine image={LONG} />);
+    const head = document.querySelector('[data-image-head]');
+    const name = document.querySelector('[data-image-name]');
+    expect(head?.textContent).toBe('registry.internal.example.com:5000/platform-team/payments');
+    expect(name?.textContent).toBe('/checkout-api-service');
+    // The start gives way far sooner than the name, and never to nothing.
+    expect(head?.className).toContain('shrink-[999]');
+    expect(head?.className).toContain('min-w-[2ch]');
+    expect(head?.className).toContain('truncate');
+    expect(name?.className).toContain('truncate');
+    expect(name?.className).not.toContain('shrink-[999]');
+    expect(document.querySelector('[data-image-separator]')?.textContent).toBe(':');
+    expect(document.querySelector('[data-image-version]')?.textContent).toBe('2.14.3-rc.2');
+    expect(document.querySelector('[data-image-line]')?.getAttribute('title')).toBe(LONG);
+  });
+
+  it('draws a name with no path as the name alone', () => {
+    render(<ImageLine image="busybox" />);
+    expect(document.querySelector('[data-image-head]')).toBeNull();
+    expect(document.querySelector('[data-image-name]')?.textContent).toBe('busybox');
+    expect(document.querySelector('[data-image-version]')?.getAttribute('data-image-version')).toBe('implicit');
+  });
+
+  it('writes @ before a digest, and puts tag and digest in the badge hover', () => {
+    render(<ImageLine image={`docker.io/envoyproxy/envoy@${DIGEST}`} />);
+    expect(document.querySelector('[data-image-separator]')?.textContent).toBe('@');
+    expect(document.querySelector('[data-image-version]')?.textContent).toBe('sha256:9f86d081');
+    cleanup();
+    render(<ImageLine image={`ghcr.io/o/log-shipper:1.8.0@${DIGEST}`} />);
+    expect(document.querySelector('[data-image-version]')?.getAttribute('title')).toBe(`1.8.0@${DIGEST}`);
+  });
+
+  it('wraps the version and the copy as one group, each part sized by its content', () => {
+    render(<ImageLine image={LONG} />);
+    const line = document.querySelector('[data-image-line]');
+    expect(line?.className).toContain('flex-wrap');
+    const groups = [...(line?.children ?? [])];
+    expect(groups).toHaveLength(2);
+    for (const group of groups) expect(group.className).toContain('flex-[0_1_auto]');
+    expect(groups[1]?.querySelector('[data-image-version]')).not.toBeNull();
+    expect(groups[1]?.querySelector('button')).not.toBeNull();
+  });
+
+  it('copies the reference exactly as the spec wrote it', async () => {
+    const written: string[] = [];
+    vi.stubGlobal('isSecureContext', true);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async (text: string) => void written.push(text)) },
+    });
+    try {
+      render(<ImageLine image={LONG} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Copy image' }));
+      await waitFor(() => expect(written).toEqual([LONG]));
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('draws nothing for no image', () => {
+    render(<ImageLine image={undefined} />);
+    expect(document.querySelector('[data-image-line]')).toBeNull();
+  });
+});
+
