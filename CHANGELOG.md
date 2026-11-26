@@ -32,6 +32,15 @@ dialog draws it first, as a New extra line.
 
 ### Fixed
 
+- **Network Inspector cells say what the policy engine would.** A
+  BaselineAdminNetworkPolicy rule no longer colours a cell where a
+  NetworkPolicy isolates that side, a namespace isolated on egress with an
+  ingress-only rule for its own pods reads refused rather than inside, one
+  deny among the namespaces in others reads partly denied, and an others
+  whose ends were not counted is never taken as isolated. A host-network
+  pod shows its flows, the enlarged graph keeps its size below 320 px, a
+  flow UI link no longer takes the focus it was not asked for, and a
+  namespace the person may not list is not asked of the flow source (#152).
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
   desktop, Services claiming to be Prometheus in one namespace and
   VictoriaMetrics in another are now refused as two Prometheus Services in two

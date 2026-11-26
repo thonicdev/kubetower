@@ -48,12 +48,37 @@ export function FlowUIButtons({ cluster, namespace }: { cluster: string; namespa
   );
 }
 
+/**
+ * Focuses the link of the forward a press opened (`wanted`), once the list
+ * draws it. The request ends there, or when the list, read again, does not
+ * hold that forward (a page address naming the cluster another way never
+ * matches it): a forward that appears later does not take the focus.
+ */
+function useFocusOnce(
+  wanted: string | null,
+  drawn: string | undefined,
+  list: readonly Forward[] | undefined,
+  reading: boolean,
+  link: { current: HTMLAnchorElement | null },
+  done: () => void,
+): void {
+  useEffect(() => {
+    if (wanted === null) return;
+    if (drawn === wanted && link.current !== null) {
+      link.current.focus();
+      done();
+    } else if (!reading && list !== undefined) {
+      done();
+    }
+  }, [wanted, drawn, list, reading, link, done]);
+}
+
 function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' | 'whisker'; label: string; ui: FlowUI; cluster: string; namespace: string }): ReactNode {
   const client = useQueryClient();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  /** Set by a press that opened the forward: the link that replaces the button takes the focus. */
-  const [focusLink, setFocusLink] = useState(false);
+  /** The forward a press opened: its link, once drawn, takes the focus. */
+  const [focusFor, setFocusFor] = useState<string | null>(null);
   const link = useRef<HTMLAnchorElement>(null);
   const tunnel = ui.url === undefined ? ui.tunnel : undefined;
   // The forwards this process holds, as the Ports panel reads them: the link
@@ -64,12 +89,7 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
     tunnel === undefined
       ? undefined
       : live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
-  useEffect(() => {
-    if (focusLink && link.current !== null) {
-      link.current.focus();
-      setFocusLink(false);
-    }
-  }, [focusLink, forward?.id]);
+  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, () => setFocusFor(null));
   const href = ui.url === undefined ? undefined : externalHref(configuredHref(kind, ui.url, namespace));
   if (ui.url !== undefined) {
     if (href === undefined) return null;
@@ -128,7 +148,7 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
         // Into the shared list at once, then read again, as the Ports panel does.
         client.setQueryData<Forward[]>(queryKeys.forwards, (before) => [...(before ?? []).filter((one) => one.id !== made.id), made]);
         void client.invalidateQueries({ queryKey: queryKeys.forwards });
-        setFocusLink(true);
+        setFocusFor(made.id);
       })
       .catch((error: unknown) => {
         setFailure(error instanceof Error ? error.message : String(error));
@@ -162,16 +182,11 @@ function FlowUIWindowButton({ kind, label, tunnel, cluster, namespace }: { kind:
   const client = useQueryClient();
   const [pending, setPending] = useState<'window' | 'browser' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [focusLink, setFocusLink] = useState(false);
+  const [focusFor, setFocusFor] = useState<string | null>(null);
   const link = useRef<HTMLAnchorElement>(null);
   const live = useQuery(forwardsQuery(true));
   const forward = live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
-  useEffect(() => {
-    if (focusLink && link.current !== null) {
-      link.current.focus();
-      setFocusLink(false);
-    }
-  }, [focusLink, forward?.id]);
+  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, () => setFocusFor(null));
   const suffix = tunnelSuffix(kind, namespace);
 
   /** The live forward, or one opened now (`opened`). */
@@ -201,8 +216,8 @@ function FlowUIWindowButton({ kind, label, tunnel, cluster, namespace }: { kind:
   };
   const toWindow = (): void => run('window', (made, opened) => openForwardWindow(made.id, { tool: kind, path: suffix, closeWithWindow: opened }));
   const toBrowser = (): void =>
-    run('browser', () => {
-      setFocusLink(true);
+    run('browser', (made) => {
+      setFocusFor(made.id);
       return Promise.resolve();
     });
   const to = forward === undefined ? undefined : externalHref(forwardLink(forward, forward.scheme ?? 'http') + suffix);

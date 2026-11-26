@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { installKeyboardStack } from '../../../ui/src/keyboard/stack';
-import type { FlowRow, Flows, PeerView, PodAnswer, RuleView } from './data';
+import { Shortcuts } from '../../../ui/src/pages/object/Shortcuts';
+import { ShellProvider } from '../../../ui/src/shell/ShellContext';
+import { podPath, type FlowRow, type Flows, type PeerView, type PodAnswer, type RuleView } from './data';
 import { netinspect } from './extension';
 import { PodView } from './PodTab';
 
@@ -62,11 +64,11 @@ function stubFlows(): ReturnType<typeof vi.fn> {
   return fetch;
 }
 
-function mount(): void {
+function mount(answer: PodAnswer = ANSWER): void {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
-        <PodView cluster="kind" answer={ANSWER} />
+        <PodView cluster="kind" answer={answer} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -142,11 +144,64 @@ describe('the enlarged pod picture', () => {
     fireEvent.click(first);
     expect(first.getAttribute('aria-selected')).toBe('true');
   });
+
+  it("keeps a host-network pod's flows, which the flow source names by its node's address", async () => {
+    const node = '192.168.1.40';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url;
+        if (!url.startsWith('/x/kind/netinspect/flows')) return new Promise<Response>(() => undefined);
+        const body = flows([row('shop/web-1', node, 9100, 'FORWARDED', 30), row(node, 'kube-system/dns-0', 53, 'FORWARDED', 5), row('shop/web-1', 'shop/cart-0', 6379, 'FORWARDED', 999)]);
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }),
+    );
+    mount({ ...ANSWER, pod: { ...ANSWER.pod, name: 'node-exporter-x', ip: node, hostNetwork: true } });
+    fireEvent.click(document.querySelector('[data-enlarge]') as Element);
+    await waitFor(() => expect(inDialog('[data-pod-flow]')).toHaveLength(2));
+    expect(dialog()?.querySelector('[data-pod-flow-counts]')?.textContent).toBe('350');
+  });
 });
 
 describe('the Details line', () => {
-  it('opens the enlarged view in a dialog rather than another page', () => {
-    expect(netinspect.shortcuts?.[0]?.dialog).toBeDefined();
+  it('opens the enlarged view in a dialog rather than another page', async () => {
+    const answers: Record<string, unknown> = {
+      '/api/c/kind/nav': { state: 'ok', data: { groups: [{ key: 'extra', label: 'Extra', items: [{ text: 'Network Inspector', href: '/c/kind/x/netinspect' }], deferred: false }] } },
+      [podPath('kind', 'shop', 'api-0')]: ANSWER,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url;
+        if (!(url in answers)) return new Promise<Response>(() => undefined);
+        return Promise.resolve(new Response(JSON.stringify(answers[url]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }),
+    );
+    const where: string[] = [];
+    function Where(): null {
+      where.push(useLocation().pathname);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/c/kind/pods/shop/api-0']}>
+          <ShellProvider extensions={[netinspect]}>
+            <Shortcuts identity={{ cluster: 'kind', kind: 'pods', namespace: 'shop', name: 'api-0' }} marks={{ labels: {}, annotations: {} }} />
+            <Where />
+          </ShellProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const line = await waitFor(() => {
+      const found = document.querySelector('[data-shortcut="x.netinspect.pod"] button');
+      expect(found).not.toBeNull();
+      return found as Element;
+    });
+    expect(document.querySelector('[data-shortcut="x.netinspect.pod"] a')).toBeNull();
+    fireEvent.click(line);
+    await waitFor(() => expect(document.querySelector('[data-shortcut-dialog="x.netinspect.pod"] [data-pod-enlarged], [data-shortcut-dialog="x.netinspect.pod"]')).not.toBeNull());
+    await waitFor(() => expect(document.querySelector('[data-large-graph]')).not.toBeNull());
+    expect(new Set(where)).toEqual(new Set(['/c/kind/pods/shop/api-0']));
   });
 });
 

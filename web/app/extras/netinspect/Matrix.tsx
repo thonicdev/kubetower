@@ -149,13 +149,13 @@ export function Matrix({
   );
 }
 
-type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
+type State = 'allowed' | 'denied' | 'partDenied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
 
 /** Every pod of a namespace, or of every namespace "others" holds, is
  *  isolated that way: nothing passes unless a rule of its own lets it. An
  *  "others" holding an end (a CIDR, world) is never isolated: an end never
  *  refuses. */
-const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && (n.ends ?? 0) === 0);
+const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && n.ends === 0);
 const isolatedIn = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedIn >= n.pods;
 const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut >= n.pods;
 
@@ -170,16 +170,28 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  * "others" stands for several namespaces, and a rule on the cell may be any
  * one member's. So a cell touching it is refused only when every member
  * refuses (all isolated on that side, and no rule of that side on the
- * cell), and never allowed: what one member allows, another may refuse.
+ * cell), never allowed (what one member allows, another may refuse), and
+ * never wholly denied: a deny on it is one member's. An "others" holding an
+ * end (a CIDR, world), or whose ends were not counted, is never isolated.
+ *
+ * A namespace to itself is inside when its own rules pass each isolated side:
+ * an ingress rule between its pods does not let them out of a namespace
+ * isolated on egress.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
-  if (cell !== undefined && cell.deny.length > 0) return 'denied';
-  if (cut) return 'unknown';
   const mixed = from.kind === 'others' || to.kind === 'others';
+  if (cell !== undefined && cell.deny.length > 0) return mixed ? 'partDenied' : 'denied';
+  if (cut) return 'unknown';
   // Rules between two folded namespaces are not sent at all (the server
   // drops a merged edge from "others" to itself): nothing to conclude.
   if (from.kind === 'others' && to.kind === 'others') return 'folded';
-  if (!mixed && from.id === to.id && to.internal > 0) return 'inside';
+  if (!mixed && from.id === to.id && to.internal > 0) {
+    if (to.internalIn === undefined || to.internalOut === undefined) return 'inside';
+    const selfIn = !isolatedIn(to) || to.internalIn > 0 || cell?.allowIn === true;
+    const selfOut = !isolatedOut(from) || to.internalOut > 0 || cell?.allowOut === true;
+    if (selfIn && selfOut) return 'inside';
+    return selfIn ? 'refusedOut' : 'refused';
+  }
   const inOK = !isolatedIn(to) || cell?.allowIn === true;
   const outOK = !isolatedOut(from) || cell?.allowOut === true;
   if (inOK && outOK) {
@@ -196,6 +208,7 @@ const LOOK: Record<State, string> = {
   allowed: 'bg-accent/45',
   inside: 'bg-accent/25',
   denied: 'bg-bad/60',
+  partDenied: 'border border-dashed border-bad/60 bg-bad/20',
   unevaluated: 'border border-dotted border-muted',
   refused: 'bg-panel-2 text-muted',
   refusedOut: 'bg-panel-2 text-muted',
@@ -208,6 +221,7 @@ const WORD: Record<State, string> = {
   allowed: 'allowed by a rule',
   inside: 'allowed between its own pods',
   denied: 'denied by a rule',
+  partDenied: 'denied for some of the namespaces in others',
   unevaluated: 'a rule not evaluated here (FQDN, Service, layer 7)',
   refused: 'refused: the destination is isolated and no rule lets this in',
   refusedOut: 'refused: the source is isolated and no rule lets this out',
@@ -316,7 +330,7 @@ function Legend({ cut, others }: { cut: boolean; others: boolean }): ReactNode {
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
     ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
-    ...(others ? [{ state: 'folded' as const, label: 'folded' }] : []),
+    ...(others ? [{ state: 'folded' as const, label: 'folded' }, { state: 'partDenied' as const, label: 'partly denied' }] : []),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">

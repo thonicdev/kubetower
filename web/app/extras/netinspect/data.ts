@@ -119,6 +119,9 @@ export interface GraphNode {
   isolatedIn: number;
   isolatedOut: number;
   internal: number;
+  /** internal split by the side whose policy says it (absent from an older server). */
+  internalIn?: number;
+  internalOut?: number;
   /** On "others": how many of the nodes it holds are not namespaces. */
   ends?: number;
 }
@@ -131,6 +134,8 @@ export interface GraphEdge {
   ports: string[];
   policies: string[];
   rules: number;
+  /** A BaselineAdminNetworkPolicy's rule: it applies only where no NetworkPolicy selects that side. */
+  baseline?: boolean;
 }
 
 export interface Graph {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 func anp(name string, priority int, spec string) string {
@@ -212,5 +213,31 @@ func TestAnUnreadableAdminPolicyIsNotEvaluated(t *testing.T) {
 	v := verdictOf(t, h, "shop/web", "shop/api", "80")
 	if v.Answer != "yes" || len(v.Ingress.Caveats) != 1 {
 		t.Errorf("%s %v", v.Answer, v.Ingress.Caveats)
+	}
+}
+
+// A baseline's rules are drawn apart: the page sets them aside where a
+// NetworkPolicy isolates that side, as the engine does.
+func TestTheGraphMarksTheBaselinesRules(t *testing.T) {
+	h := adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\ningress:\n  - name: ops\n    action: Allow\n    from:\n      - namespaces: {matchLabels: {team: ops}}\n"))
+	p := np("shop", "api-from-ops", map[string]string{"app": "api"})
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{nsPeer(map[string]string{"team": "ops"})}}}
+	h.policy(t, p)
+	var baseline, plain int
+	for _, e := range overviewOf(t, h, "").Graph.Edges {
+		if e.From != "ns:ops" || e.To != "ns:shop" {
+			continue
+		}
+		if e.Baseline {
+			baseline++
+			if strings.Join(e.Policies, ",") != "default" {
+				t.Errorf("baseline edge %+v", e)
+			}
+		} else {
+			plain++
+		}
+	}
+	if baseline != 1 || plain != 1 {
+		t.Errorf("ops to shop: %d baseline edges, %d others", baseline, plain)
 	}
 }

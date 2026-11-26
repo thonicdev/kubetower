@@ -250,3 +250,69 @@ describe('an others holding an end', () => {
     expect(state('ns:team-000>others')).toBe('folded');
   });
 });
+
+describe('cells the policy engine would answer otherwise', () => {
+  const node = (i: number, inIso: boolean, outIso: boolean, extra: Partial<GraphNode> = {}): GraphNode => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0, ...extra });
+  const show = (g: Graph, query = '') =>
+    render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams(query))} onAsk={() => undefined} onNamespace={() => undefined} />);
+  const state = (key: string) => document.querySelector(`[data-cell="${key}"]`)?.getAttribute('data-state');
+  const rule = (kind: 'allow' | 'deny', from: string, to: string, side: 'ingress' | 'egress', baseline = false) => ({
+    kind,
+    from,
+    to,
+    side,
+    ports: ['every port'],
+    policies: [baseline ? 'default' : 'p'],
+    rules: 1,
+    ...(baseline ? { baseline: true } : {}),
+  });
+
+  it("sets a baseline's rule aside where a NetworkPolicy isolates that side", () => {
+    // team-001 is isolated on ingress: the baseline's allow is not consulted.
+    show({ scope: 'cluster', nodes: [node(0, false, false), node(1, true, false)], edges: [rule('allow', 'ns:team-000', 'ns:team-001', 'ingress', true)], folded: 0, edgesTotal: 1 });
+    expect(state('ns:team-000>ns:team-001')).toBe('refused');
+    cleanup();
+    // Nor is its deny: the NetworkPolicy's allow decides.
+    show({
+      scope: 'cluster',
+      nodes: [node(0, false, false), node(1, true, false)],
+      edges: [rule('deny', 'ns:team-000', 'ns:team-001', 'ingress', true), rule('allow', 'ns:team-000', 'ns:team-001', 'ingress')],
+      folded: 0,
+      edgesTotal: 2,
+    });
+    expect(state('ns:team-000>ns:team-001')).toBe('allowed');
+    cleanup();
+    // Where no NetworkPolicy isolates the side, the baseline speaks.
+    show({ scope: 'cluster', nodes: [node(0, false, false), node(1, false, false)], edges: [rule('deny', 'ns:team-000', 'ns:team-001', 'ingress', true)], folded: 0, edgesTotal: 1 });
+    expect(state('ns:team-000>ns:team-001')).toBe('denied');
+  });
+
+  it('reads a namespace isolated on egress with an ingress-only rule for its own pods as refused out, not inside', () => {
+    show({
+      scope: 'cluster',
+      nodes: [node(0, true, true, { internal: 1, internalIn: 1, internalOut: 0 }), node(1, true, true, { internal: 2, internalIn: 1, internalOut: 1 })],
+      edges: [],
+      folded: 0,
+      edgesTotal: 0,
+    });
+    expect(state('ns:team-000>ns:team-000')).toBe('refusedOut');
+    expect(state('ns:team-001>ns:team-001')).toBe('inside');
+  });
+
+  it('reads one deny among the namespaces in others as partly denied, not denied', () => {
+    const nodes = Array.from({ length: 20 }, (_, i) => node(i, false, false));
+    show({ scope: 'cluster', nodes, edges: [rule('deny', 'ns:team-000', 'ns:team-015', 'ingress')], folded: 0, edgesTotal: 1 }, 'top=12&sort=name');
+    expect(state('ns:team-000>others')).toBe('partDenied');
+    expect(document.querySelector('[data-matrix-legend]')?.textContent).toContain('partly denied');
+  });
+
+  it("never takes the server's others as isolated when it did not count its ends", () => {
+    const nodes = Array.from({ length: 5 }, (_, i) => node(i, true, false));
+    const serverOthers: GraphNode = { id: 'others', label: '9 others', kind: 'others', pods: 16, isolatedIn: 16, isolatedOut: 16, internal: 0 };
+    show({ scope: 'cluster', nodes: [...nodes, serverOthers], edges: [], folded: 9, edgesTotal: 0 });
+    expect(state('ns:team-000>others')).toBe('folded');
+    cleanup();
+    show({ scope: 'cluster', nodes: [...nodes, { ...serverOthers, ends: 0 }], edges: [], folded: 9, edgesTotal: 0 });
+    expect(state('ns:team-000>others')).toBe('refused');
+  });
+});

@@ -25,6 +25,11 @@ export default function PodTab(props: ExtensionTabProps): ReactNode {
  * opens over the panel (`ExtensionShortcut.dialog`), and what the tab's small
  * graph opens when pressed.
  */
+/** The Escape that lets go of an arrow pressed in the enlarged view: above
+ *  the dialog it sits in (an extension's dialog is an Overlay), so the first
+ *  Escape lets go and only the second closes; below anything opened over it. */
+const HELD_ARROW = KeyLayer.Overlay + 5;
+
 export function PodLarge(props: ExtensionTabProps): ReactNode {
   return <PodAnswerView {...props} large />;
 }
@@ -100,7 +105,7 @@ export function PodView({ cluster, answer, large = false }: { cluster: string; a
   const [sticky, setSticky] = useState<{ side: Side; key: string } | null>(null);
   // In the dialog, Escape first lets go of a pressed arrow, above the
   // dialog's own layer; a second one closes the dialog.
-  useEscape(KeyLayer.Overlay + 5, () => setSticky(null), large && sticky !== null);
+  useEscape(HELD_ARROW, () => setSticky(null), large && sticky !== null);
   useEffect(() => {
     if (large || sticky === null) return;
     const onKey = (e: KeyboardEvent) => {
@@ -188,7 +193,7 @@ export function PodView({ cluster, answer, large = false }: { cluster: string; a
         <DirectionBox title="Ingress" side="ingress" direction={answer.ingress} hostNetwork={pod.hostNetwork} flows={sides.ingress.flows} lit={lit.ingress.rows} onRow={onRow('ingress')} onClearFilter={() => setSticky(null)} {...(large ? { query: filter, expanded: true } : {})} />
         <DirectionBox title="Egress" side="egress" direction={answer.egress} hostNetwork={pod.hostNetwork} flows={sides.egress.flows} lit={lit.egress.rows} onRow={onRow('egress')} onClearFilter={() => setSticky(null)} {...(large ? { query: filter, expanded: true } : {})} />
       </div>
-      {large ? <PodFlows cluster={cluster} namespace={pod.namespace} pod={pod.name} query={filter} /> : null}
+      {large ? <PodFlows cluster={cluster} namespace={pod.namespace} pod={pod.name} {...(pod.hostNetwork ? { address: pod.ip } : {})} query={filter} /> : null}
       <p className="flex flex-wrap gap-3 text-xs">
         <Link to={`${page}?ns=${encodeURIComponent(pod.namespace)}`} className={`text-accent underline ${focusRing}`}>
           Namespace
