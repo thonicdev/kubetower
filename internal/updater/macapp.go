@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/thonicdev/kubetower/textutil"
 )
@@ -102,7 +103,7 @@ func sweepMacApp(bundle string) {
 	sweepBeside(bundle, ".KubeTower-update-*", ".KubeTower-probe-*")
 	mounts, _ := filepath.Glob(filepath.Join(os.TempDir(), mountPrefix+"*"))
 	for _, mount := range mounts {
-		if info, err := os.Stat(mount); err == nil && info.IsDir() {
+		if info, err := os.Stat(mount); err == nil && info.IsDir() && time.Since(info.ModTime()) >= sweepAge {
 			detach(mount)
 		}
 	}

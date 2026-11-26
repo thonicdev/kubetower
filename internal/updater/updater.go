@@ -102,6 +102,10 @@ var (
 	ErrUnsupported = errors.New("this installation cannot be updated from the console")
 	// ErrBusy: a download or an install is already running.
 	ErrBusy = errors.New("an update is already in progress")
+	// ErrHelperAlive: a helper that could not be stopped may still install when
+	// KubeTower exits; no download or install starts beside it, for a new one
+	// would remove the files it is to move into place (#154).
+	ErrHelperAlive = errors.New("an earlier update's helper is still waiting; quit KubeTower and start it again first")
 	// ErrWhen: when an automatic update installs is neither on quit nor now.
 	ErrWhen = errors.New(`when must be "quit" or "now"`)
 	// ErrNotReady: Install was asked before a verified download.
@@ -125,12 +129,21 @@ var installers = map[Kind]Installer{}
 // start. Filled by the platform files.
 var sweepers = map[Kind]func(path string){}
 
-// sweepBeside removes the entries beside path that match the patterns: the
-// temporary names an install writes before its rename.
+// sweepAge is how old a leftover must be before the start-up sweep removes
+// it: younger, it may be the copy another instance's install is writing now
+// (#154), and an install never takes this long.
+var sweepAge = time.Hour
+
+// sweepBeside removes the entries beside path that match the patterns and are
+// older than sweepAge: the temporary names an install writes before its
+// rename, left by one cut short.
 func sweepBeside(path string, patterns ...string) {
 	for _, pattern := range patterns {
 		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
 		for _, one := range found {
+			if info, err := os.Lstat(one); err != nil || time.Since(info.ModTime()) < sweepAge {
+				continue
+			}
 			_ = os.RemoveAll(one)
 		}
 	}
@@ -362,6 +375,10 @@ func (u *Updater) Download() (Status, error) {
 		return u.status, ErrUnsupported
 	case u.status.Phase == Downloading || u.status.Phase == Verifying || u.status.Phase == Installing:
 		return u.status, ErrBusy
+	case u.status.Phase == Failed && u.status.Reason == errHelperAlive.Error():
+		// forget would remove update/install-*, which that helper may still
+		// move into place when KubeTower exits (#154).
+		return u.status, ErrHelperAlive
 	}
 	u.forget()
 	u.status.Phase = Downloading

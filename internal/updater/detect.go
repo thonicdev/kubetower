@@ -1,11 +1,13 @@
 package updater
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Probe is what Detect may ask of the machine; every field may be nil.
@@ -107,18 +109,34 @@ func DetectRunning() Installation {
 	})
 }
 
-// owner asks dpkg, then rpm, whether they own path. A missing tool or a
-// refusal is "nobody": the tar.gz path then applies.
+// ownerWait bounds each package-database question: a locked rpm database
+// must not hold KubeTower's start (#154).
+const ownerWait = 5 * time.Second
+
+// owner asks dpkg, then rpm, whether they own path. A missing tool, a
+// refusal or no answer within ownerWait is "nobody": the tar.gz path then
+// applies.
 func owner(path string) string {
-	if tool, err := exec.LookPath("dpkg-query"); err == nil {
-		if exec.Command(tool, "-S", path).Run() == nil {
-			return "deb"
-		}
+	if ownedBy("dpkg-query", "-S", path) {
+		return "deb"
 	}
-	if tool, err := exec.LookPath("rpm"); err == nil {
-		if exec.Command(tool, "-qf", path).Run() == nil {
-			return "rpm"
-		}
+	if ownedBy("rpm", "-qf", path) {
+		return "rpm"
 	}
 	return ""
 }
+
+// ownedBy runs tool with flag, then `--` and path, so a path starting with a
+// dash is never read as an option.
+var ownedBy = func(tool, flag, path string) bool {
+	found, err := exec.LookPath(tool)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), ownerWait)
+	defer cancel()
+	return exec.CommandContext(ctx, found, ownerArgs(flag, path)...).Run() == nil
+}
+
+// ownerArgs is the question's arguments: the flag, `--`, the path.
+func ownerArgs(flag, path string) []string { return []string{flag, "--", path} }
