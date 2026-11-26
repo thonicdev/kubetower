@@ -128,7 +128,7 @@ func (x CNPG) Routes(h extension.Host) []extension.Route {
 		{Method: http.MethodGet, Pattern: "/clusters/{namespace}/{name}/tables", Handler: x.tables(h)},
 		// Replication lag: one fixed psql query in the primary, on a click (lag.go).
 		{Method: http.MethodGet, Pattern: "/clusters/{namespace}/{name}/lag", Handler: x.lag(h)},
-		{Method: http.MethodGet, Pattern: "/clusters/{namespace}/{name}/tables/{schema}/{table}", Handler: x.rows(h)},
+		{Method: http.MethodPost, Pattern: "/clusters/{namespace}/{name}/tables/{schema}/{table}", Handler: x.rows(h)},
 	}
 }
 

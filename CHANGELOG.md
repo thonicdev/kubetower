@@ -29,6 +29,11 @@ dialog draws it first, as a New extra line.
   application serves prometheus_client's metrics, it adds the version, the
   garbage collector per generation and the process's memory, CPU and open
   files (#144).
+- **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
+  reads every database the cluster's user may open, with a database and
+  schema picker and a table search; a table's rows come 100 at a time,
+  forward and back, by primary key, by ctid or by offset for a view, each
+  value drawn for its type, and a cell opens in full, JSON laid out (#164).
 
 ### Fixed
 
