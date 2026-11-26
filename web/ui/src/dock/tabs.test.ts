@@ -24,10 +24,10 @@ import {
 
 /**
  * The dock's partition, ceiling and fold, as behavior: scope changes only
- * hide, and every one of the five ways of opening a tab is capped.
+ * hide, and every one of the six ways of opening a tab is capped.
  */
 
-const KINDS: readonly TabKind[] = ['terminal', 'exec', 'claude', 'nodeshell', 'logs'];
+const KINDS: readonly TabKind[] = ['terminal', 'exec', 'debug', 'claude', 'nodeshell', 'logs'];
 
 function reduce(state: DockState, ...actions: readonly DockAction[]): DockState {
   return actions.reduce(dockReducer, state);
@@ -38,7 +38,7 @@ function open(cluster: string, kind: TabKind = 'exec', label = 'api-1'): DockAct
 }
 
 describe('the ceiling, checked before anything is built', () => {
-  // All five openers.
+  // All six openers.
   it.each(KINDS)('caps a tab opened as %s', (kind) => {
     let state = { ...emptyDock('*'), following: 'prod' };
     for (let i = 0; i < MAX_PER_CLUSTER; i++) state = reduce(state, open('prod', kind));
@@ -691,5 +691,23 @@ describe('the tabs a reload gets back', () => {
     });
     // An active index that points past the list is no active tab, not a throw.
     expect(parseStored({ tabs: [{ kind: 'exec', cluster: 'prod', label: 'x' }], active: 4 })?.active).toBeNull();
+  });
+});
+
+describe('a debug tab across a reload', () => {
+  it('stores its image and target, and comes back dormant rather than running again', () => {
+    const state = reduce(emptyDock(), {
+      type: 'open',
+      tab: { kind: 'debug', cluster: 'prod', label: 'debug · api-0 · busybox', namespace: 'pay', name: 'api-0', image: 'busybox:1.36', target: 'api' },
+    });
+    const stored = storable(state);
+    expect(stored.tabs[0]).toEqual({
+      kind: 'debug', cluster: 'prod', label: 'debug · api-0 · busybox', namespace: 'pay', name: 'api-0', image: 'busybox:1.36', target: 'api',
+    });
+    const parsed = parseStored(JSON.parse(JSON.stringify(stored)));
+    expect(parsed?.tabs[0]).toEqual(stored.tabs[0]);
+
+    const back = reduce({ ...emptyDock(), following: 'prod' }, { type: 'restore', stored: parsed ?? stored });
+    expect(back.tabs[0]).toMatchObject({ kind: 'debug', live: false, dormant: true, image: 'busybox:1.36', target: 'api' });
   });
 });

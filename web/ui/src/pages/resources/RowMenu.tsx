@@ -139,7 +139,7 @@ export function RowMenu({
   const name = `${identity.namespace === undefined ? '' : `${identity.namespace}/`}${identity.name}`;
 
   /** A shell tab gets the pane's width, as the drawer's Shell gives it. */
-  const openShell = (container: string | undefined): void => {
+  const openShell = (container: string | undefined, image: string | undefined): void => {
     const opened = dock?.openShell({
       kind: 'exec',
       cluster: identity.cluster,
@@ -147,6 +147,9 @@ export function RowMenu({
       ...(identity.namespace === undefined ? {} : { namespace: identity.namespace }),
       name: identity.name,
       ...(container === undefined ? {} : { container }),
+      // As the drawer's Shell: carried so a Shell that finds no shell can say
+      // in which image (`noShellMemory.ts`). Not sent on `exec`.
+      ...(image === undefined || image === '' ? {} : { image }),
     });
     if (opened === true) shell?.closeDrawer();
   };
@@ -196,7 +199,7 @@ export function RowMenu({
             label={`Shell: ${container.name}`}
             title={`Open a shell in ${container.name}`}
             onSelect={() => {
-              openShell(container.name);
+              openShell(container.name, container.image);
             }}
           />
         ))
@@ -205,7 +208,7 @@ export function RowMenu({
           label="Shell"
           title="Open a shell in it"
           onSelect={() => {
-            openShell(exec.choices[0]?.name);
+            openShell(exec.choices[0]?.name, exec.choices[0]?.image);
           }}
         />
       )}

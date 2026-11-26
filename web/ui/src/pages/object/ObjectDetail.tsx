@@ -449,6 +449,7 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
           containers={page?.containers}
           kindLabel={page?.title}
           shellOffer={page?.shell}
+          debugOffer={page?.debug}
           subjectNote={
             failed === undefined
               ? 'Still reading this object. A session about it needs its Kind, which arrives with the payload.'

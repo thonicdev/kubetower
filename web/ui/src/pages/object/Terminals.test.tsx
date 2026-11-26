@@ -361,9 +361,10 @@ describe('the ways into a terminal on one object', () => {
 
     // Nothing joined the row: the panel is `absolute` inside the button's own
     // `relative` wrapper, so it hangs under the button and the row is the same
-    // width it was.
+    // width it was. The wrapper holds Shell and its menu control in a row of
+    // their own, so the panel's static position is under the pair.
     expect([...terminals().children].length).toBe(before);
-    expect(button.closest('div')?.className).toContain('relative');
+    expect(button.closest('div')?.parentElement?.className).toContain('relative');
     expect(menu.closest('div[id]')?.className).toContain('absolute');
     // The console's own menu and not a fifth private popover: the same scrim
     // four other menus share, which is `aria-hidden` and out of the tab order.

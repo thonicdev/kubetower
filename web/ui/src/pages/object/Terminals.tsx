@@ -15,6 +15,9 @@ import { PlanDialog } from '../../components/PlanDialog';
 import { useDockIfPresent } from '../../dock/DockContext';
 import { btn } from '../../components/buttons';
 import { ImageRef } from '../../components/ImageRef';
+import { debugOn, debugRequest, debugTargets, probablyNoShell, type DebugChoice } from '../../debug/debug';
+import { DebugForm } from '../../debug/DebugForm';
+import { knownNoShell, useNoShellFacts } from '../../debug/noShellMemory';
 import { focusRing } from '../../focus';
 import { watching } from '../../hover';
 import { KeyLayer } from '../../keyboard/layers';
@@ -61,8 +64,12 @@ export function Terminals({
   kindLabel,
   subjectNote,
   shellOffer,
+  debugOffer,
 }: {
   identity: ObjectIdentity;
+  /** Whether this pod's page offers Debug: `DetailPage.debug`, on both
+   *  profiles (`debugOn`). */
+  debugOffer?: ShellOffer | undefined;
   /** Whether this pod's page draws Shell, under `shared`: `DetailPage.shell`,
    *  answered for this pod (`shellOn`). Ignored on the desktop. */
   shellOffer?: ShellOffer | undefined;
@@ -103,7 +110,12 @@ export function Terminals({
   );
   const [failure, setFailure] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [debugging, setDebugging] = useState(false);
   const panelId = useId();
+  const debugPanelId = useId();
+  // Read so a Shell tab ending in `no_shell` draws Debug here at once, with
+  // this drawer still open beside the dock.
+  useNoShellFacts();
 
   // Escape closes the container menu, claimed at `KeyLayer.Menu` from the one
   // keyboard stack - `ColumnMenu`'s claim, made the same way, for the reason
@@ -115,8 +127,9 @@ export function Terminals({
     KeyLayer.Menu,
     () => {
       setPicking(false);
+      setDebugging(false);
     },
-    picking,
+    picking || debugging,
   );
 
   const able = capabilities.data;
@@ -150,7 +163,7 @@ export function Terminals({
     if (opened === true) shell?.closeDrawer();
   };
 
-  const openExec = (container?: string): void => {
+  const openExec = (container?: string, image?: string): void => {
     setPicking(false);
     const opened = dock?.openShell({
       kind: 'exec',
@@ -162,8 +175,20 @@ export function Terminals({
       ...(identity.namespace === undefined ? {} : { namespace: identity.namespace }),
       name: identity.name,
       ...(container === undefined ? {} : { container }),
+      // Not sent on `exec`: carried so a Shell that finds no shell can say in
+      // which image it found none (`noShellMemory.ts`).
+      ...(image === undefined || image === '' ? {} : { image }),
     });
     giveThePaneTheWidth(opened);
+  };
+
+  const openDebug = (choice: DebugChoice): void => {
+    setPicking(false);
+    setDebugging(false);
+    if (identity.namespace === undefined) return;
+    giveThePaneTheWidth(
+      dock?.openShell(debugRequest({ cluster: identity.cluster, namespace: identity.namespace, pod: identity.name }, choice)),
+    );
   };
 
   const openNodeShell = (): void => {
@@ -248,6 +273,35 @@ export function Terminals({
 
   const execOn = shellOn(able, shellOffer, !unread);
   const offersExec = pod && execOn.drawn;
+  /*
+    **Debug, where a shell is missing.** The Shell menu always carries the debug
+    form; a Debug control of its own is drawn beside Shell only where a running
+    container probably has no shell - by its image (`probablyNoShell`), or
+    because a Shell on it already found none (`noShellMemory.ts`). A pod whose
+    containers all have one is not offered a second way into the same thing on
+    its row.
+
+    Never on an ephemeral container: it is the debug container itself, and it
+    is not a container another one may join.
+  */
+  const debugAt = debugOn(able, debugOffer, !unread);
+  const debugNamespace = identity.namespace;
+  const offersDebug = offersExec && debugAt.drawn && debugNamespace !== undefined && debugNamespace !== '';
+  const targets = debugTargets(containers);
+  const shellless = offersDebug
+    ? targets.filter(
+        (one) =>
+          probablyNoShell(one.image) ||
+          knownNoShell({
+            cluster: identity.cluster,
+            namespace: debugNamespace,
+            pod: identity.name,
+            container: one.name,
+            image: one.image,
+          }),
+      )
+    : [];
+  const targetNames = targets.map((one) => one.name);
   const offersNodeShell = node && able?.nodeShell === true;
   /*
     **Not on a Secret**, which is the one kind this control is withheld on for a
@@ -313,40 +367,73 @@ export function Terminals({
           belongs to.
         */
         <div className="relative">
-          <button
-            type="button"
-            // Disabled until the object has answered, rather than opening a shell
-            // in whichever container the server would have picked. See `unread`.
-            disabled={unread || notRunning !== undefined || execOn.refused !== undefined}
-            // Announced as a menu button **only where there is a menu**. A pod
-            // with one container opens a shell on the click and has no panel to
-            // expand, and `aria-expanded="false"` there would promise a reader
-            // something that never arrives.
-            aria-expanded={choices.length > 1 ? picking : undefined}
-            aria-controls={choices.length > 1 && picking ? panelId : undefined}
-            onClick={() => {
-              // The question is asked from the payload and never from an empty
-              // list: `choices` is empty both on a pod with one container and on a
-              // pod nobody has read yet, and only the first of those may open a
-              // shell without asking. The guard is here as well as on `disabled`
-              // because a disabled attribute is a property of the button and this
-              // is a property of the gesture.
-              if (unread || notRunning !== undefined || execOn.refused !== undefined) return;
-              if (choices.length > 1) {
+          {/* Shell and its menu control side by side, in a row of their own
+              inside the anchor, so the panel below is a block after that row:
+              its static position is under the pair, which is what the phone
+              width's `fixed` panel keeps as its top. */}
+          <div className="flex items-center">
+            <button
+              type="button"
+              // Disabled until the object has answered, rather than opening a shell
+              // in whichever container the server would have picked. See `unread`.
+              disabled={unread || notRunning !== undefined || execOn.refused !== undefined}
+              // Announced as a menu button **only where there is a menu**. A pod
+              // with one container opens a shell on the click and has no panel to
+              // expand, and `aria-expanded="false"` there would promise a reader
+              // something that never arrives.
+              aria-expanded={choices.length > 1 ? picking : undefined}
+              aria-controls={choices.length > 1 && picking ? panelId : undefined}
+              onClick={() => {
+                // The question is asked from the payload and never from an empty
+                // list: `choices` is empty both on a pod with one container and on a
+                // pod nobody has read yet, and only the first of those may open a
+                // shell without asking. The guard is here as well as on `disabled`
+                // because a disabled attribute is a property of the button and this
+                // is a property of the gesture.
+                if (unread || notRunning !== undefined || execOn.refused !== undefined) return;
+                if (choices.length > 1) {
+                  setPicking((was) => !was);
+                  return;
+                }
+                openExec(only, choices[0]?.image);
+              }}
+              title={unread ? unreadNote : (execOn.refused ?? notRunning ?? `Open a shell inside ${identity.name}`)}
+              // `watching`, with Logs and the node shell: it carries its own disabled negation - a Shell the pod has not
+              // answered for must not draw the accent frame under the pointer,
+              // which is a click it refuses. Square on its right: the menu
+              // control is joined to it.
+              className={`${btn} rounded-r-none border-line text-muted ${watching}`}
+            >
+              <Icon name="terminal" />
+              Shell
+            </button>
+            {/* The menu, always: the containers, then a debug container. Shell
+                keeps its one click; this is the way to the rest of the menu on a
+                pod where that click opens a shell without asking. Grayed only
+                where nothing in the menu could be taken: before the pod is read,
+                or with no container running. */}
+            <button
+              type="button"
+              data-shell-menu=""
+              aria-label="Shell menu"
+              aria-expanded={picking}
+              aria-controls={picking ? panelId : undefined}
+              disabled={unread || notRunning !== undefined}
+              title={unread ? unreadNote : (notRunning ?? 'Containers and a debug container')}
+              onClick={() => {
+                if (unread || notRunning !== undefined) return;
+                setDebugging(false);
                 setPicking((was) => !was);
-                return;
-              }
-              openExec(only);
-            }}
-            title={unread ? unreadNote : (execOn.refused ?? notRunning ?? `Open a shell inside ${identity.name}`)}
-            // `watching`, with Logs and the node shell: it carries its own disabled negation - a Shell the pod has not
-            // answered for must not draw the accent frame under the pointer,
-            // which is a click it refuses.
-            className={`${btn} border-line text-muted ${watching}`}
-          >
-            <Icon name="terminal" />
-            Shell
-          </button>
+              }}
+              // Joined to Shell as one split control: no gap, a shared border,
+              // and a narrow side. A pod's control row has to fit the drawer at
+              // its 1024px cap (471px) on one line, and a separate button with
+              // its own gap overran it by six pixels.
+              className={`${btn} -ml-px rounded-l-none border-line !px-0.5 text-muted ${watching}`}
+            >
+              <Icon name="chevron" className="rotate-90" />
+            </button>
+          </div>
 
           {picking ? (
             <>
@@ -361,7 +448,13 @@ export function Terminals({
                 // `z-20` over the scrim's `z-10`, or the first click on a row
                 // closes the menu instead of choosing. `ColumnMenu`'s panel, to
                 // the class.
-                className="absolute left-0 z-20 mt-1 w-56 rounded-lg border border-line bg-panel-2 p-2 shadow-lg"
+                //
+                // At phone width it spans the drawer instead (`fixed`, its top
+                // left where it stands): a 288px panel hung from Shell would
+                // run past the screen's right edge.
+                className={`absolute left-0 z-20 mt-1 rounded-lg border border-line bg-panel-2 p-2 shadow-lg ${
+                  offersDebug ? POPOVER_WIDE : 'w-56'
+                }`}
               >
                 <ul aria-label="Container">
                   {choices.map((one, index) => (
@@ -374,10 +467,12 @@ export function Terminals({
                         // `tabIndex={-1}` and out of the accessibility tree
                         // so Tab from here reaches the next row.
                                         autoFocus={index === 0}
+                        disabled={execOn.refused !== undefined}
+                        title={execOn.refused}
                         onClick={() => {
-                          openExec(one.name);
+                          openExec(one.name, one.image);
                         }}
-                        className={`flex w-full flex-col items-start gap-0.5 rounded-sm px-1 py-1 text-left text-sm hover:bg-panel ${focusRing}`}
+                        className={`flex w-full flex-col items-start gap-0.5 rounded-sm px-1 py-1 text-left text-sm hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent ${focusRing}`}
                       >
                         <span className="max-w-full truncate">{one.name}</span>
                         {/* The image beneath the name, because on a pod with a
@@ -394,6 +489,52 @@ export function Terminals({
                     </li>
                   ))}
                 </ul>
+                {offersDebug ? (
+                  <div data-debug-in-menu="" className="mt-2 border-t border-line pt-2">
+                    <p className={`mb-1 flex items-center gap-1 text-sm ${debugAt.refused === undefined ? '' : 'text-muted'}`}>
+                      <Icon name="debug" />
+                      Debug container
+                    </p>
+                    <DebugForm targets={targetNames} refused={debugAt.refused} onStart={openDebug} />
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {offersDebug && shellless.length > 0 ? (
+        <div className="relative">
+          <button
+            type="button"
+            data-debug-entry=""
+            aria-expanded={debugging}
+            aria-controls={debugging ? debugPanelId : undefined}
+            disabled={debugAt.refused !== undefined}
+            onClick={() => {
+              if (debugAt.refused !== undefined) return;
+              setPicking(false);
+              setDebugging((was) => !was);
+            }}
+            title={debugAt.refused ?? `Start a debug container in ${identity.name}`}
+            className={`${btn} border-line text-muted ${watching}`}
+          >
+            <Icon name="debug" />
+            Debug
+          </button>
+          {debugging ? (
+            <>
+              <MenuScrim onDismiss={() => setDebugging(false)} />
+              <div
+                id={debugPanelId}
+                role="dialog"
+                aria-label="Debug container"
+                className={`absolute left-0 z-20 mt-1 rounded-lg border border-line bg-panel-2 p-3 shadow-lg ${POPOVER_WIDE}`}
+              >
+                {/* The container that has no shell is the one chosen: it is why
+                    this control is here. */}
+                <DebugForm targets={targetNames} initialTarget={shellless[0]?.name} onStart={openDebug} />
               </div>
             </>
           ) : null}
@@ -531,6 +672,11 @@ export function Terminals({
     </div>
   );
 }
+
+/** A popover holding the debug form: 288px under its control, and at phone
+ *  width the drawer's width from its static top (the rail and the drawer's
+ *  gutter on the left, the gutter on the right). */
+const POPOVER_WIDE = 'w-72 max-sm:fixed max-sm:right-3 max-sm:left-[4.25rem] max-sm:w-auto';
 
 /**
  * Why no container can take a shell, in the kubelet's own word where it gave

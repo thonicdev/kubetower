@@ -29,6 +29,9 @@ import {
 import { envFoldKey, useEnvFold } from './envFolds';
 import { TABLE } from '../../components/tableLook';
 import { ImageLine } from '../../components/ImageRef';
+import { Pill } from '../../components/Pill';
+import { KeptBadge } from '../../debug/DebugForm';
+import { KEPT_TITLE } from '../../debug/debug';
 
 /**
  * What a pod is made of.
@@ -156,14 +159,30 @@ export function Containers({
   if (containers.length === 0) return null;
 
   const object = { cluster, kind, namespace, name };
+  // Debug containers after the pod's own, whatever order they arrive in: they
+  // are not part of the workload, and a tile between two app containers would
+  // read as one of them.
+  const ephemeral = containers.filter((one) => one.ephemeral === true);
+  const ordered = [...containers.filter((one) => one.ephemeral !== true), ...ephemeral];
 
   return (
     <section data-section="containers">
-      <h3 className="mb-1 text-xs font-medium text-muted uppercase">Containers</h3>
+      <h3 className="mb-1 flex items-center gap-2 text-xs font-medium text-muted uppercase">
+        Containers
+        {ephemeral.length === 0 ? null : (
+          // A pod carrying debug containers says so at the heading, before any
+          // tile: they stay until the pod is deleted.
+          <span data-ephemeral-count="" className="normal-case">
+            <Pill tone="info" title={KEPT_TITLE}>
+              {`${String(ephemeral.length)} debug`}
+            </Pill>
+          </span>
+        )}
+      </h3>
       <div className="flex flex-col gap-3">
-        {containers.map((container) => (
+        {ordered.map((container) => (
           <One
-            key={`${container.init ? 'init' : 'app'}-${container.name}`}
+            key={`${container.init ? 'init' : container.ephemeral === true ? 'ephemeral' : 'app'}-${container.name}`}
             object={object}
             container={container}
             chrome={chrome}
@@ -266,6 +285,7 @@ function One({
     <article
       data-container={container.name}
       data-init={container.init ? 'true' : 'false'}
+      {...(container.ephemeral === true ? { 'data-ephemeral': 'true' } : {})}
       className="rounded-md border border-line p-2"
     >
       {/* One line where it fits. Where it does not, the pill goes to a line of
@@ -275,6 +295,24 @@ function One({
           out by the name and the pill. */}
       <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         {name}
+        {container.ephemeral === true ? (
+          <span data-ephemeral-badges="" className="flex flex-wrap items-center gap-1">
+            <Pill
+              tone="info"
+              title={
+                container.target === undefined || container.target === ''
+                  ? 'Debug container'
+                  : `Debug container, sharing the processes of ${container.target}`
+              }
+            >
+              <span className="inline-flex items-center gap-1">
+                <Icon name="debug" />
+                {container.target === undefined || container.target === '' ? 'debug' : `debug → ${container.target}`}
+              </span>
+            </Pill>
+            <KeptBadge />
+          </span>
+        ) : null}
         <span className="ml-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {pull}
           <StatusPill status={container.status} />

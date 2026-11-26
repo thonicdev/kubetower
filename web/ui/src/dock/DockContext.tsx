@@ -137,6 +137,10 @@ export interface ShellRequest {
   /** A Claude tab's conversation, when it already has one - a restore hands
    *  the stored id back through here. Omitted, a Claude tab draws a new one. */
   readonly session?: string;
+  /** On a debug session: the image, and the container whose processes it
+   *  joins - absent for none. See `Tab.image`. */
+  readonly image?: string;
+  readonly target?: string;
 }
 
 const DockContext = createContext<DockApi | null>(null);
@@ -337,6 +341,8 @@ export function DockProvider({ children }: { children: ReactNode }): ReactNode {
         ...(request.objectKind === undefined ? {} : { objectKind: request.objectKind }),
         ...(request.token === undefined ? {} : { token: request.token }),
         ...(session === undefined ? {} : { session }),
+        ...(request.image === undefined ? {} : { image: request.image }),
+        ...(request.target === undefined ? {} : { target: request.target }),
       },
     });
     return true;

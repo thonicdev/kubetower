@@ -87,6 +87,18 @@ describe('the address', () => {
       .toBe('/api/c/prod/ws/exec?namespace=default&pod=api-1');
   });
 
+  it('carries the image and the target on debug, and on nothing else', () => {
+    // The target absent is "none": the debug container joins no process
+    // namespace, which is a choice and not a gap for the server to fill.
+    expect(channelPath({
+      channel: 'debug', cluster: 'prod', namespace: 'pay', pod: 'api-1', image: 'nicolaka/netshoot:v0.13', target: 'api',
+    })).toBe('/api/c/prod/ws/debug?namespace=pay&pod=api-1&image=nicolaka%2Fnetshoot%3Av0.13&target=api');
+    expect(channelPath({ channel: 'debug', cluster: 'prod', namespace: 'pay', pod: 'api-1', image: 'busybox:1.36' }))
+      .toBe('/api/c/prod/ws/debug?namespace=pay&pod=api-1&image=busybox%3A1.36');
+    expect(channelPath({ channel: 'exec', cluster: 'prod', namespace: 'pay', pod: 'api-1', image: 'busybox:1.36', target: 'api' }))
+      .toBe('/api/c/prod/ws/exec?namespace=pay&pod=api-1');
+  });
+
   it('encodes a cluster name, because a context name is whatever a KUBECONFIG says', () => {
     // `api/openapi.yaml` reserves the one-letter `c` segment for exactly this -
     // "a segment the cluster names never sits beside a segment this console

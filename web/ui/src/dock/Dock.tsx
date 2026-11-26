@@ -275,6 +275,11 @@ function TabButton({ tab, active }: { tab: Tab; active: boolean }): ReactNode {
             recognize. */}
         {tab.kind === 'claude' ? (
           <Icon name="claude" className="mr-1 inline-block" />
+        ) : tab.kind === 'debug' ? (
+          // The bug the drawer's Debug control and its Start wear: a debug
+          // session is a shell in a container this console added to the pod,
+          // and `❯` beside it would read as the pod's own shell.
+          <Icon name="debug" className="mr-1 inline-block" />
         ) : (
           <span aria-hidden="true" className="mr-1">{MARK[tab.kind] ?? '•'}</span>
         )}

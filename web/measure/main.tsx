@@ -45,9 +45,11 @@ import { STORAGE_OVERVIEW } from './storageinspector.fixture';
 import { DESKTOP_ONE_ANSWERS, IN_CLUSTER_ANSWERS, IN_CLUSTER_ENDING_ANSWERS, OVERVIEW_ANSWERS, OVERVIEW_CLUSTER, OVERVIEW_NO_PROMETHEUS_ANSWERS, OVERVIEW_QUIET_ANSWERS, OVERVIEW_UNMEASURED_ANSWERS } from './overview.fixture';
 import {
   drawerAnswers,
+  debugAnswers,
   CLUSTER_ROLES_PATH,
   DEPLOYMENTS_PATH,
   drawerPath,
+  debugPath,
   INGRESS_PATH,
   listsAnswers,
   ingressAnswers,
@@ -1418,6 +1420,11 @@ const CONSOLES: Readonly<
   // strip and its kind's verbs: what the drawer's narrowest width is measured
   // on.
   'console-drawer-pods': { at: drawerPath('pods'), answers: drawerAnswers() },
+  // A debug container (#147): a pod whose app has no shell, before and after
+  // a debug container joined it, and the same pod with a shell in its app.
+  'console-debug-before': { at: debugPath(), answers: debugAnswers(false) },
+  'console-debug-after': { at: debugPath(), answers: debugAnswers(true) },
+  'console-debug-shell': { at: debugPath(), answers: debugAnswers(false, true) },
   'console-drawer-services': { at: drawerPath('services'), answers: drawerAnswers() },
   'console-drawer-secrets': { at: drawerPath('secrets'), answers: drawerAnswers() },
   // Two more lists with short headings over short values, for the headings'
