@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
@@ -135,13 +136,21 @@ func toolWindowAllowed(raw string, live []forward.Tunnel) (forward.Tunnel, error
 }
 
 // toolWindowHost is a platform's native side. Both calls come from any
-// goroutine and return at once; the platform draws or closes the window on
-// its own thread. When a window closes, by the operator or by closeToolWindow,
-// the platform calls toolWindows.closed with its id.
+// goroutine; the platform draws or closes the window on its own thread. When a
+// window closes, by the operator or by closeToolWindow, the platform calls
+// toolWindows.closed with its id; when one could not be drawn,
+// toolWindows.refused.
+//
+// openToolWindow returns errToolWindowRefused when the platform answered, in
+// time, that the window could not be drawn (#84: WebView2 could not create its
+// environment or controller); nil when it is drawn or still being drawn.
 type toolWindowHost interface {
-	openToolWindow(id int, target toolWindowTarget)
+	openToolWindow(id int, target toolWindowTarget) error
 	closeToolWindow(id int)
 }
+
+// errToolWindowRefused is a platform that could not draw a tool window.
+var errToolWindowRefused = errors.New("the tool window could not be drawn")
 
 // tunnelSet is what the tool windows read of the forward set.
 type tunnelSet interface {
@@ -252,8 +261,21 @@ func (t *toolWindows) OpenToolWindow(id, tool, path string, closeTunnel bool) er
 	t.mu.Unlock()
 
 	log.Printf("[kubetower] opening %s in a tool window (%s)", loggableURL(raw), target.Title)
-	host.openToolWindow(n, target)
+	if err := host.openToolWindow(n, target); err != nil {
+		// Refused: the window is forgotten and its tunnel stays open (#84).
+		t.refused(n)
+		return fmt.Errorf("%w: %v", api.ErrConflict, err)
+	}
 	return nil
+}
+
+// refused is the platform saying window n could not be drawn. It is forgotten,
+// and its tunnel stays open whatever the page asked: nothing was shown, so
+// nothing a person closed (#84).
+func (t *toolWindows) refused(n int) {
+	t.mu.Lock()
+	delete(t.open, n)
+	t.mu.Unlock()
 }
 
 // closed is the platform saying window n has closed. The tunnel goes with it

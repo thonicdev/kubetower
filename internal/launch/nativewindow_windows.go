@@ -153,12 +153,14 @@ func drawNativeWindow(url string, feed windowSources, toasts bool) bool {
 		},
 	})
 	if view == nil {
-		// The runtime is missing: an LTSC or stripped image may lack it, and
-		// the answer must be a sentence and a fallback, not a nil
-		// dereference.
-		log.Printf("[kubetower] the WebView2 runtime is not installed, so the native window " +
-			"cannot open. Falling back to a browser window. To get the native one, install " +
-			"the Microsoft Edge WebView2 Runtime — it is a free component of Windows")
+		// The runtime is missing (an LTSC or stripped image may lack it), or
+		// it refused to create its environment or controller - a locked or
+		// full user data folder, a policy (#84): the library now says so
+		// instead of ending the process. Either way the answer is a sentence
+		// and a fallback, not a nil dereference.
+		log.Printf("[kubetower] WebView2 could not open the native window (its runtime is missing, " +
+			"or it refused to start: see the line above). Falling back to a browser window. If the " +
+			"runtime is missing, install the Microsoft Edge WebView2 Runtime — it is a free component of Windows")
 		return false
 	}
 	// Destroy behind its own recover: the guard's recover runs after this

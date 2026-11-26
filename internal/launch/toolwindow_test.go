@@ -48,13 +48,19 @@ func (f *fakeTunnels) drop(id string) {
 type fakeHost struct {
 	opened map[int]toolWindowTarget
 	closed []int
+	// refuse is the platform's answer that the window could not be drawn.
+	refuse error
 }
 
-func (h *fakeHost) openToolWindow(id int, target toolWindowTarget) {
+func (h *fakeHost) openToolWindow(id int, target toolWindowTarget) error {
+	if h.refuse != nil {
+		return h.refuse
+	}
 	if h.opened == nil {
 		h.opened = map[int]toolWindowTarget{}
 	}
 	h.opened[id] = target
+	return nil
 }
 
 func (h *fakeHost) closeToolWindow(id int) { h.closed = append(h.closed, id) }
@@ -480,5 +486,57 @@ func TestOnlyAFreshClickOrKeyPressCountsAsAGestureOnMacOS(t *testing.T) {
 		if got := aRealGesture(c.eventType, c.age); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// A platform that could not draw the window (#84: WebView2 refused to create
+// its environment or controller) is a 409, the window is forgotten, and the
+// tunnel stays open even when the page opened it for the window.
+func TestARefusedToolWindowIsAConflictAndKeepsItsTunnel(t *testing.T) {
+	tunnels := &fakeTunnels{live: []forward.Tunnel{hubbleTunnel()}}
+	tw := newToolWindows(tunnels, nil)
+	host := &fakeHost{refuse: errToolWindowRefused}
+	tw.attach(host)
+
+	err := tw.OpenToolWindow("f1", "hubble", "/", true)
+	if !errors.Is(err, api.ErrConflict) || !strings.Contains(err.Error(), "could not be drawn") {
+		t.Fatalf("a refused window = %v; want ErrConflict saying it could not be drawn", err)
+	}
+	if len(tunnels.closed) != 0 {
+		t.Errorf("the tunnel was closed: %v", tunnels.closed)
+	}
+	tw.mu.Lock()
+	open := len(tw.open)
+	tw.mu.Unlock()
+	if open != 0 {
+		t.Errorf("%d windows still counted after the refusal", open)
+	}
+	// The console carries on: once the platform draws again, a window opens.
+	host.refuse = nil
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil || len(host.opened) != 1 {
+		t.Fatalf("after a refusal = %v, opened %v", err, host.opened)
+	}
+}
+
+// refused forgets the window and closes nothing, whatever the page asked.
+func TestARefusedWindowNeverClosesItsTunnel(t *testing.T) {
+	tunnels := &fakeTunnels{live: []forward.Tunnel{hubbleTunnel()}}
+	tw := newToolWindows(tunnels, nil)
+	host := &fakeHost{}
+	tw.attach(host)
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil {
+		t.Fatal(err)
+	}
+	tw.refused(1)
+	if len(tunnels.closed) != 0 {
+		t.Errorf("refused closed %v", tunnels.closed)
+	}
+	// closed, by contrast, closes the tunnel opened for the window.
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil {
+		t.Fatal(err)
+	}
+	tw.closed(2)
+	if len(tunnels.closed) != 1 {
+		t.Errorf("closed closed %v", tunnels.closed)
 	}
 }
