@@ -52,18 +52,12 @@ dialog draws it first, as a New extra line.
   database no longer holds the start (nor lets a package be replaced as a
   tar.gz), and an update can no longer be asked
   to stop KubeTower before the stop is wired (#154).
-
-### Fixed
-
 - **No Redis tile on what is not a Redis.** The Redis viewer no longer marks a
   web port in front of a pod labelled redis, nor `ghcr.io/redis/nginx`, a web
   client or a `predis` label, and it finds a Redis behind a second port, beside
   an exporter, on its `--port`, or started by gosu, su-exec or a shell loop. A
   pod's tiles come from one read of its namespace, and the labels a pod's tile
   trusts are the server's (#151).
-
-### Fixed
-
 - **Windows: a WebView2 failure refuses the window instead of ending
   KubeTower.** When the WebView2 runtime cannot create its environment or
   controller (a locked or full data folder, a policy), the library KubeTower
