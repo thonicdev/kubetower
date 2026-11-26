@@ -23,11 +23,26 @@ dialog draws it first, as a New extra line.
   names what gave the figures, and a page where nothing could be read says No
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
+- **Python in the Runtime Inspector.** A Python pod's tab lists its Python
+  processes, read out of /proc with nothing installed in the pod: the
+  interpreter's version, memory and peak, threads and start time. Where the
+  application serves prometheus_client's metrics, it adds the version, the
+  garbage collector per generation and the process's memory, CPU and open
+  files (#144).
 - **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
   reads every database the cluster's user may open, with a database and
   schema picker and a table search; a table's rows come 100 at a time,
   forward and back, by primary key, by ctid or by offset for a view, each
   value drawn for its type, and a cell opens in full, JSON laid out (#164).
+
+### Fixed
+
+- **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
+  desktop, Services claiming to be Prometheus in one namespace and
+  VictoriaMetrics in another are now refused as two Prometheus Services in two
+  namespaces already were, the detail naming both; in one namespace,
+  Prometheus is still chosen. The source can be set in Settings › General
+  (#133).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

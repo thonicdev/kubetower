@@ -137,9 +137,13 @@ func toObjects(services []corev1.Service) []runtime.Object {
 
 // A cluster running both keeps Prometheus, and VictoriaMetrics in another
 // namespace does not make it ambiguous.
-func TestPrometheusIsPreferredToVictoriaMetrics(t *testing.T) {
+// Prometheus and VictoriaMetrics in one namespace: one owner put both there,
+// and Prometheus is kept (#133).
+func TestPrometheusIsPreferredToVictoriaMetricsInOneNamespace(t *testing.T) {
+	vm := vmsingleOperator()
+	vm.Namespace = "monitoring"
 	h := newHarness(t,
-		vmsingleOperator(),
+		vm,
 		promService("monitoring", "kps-prometheus", map[string]string{"app": "kube-prometheus-stack-prometheus"}, "http-web", 9090),
 	)
 	chosen := &PromTarget{Namespace: "monitoring", Service: "kps-prometheus", Port: 9090}
@@ -151,6 +155,28 @@ func TestPrometheusIsPreferredToVictoriaMetrics(t *testing.T) {
 	}
 	if found.Engine != EnginePrometheus {
 		t.Errorf("engine %q", found.Engine)
+	}
+}
+
+// The decoy across engines (#133): a real vmsingle in vm and a Service
+// labelled app=prometheus on 9090 in a tenant's namespace. Neither is chosen,
+// nothing is asked of either, and the detail names both namespaces.
+func TestPrometheusAndVictoriaMetricsInDifferentNamespacesAreNotChosen(t *testing.T) {
+	decoy := promService("team-a", "fake", map[string]string{"app": "prometheus"}, "web", 9090)
+	h := newHarness(t, vmsingleOperator(), decoy)
+	h.answer(rawAnswers{metricsAPIPath: {err: notFound(metricsAPIPath)}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindNone || found.Prometheus != nil {
+		t.Fatalf("kind %q target %+v (%s); want none chosen", found.Kind, found.Prometheus, found.Detail)
+	}
+	if !strings.Contains(found.Detail, "Prometheus (team-a)") || !strings.Contains(found.Detail, "VictoriaMetrics (vm)") {
+		t.Errorf("detail %q does not name both namespaces", found.Detail)
+	}
+	for _, p := range h.paths {
+		if strings.Contains(p, "team-a") || strings.Contains(p, "/vm/") {
+			t.Errorf("a candidate was asked: %s", p)
+		}
 	}
 }
 
@@ -443,5 +469,15 @@ func TestEachHealthAttemptHasItsOwnTimeout(t *testing.T) {
 	})
 	if err != nil || string(body) != "Prometheus Server is Healthy." || asked != 3 {
 		t.Fatalf("%q, %v after %d asks", body, err, asked)
+	}
+}
+
+// The refusal names at most three namespaces of each engine, then counts the
+// rest, so the detail stays one line (#133).
+func TestTheCrossEngineRefusalNamesAtMostThreeNamespacesEach(t *testing.T) {
+	prom := map[string]bool{"a": true, "b": true, "c": true, "d": true, "e": true}
+	got := notChosenAcross(prom, map[string]bool{"vm": true})
+	if !strings.Contains(got, "Prometheus (a, b, c and 2 more)") || !strings.Contains(got, "VictoriaMetrics (vm)") {
+		t.Errorf("%q", got)
 	}
 }
