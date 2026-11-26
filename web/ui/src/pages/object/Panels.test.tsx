@@ -236,9 +236,11 @@ describe('the metrics panel, on the panel that opens', () => {
     );
     mountApp(`/c/prod/pods/argo/api-0`);
 
+    // One quiet line, the sentence on hover (#127).
     await waitFor(() => {
-      expect(page().textContent).toContain('prometheus did not answer');
+      expect(page().querySelector('[data-no-metrics]')?.getAttribute('title')).toBe('prometheus did not answer');
     });
+    expect(page().textContent).toContain('No metrics available');
     expect(page().textContent).toContain('Running');
   });
 

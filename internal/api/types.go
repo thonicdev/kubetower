@@ -614,8 +614,13 @@ type UpdateInstall struct {
 	// Phase is `idle`, `downloading`, `verifying`, `ready`, `installing`,
 	// `failed` or `manual` (the installation's folder is not writable).
 	Phase string `json:"phase"`
-	// Enabled is the "Install updates" setting.
+	// Enabled is the "Install updates automatically" setting (#122).
 	Enabled bool `json:"enabled"`
+	// When is when an automatic update installs: `quit` or `now`.
+	When string `json:"when"`
+	// Password says installing asks for one (a .deb or .rpm): an automatic
+	// update stops at ready, for Install.
+	Password bool `json:"password"`
 	// Supported says this installation can be updated from the console.
 	Supported bool `json:"supported"`
 	// Installation is how it was installed (`linux-appimage`, `windows-setup`…).
@@ -637,9 +642,11 @@ type UpdateEnds struct {
 	Forwards  int `json:"forwards"`
 }
 
-// UpdateInstallWrite is the "Install updates" setting's write.
+// UpdateInstallWrite is the "Install updates automatically" setting's write:
+// on or off, and, when given, when it installs (`quit` or `now`).
 type UpdateInstallWrite struct {
-	Enabled *bool `json:"enabled,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+	When    *string `json:"when,omitempty"`
 }
 
 // RetentionChoice is one entry of the retention list.

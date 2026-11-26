@@ -8,6 +8,7 @@ import { focusRing, focusRingInside } from '../../focus';
 import { glyphForKind } from '../../shell/kindGlyph';
 import { DOWN, useClusterVerdict } from '../../shell/downCluster';
 import { useDeclarePageFacts } from '../../shell/pageFacts';
+import { NoMetrics } from '../../state/NoMetrics';
 import { StateNotice } from '../../state/StateNotice';
 import { ValueView } from '../../state/Result';
 import {
@@ -182,6 +183,7 @@ export function Overview(): ReactNode {
             key={cluster}
             page={refusedPage(cluster ?? 'Cluster', refused.state, refused.reason)}
             onRetry={undefined}
+            refusal
           />
         </>
       )}
@@ -214,17 +216,32 @@ type Retry = (() => void) | undefined;
 
 /** `cluster` is set on the page the cluster answered, never on the one
  *  composed from its refusal: the extensions' tiles read the cluster too. */
-function Dashboard({ page, cluster, onRetry }: { page: OverviewPage; cluster?: string | undefined; onRetry: Retry }): ReactNode {
+/**
+ * `refusal`: the page is composed from the cluster's own refusal, so a metrics
+ * panel says that refusal in its notice rather than *No metrics available*,
+ * which would blame the metrics backend for the cluster's answer.
+ */
+function Dashboard({
+  page,
+  cluster,
+  onRetry,
+  refusal = false,
+}: {
+  page: OverviewPage;
+  cluster?: string | undefined;
+  onRetry: Retry;
+  refusal?: boolean;
+}): ReactNode {
   return (
     <div className="flex flex-col gap-4">
-      <ClusterHead page={page} onRetry={onRetry} />
+      <ClusterHead page={page} onRetry={onRetry} refusal={refusal} />
       {cluster === undefined ? null : <FavouriteExtras cluster={cluster} />}
       <AccessNote page={page} />
       <Workloads page={page} onRetry={onRetry} />
       {cluster === undefined ? null : <ExtraTiles cluster={cluster} />}
       <Trouble page={page} onRetry={onRetry} />
       <Restarting page={page} onRetry={onRetry} />
-      <Leaderboards page={page} onRetry={onRetry} />
+      <Leaderboards page={page} onRetry={onRetry} refusal={refusal} />
       <Warnings page={page} onRetry={onRetry} />
       <NotShown page={page} />
     </div>
@@ -235,7 +252,7 @@ function Dashboard({ page, cluster, onRetry }: { page: OverviewPage; cluster?: s
 /* 1. The cluster head: the badge, the alerts, the charts                      */
 /* -------------------------------------------------------------------------- */
 
-function ClusterHead({ page, onRetry }: { page: OverviewPage; onRetry: Retry }): ReactNode {
+function ClusterHead({ page, onRetry, refusal }: { page: OverviewPage; onRetry: Retry; refusal: boolean }): ReactNode {
   // Two of this section's three readings can be spoilt on their own: the version
   // comes from the discovery call and the capacity from the pod list, and either
   // can fail while the other answers. `PanelMark` is used directly here because
@@ -323,7 +340,7 @@ function ClusterHead({ page, onRetry }: { page: OverviewPage; onRetry: Retry }):
           </PanelList>
         </div>
 
-        <History page={page} onRetry={onRetry} />
+        <History page={page} onRetry={onRetry} refusal={refusal} />
       </div>
     </section>
   );
@@ -352,7 +369,7 @@ function ClusterHead({ page, onRetry }: { page: OverviewPage; onRetry: Retry }):
  * drew, it stays in view, because it is the line's source (a pod-cgroup sum must
  * not be read as the container sum).
  */
-function History({ page, onRetry }: { page: OverviewPage; onRetry: Retry }): ReactNode {
+function History({ page, onRetry, refusal }: { page: OverviewPage; onRetry: Retry; refusal: boolean }): ReactNode {
   const history = page.history;
   if (refusedWithCapacity(page, history)) return null;
   if (history?.state === 'absent' && history.reason.code === 'not_installed') return null;
@@ -368,20 +385,24 @@ function History({ page, onRetry }: { page: OverviewPage; onRetry: Retry }): Rea
       <h2 className="text-xs font-medium text-muted uppercase" title={drew ? undefined : caption}>
         Over time
       </h2>
-      <PanelValue result={history} what="the cluster's history" onRetry={onRetry}>
-        {(panel) => (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {panel.series
-              .filter((series) => !unchartable(series))
-              .map((series) => (
-                <Sparkline key={series.key} panel={{ ...panel, series: [series] }} label={series.label} />
-              ))}
-            {!drew || panel.caption === undefined ? null : (
-              <p className="text-xs text-muted lg:col-span-2">{panel.caption}</p>
-            )}
-          </div>
-        )}
-      </PanelValue>
+      {!refusal && history !== undefined && history.state !== 'ok' && history.state !== 'pending' ? (
+        <NoMetrics state={history.state} reason={history.reason} onRetry={onRetry} />
+      ) : (
+        <PanelValue result={history} what="the cluster's history" onRetry={onRetry}>
+          {(panel) => (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {panel.series
+                .filter((series) => !unchartable(series))
+                .map((series) => (
+                  <Sparkline key={series.key} panel={{ ...panel, series: [series] }} label={series.label} />
+                ))}
+              {!drew || panel.caption === undefined ? null : (
+                <p className="text-xs text-muted lg:col-span-2">{panel.caption}</p>
+              )}
+            </div>
+          )}
+        </PanelValue>
+      )}
     </div>
   );
 }
@@ -897,12 +918,13 @@ function RestartRow({ row }: { row: RestartEntry }): ReactNode {
  * one that has some, rather than *"This board was produced and has no rows."*,
  * the same filler one level down. A source that
  * did not answer (`unreachable`) draws nothing either: no metrics reads as no
- * block. `unreadable` and `forbidden` keep the panel and its
- * notice: the source answered and was refused or garbled, which is a fault to
+ * block. `unreadable` and `forbidden` keep the panel, with the one quiet
+ * *No metrics available* line and the reason on hover (#127): the source
+ * answered and was refused or garbled, which is a fault to
  * fix, not an absence. A leaderboard missing from the payload keeps
  * `PanelMissing`, which is a fault in this product and not a quiet cluster.
  */
-function Leaderboards({ page, onRetry }: { page: OverviewPage; onRetry: Retry }): ReactNode {
+function Leaderboards({ page, onRetry, refusal }: { page: OverviewPage; onRetry: Retry; refusal: boolean }): ReactNode {
   const top = page.top;
   if (top?.state === 'empty') return null;
   // No metrics: no metrics backend (`absent`, which the server sends
@@ -913,17 +935,21 @@ function Leaderboards({ page, onRetry }: { page: OverviewPage; onRetry: Retry })
 
   return (
     <Panel title="Most used" icon="cpu">
-      <PanelList result={top} what="the leaderboards" onRetry={onRetry}>
-        {(boards) => (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {boards
-              .filter((board) => board.entries.length > 0)
-              .map((board, index) => (
-                <Board key={`${board.label}:${String(index)}`} board={board} />
-              ))}
-          </div>
-        )}
-      </PanelList>
+      {!refusal && top !== undefined && top.state !== 'ok' && top.state !== 'pending' ? (
+        <NoMetrics state={top.state} reason={top.reason} onRetry={onRetry} />
+      ) : (
+        <PanelList result={top} what="the leaderboards" onRetry={onRetry}>
+          {(boards) => (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {boards
+                .filter((board) => board.entries.length > 0)
+                .map((board, index) => (
+                  <Board key={`${board.label}:${String(index)}`} board={board} />
+                ))}
+            </div>
+          )}
+        </PanelList>
+      )}
     </Panel>
   );
 }

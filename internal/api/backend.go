@@ -346,7 +346,9 @@ type UpdateCheck interface {
 // verified) is ErrConflict with its reason.
 type UpdateInstaller interface {
 	UpdateInstall() UpdateInstall
-	SetInstallUpdates(on bool) (UpdateInstall, error)
+	// SetInstallUpdates writes the automatic setting; an empty when keeps the
+	// moment set. The handler refuses an unknown when before it.
+	SetInstallUpdates(on bool, when string) (UpdateInstall, error)
 	DownloadUpdate() (UpdateInstall, error)
 	InstallUpdate(ctx context.Context) (UpdateInstall, error)
 	// OpenUpdateFolder shows the verified file's folder, in the manual phase.

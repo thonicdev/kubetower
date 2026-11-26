@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useRef, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { CloseButton, CopyButton, Failure, Pending, Pill, focusRing, useDeclarePageFacts, btnSecondary } from '@kubetower/ui';
+import { CloseButton, CopyButton, Failure, NoMetrics, Pending, focusRing, useDeclarePageFacts, btnSecondary } from '@kubetower/ui';
 
 import { categoryIn, pageQuery, viewOf, type Ask, type Headline as HeadlineData, type Page, type View } from './data';
 import { NodeWorkloadsView } from './NodeFilter';
@@ -197,7 +197,7 @@ function Toolbar({
         <div className="ml-auto flex flex-wrap items-center gap-2 pb-1.5">
           {page !== undefined && !page.ready ? (
             <span data-counts="unmeasured">
-              <Pill tone="bad">not measured</Pill>
+              <NoMetrics variant="badge" detail={usageNote(page)} />
             </span>
           ) : null}
           <label className="flex items-center gap-1.5 text-xs text-muted">
@@ -300,10 +300,8 @@ function Body({
 }): ReactNode {
   if (!page.ready) {
     return (
-      <section data-unmeasured="" className="rounded-lg border border-line bg-panel p-4">
-        <p className="text-sm text-bad">
-          Nothing could be measured here — see the notes above. This is not a cluster with nothing to fix.
-        </p>
+      <section data-unmeasured="" className="px-1 py-2">
+        <NoMetrics detail={usageNote(page)} />
       </section>
     );
   }
@@ -315,4 +313,10 @@ function Body({
     default:
       return <OverviewView cluster={cluster} page={page} />;
   }
+}
+
+/** Why nothing was measured: the failing usage note's line, for the hover of
+ *  the one *No metrics available* the page draws (#127). */
+function usageNote(page: Page): string | undefined {
+  return page.notes.find((note) => !note.ok)?.detail;
 }

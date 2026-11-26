@@ -518,8 +518,8 @@ export interface paths {
          */
         get: operations["getUpdateInstall"];
         /**
-         * Turn "Install updates" on or off.
-         * @description Off, the check and its line in Settings › Infos stay, and nothing is downloaded or installed. Kept in the state directory. A write that took effect and could not be saved answers `not_saved`.
+         * Turn "Install updates automatically" on or off, and say when it installs.
+         * @description On, a newer release is downloaded, verified and installed at the moment `when` names. Off, Download and Install stay by hand. Kept in the state directory. A `when` other than `quit` or `now` is refused (400). A write that took effect and could not be saved answers `not_saved`.
          */
         put: operations["setUpdateInstall"];
         post?: never;
@@ -545,8 +545,8 @@ export interface paths {
          *     kept that the release's signed `checksums.txt` does not vouch for**: the
          *     Ed25519 signature is checked first, then the asset's sha256, and a file
          *     failing either is deleted. Never a downgrade, never a development
-         *     build. Refused (409) when "Install updates" is off, when this
-         *     installation cannot be updated, or while a download or install runs.
+         *     build. Refused (409) when this installation cannot be updated, or while
+         *     a download or install runs.
          */
         post: operations["downloadUpdate"];
         delete?: never;
@@ -569,7 +569,7 @@ export interface paths {
          * @description Checks the downloaded file's hash and the version again, then hands it to
          *     this platform's installer, which replaces KubeTower and restarts it: the
          *     terminals and port-forwards counted in `ends` close. Refused (409)
-         *     before a verified download, or when "Install updates" is off.
+         *     before a verified download.
          */
         post: operations["installUpdate"];
         delete?: never;
@@ -2401,8 +2401,15 @@ export interface components {
              * @enum {string}
              */
             phase: "idle" | "downloading" | "verifying" | "ready" | "installing" | "failed" | "manual";
-            /** @description The "Install updates" setting. */
+            /** @description The "Install updates automatically" setting (#122): a newer release the update check found is downloaded and verified on its own, and installed at the moment `when` names. Off, Download and Install stay by hand. */
             enabled: boolean;
+            /**
+             * @description When an automatic update installs: `quit`, as KubeTower quits, starting nothing (the default); `now`, as soon as no terminal and no port-forward is open, restarting KubeTower.
+             * @enum {string}
+             */
+            when: "quit" | "now";
+            /** @description Installing asks for a password (a .deb or .rpm, through pkexec). An automatic update then stops at `ready`, for Install: a password is never asked unprompted. */
+            password: boolean;
             /** @description This installation has an asset in a release and an installer in this build. False draws no Download. */
             supported: boolean;
             /** @description How this KubeTower was installed: `windows-setup`, `windows-zip`, `macos-app`, `macos-tar`, `linux-appimage`, `linux-deb`, `linux-rpm`, `linux-tar`, or empty when unknown. */
@@ -2432,8 +2439,13 @@ export interface components {
             };
         };
         UpdateInstallWrite: {
-            /** @description The "Install updates" setting. */
+            /** @description The "Install updates automatically" setting. */
             enabled: boolean;
+            /**
+             * @description When an automatic update installs. Absent, the moment set is kept.
+             * @enum {string}
+             */
+            when?: "quit" | "now";
         };
         /**
          * @description What the General tab writes is the archive: whether cluster events
@@ -4738,7 +4750,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description The request cannot be taken in the state things are in now, and the detail says which: for an update, "Install updates" is off, this installation cannot be updated, one is already running, or nothing is verified yet. Code `conflict`. */
+        /** @description The request cannot be taken in the state things are in now, and the detail says which: for an update, this installation cannot be updated, one is already running, or nothing is verified yet. Code `conflict`. */
         Conflict: {
             headers: {
                 [name: string]: unknown;

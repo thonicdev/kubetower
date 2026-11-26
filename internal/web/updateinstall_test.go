@@ -15,8 +15,11 @@ type fakeUpdater struct {
 }
 
 func (f *fakeUpdater) Status() updater.Status { return f.status }
-func (f *fakeUpdater) SetEnabled(on bool) (updater.Status, error) {
+func (f *fakeUpdater) Set(on bool, when string) (updater.Status, error) {
 	f.status.Enabled = on
+	if when != "" {
+		f.status.When = when
+	}
 	return f.status, f.err
 }
 func (f *fakeUpdater) Download() (updater.Status, error) { return f.status, f.err }
@@ -34,14 +37,14 @@ func TestTheInstallerIsNilWhereNothingInstalls(t *testing.T) {
 func TestSettingsCarryTheInstallAndWhatTheRestartEnds(t *testing.T) {
 	s := &Server{setup: SetupInfo{
 		Updates:   func() UpdateReport { return UpdateReport{State: "newer", Latest: "0.1.3"} },
-		Installer: &fakeUpdater{status: updater.Status{Phase: updater.Ready, Enabled: true, Supported: true, Installation: updater.LinuxAppImage, Version: "0.1.3"}},
+		Installer: &fakeUpdater{status: updater.Status{Phase: updater.Ready, Enabled: true, When: updater.WhenNow, Password: true, Supported: true, Installation: updater.LinuxDeb, Version: "0.1.3"}},
 		OpenWork:  func() (int, int) { return 2, 1 },
 	}}
 	got := settingsInfoOf(s).Update.Install
 	if got == nil {
 		t.Fatal("info.update carries no install")
 	}
-	want := api.UpdateInstall{Phase: "ready", Enabled: true, Supported: true, Installation: "linux-appimage",
+	want := api.UpdateInstall{Phase: "ready", Enabled: true, When: "now", Password: true, Supported: true, Installation: "linux-deb",
 		Version: "0.1.3", Ends: api.UpdateEnds{Terminals: 2, Forwards: 1}}
 	if *got != want {
 		t.Errorf("%+v, want %+v", *got, want)
@@ -54,7 +57,7 @@ func TestSettingsCarryTheInstallAndWhatTheRestartEnds(t *testing.T) {
 }
 
 func TestARefusedUpdateIsAConflictAndAnUnsavedSettingSaysSo(t *testing.T) {
-	s := &Server{setup: SetupInfo{Installer: &fakeUpdater{err: updater.ErrDisabled}}}
+	s := &Server{setup: SetupInfo{Installer: &fakeUpdater{err: updater.ErrBusy}}}
 	i := s.updateInstaller()
 	if _, err := i.DownloadUpdate(); !errors.Is(err, api.ErrConflict) {
 		t.Errorf("download: %v, want ErrConflict", err)
@@ -65,7 +68,7 @@ func TestARefusedUpdateIsAConflictAndAnUnsavedSettingSaysSo(t *testing.T) {
 	if _, err := i.OpenUpdateFolder(); !errors.Is(err, api.ErrConflict) {
 		t.Errorf("open folder: %v, want ErrConflict", err)
 	}
-	if out, err := i.SetInstallUpdates(false); !errors.Is(err, api.ErrNotSaved) || out.Enabled {
+	if out, err := i.SetInstallUpdates(false, "now"); !errors.Is(err, api.ErrNotSaved) || out.Enabled || out.When != "now" {
 		t.Errorf("setting: %+v %v, want not saved and off", out, err)
 	}
 }
