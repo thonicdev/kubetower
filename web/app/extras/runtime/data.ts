@@ -1141,3 +1141,106 @@ export async function nodeReport(cluster: string, namespace: string, name: strin
   if (typeof body.report !== 'object' || body.report === null) throw new EnvelopeError('The Runtime Inspector answered without the report', body);
   return body;
 }
+
+// --- Python (`python.go`) ---------------------------------------------------------
+
+/** One Python process of a container, read out of /proc. */
+export interface PythonProcess {
+  pid: number;
+  ppid: number;
+  comm: string;
+  executable: string;
+  /** `major.minor`, empty where neither the executable nor libpython says. */
+  version: string;
+  rss: number;
+  peak: number;
+  threads: number;
+  /** The kernel's names (15 characters); Python before 3.14 does not set them. */
+  threadNames: string[];
+  started?: string;
+}
+
+/** `POST …/python`. */
+export interface PythonProcesses {
+  /** What read /proc: `sh`, or `python3` where there is no shell. */
+  reader: string;
+  processes: PythonProcess[];
+  others: number;
+  truncated: boolean;
+}
+
+export interface PythonGC {
+  generation: string;
+  collections: number | null;
+  collected: number | null;
+  uncollectable: number | null;
+}
+
+/** prometheus_client's own series; a member is null where it is not served. */
+export interface PythonMetrics {
+  version?: string;
+  implementation?: string;
+  gc: PythonGC[];
+  rss: number | null;
+  virtual: number | null;
+  cpuSeconds: number | null;
+  openFds: number | null;
+  maxFds: number | null;
+  startTime: number | null;
+}
+
+/** `POST …/python/metrics`. */
+export interface PythonMetricsState {
+  port: number;
+  source: 'annotation' | 'port' | 'default';
+  reachable: boolean;
+  detail?: string;
+  metrics: PythonMetrics | null;
+}
+
+function pythonPath(cluster: string, namespace: string, name: string, container: string): string {
+  return `${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/python`;
+}
+
+const ONCE = {
+  staleTime: 30_000,
+  gcTime: 60_000,
+  retry: false,
+  // Each read runs an audited command or opens an audited tunnel: once when
+  // the tab opens, and on Refresh, never because the window came back.
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+} as const;
+
+export function pythonProcessesQuery(cluster: string, namespace: string, name: string, container: string) {
+  return queryOptions({
+    queryKey: [KEY, 'python', cluster, namespace, name, container] as const,
+    queryFn: async ({ signal }) => {
+      let body: PythonProcesses;
+      try {
+        // A POST: it runs an audited command (#82).
+        body = await request<PythonProcesses>(pythonPath(cluster, namespace, name, container), { method: 'POST', signal });
+      } catch (error) {
+        throw problemOf(error);
+      }
+      if (!Array.isArray(body.processes)) throw new EnvelopeError('The Runtime Inspector answered without the processes', body);
+      return body;
+    },
+    ...ONCE,
+  });
+}
+
+export function pythonMetricsQuery(cluster: string, namespace: string, name: string, container: string) {
+  return queryOptions({
+    queryKey: [KEY, 'python-metrics', cluster, namespace, name, container] as const,
+    queryFn: async ({ signal }) => {
+      try {
+        // A POST: it opens an audited tunnel (#82).
+        return await request<PythonMetricsState>(`${pythonPath(cluster, namespace, name, container)}/metrics`, { method: 'POST', signal });
+      } catch (error) {
+        throw problemOf(error);
+      }
+    },
+    ...ONCE,
+  });
+}

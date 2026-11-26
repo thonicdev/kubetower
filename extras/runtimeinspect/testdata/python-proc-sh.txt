@@ -1,0 +1,14 @@
+P 1
+comm python
+exe /usr/local/bin/python3.12
+PPid: 0
+VmHWM: 25020
+VmRSS: 24920
+Threads: 4
+start 45587104
+lib /usr/local/lib/libpython3.12.so.1.0
+thread python
+thread python
+thread python
+thread python
+btime 1795258953
