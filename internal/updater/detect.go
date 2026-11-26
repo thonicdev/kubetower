@@ -68,6 +68,9 @@ func Detect(goos, exe string, probe Probe) Installation {
 				return Installation{Kind: LinuxDeb, Path: exe}
 			case "rpm":
 				return Installation{Kind: LinuxRPM, Path: exe}
+			case ownerUnanswered:
+				// Maybe a package: never replaced as a tar.gz would be (#154).
+				return Installation{Kind: Unknown, Path: exe}
 			}
 		}
 		return Installation{Kind: LinuxTar, Path: exe}
@@ -113,29 +116,50 @@ func DetectRunning() Installation {
 // must not hold KubeTower's start (#154).
 const ownerWait = 5 * time.Second
 
-// owner asks dpkg, then rpm, whether they own path. A missing tool, a
-// refusal or no answer within ownerWait is "nobody": the tar.gz path then
-// applies.
+// ownerUnanswered is owner's answer when a package database did not answer
+// within ownerWait: the binary may be a package's, so it is not a tar.gz.
+const ownerUnanswered = "unanswered"
+
+// owner asks dpkg, then rpm, whether they own path. A missing tool or a
+// refusal is "nobody": the tar.gz path then applies. No answer within
+// ownerWait, from either, and no yes from the other, is ownerUnanswered: a
+// slow or locked database must neither hold the start nor let a package's
+// file be replaced as a tarball's (#154).
 func owner(path string) string {
-	if ownedBy("dpkg-query", "-S", path) {
+	deb, debAnswered := ownedBy("dpkg-query", "-S", path)
+	if deb {
 		return "deb"
 	}
-	if ownedBy("rpm", "-qf", path) {
+	rpm, rpmAnswered := ownedBy("rpm", "-qf", path)
+	if rpm {
 		return "rpm"
+	}
+	if !debAnswered || !rpmAnswered {
+		return ownerUnanswered
 	}
 	return ""
 }
 
 // ownedBy runs tool with flag, then `--` and path, so a path starting with a
-// dash is never read as an option.
-var ownedBy = func(tool, flag, path string) bool {
+// dash is never read as an option. answered is false only when the tool ran
+// past ownerWait; a missing tool answers no.
+var ownedBy = func(tool, flag, path string) (owned, answered bool) {
 	found, err := exec.LookPath(tool)
 	if err != nil {
-		return false
+		return false, true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), ownerWait)
+	return runOwner(found, ownerArgs(flag, path), ownerWait)
+}
+
+// runOwner runs a package-database question within wait.
+func runOwner(tool string, args []string, wait time.Duration) (owned, answered bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
-	return exec.CommandContext(ctx, found, ownerArgs(flag, path)...).Run() == nil
+	err := exec.CommandContext(ctx, tool, args...).Run()
+	if ctx.Err() != nil {
+		return false, false
+	}
+	return err == nil, true
 }
 
 // ownerArgs is the question's arguments: the flag, `--`, the path.

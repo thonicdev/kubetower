@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -139,14 +140,40 @@ var sweepAge = time.Hour
 // rename, left by one cut short.
 func sweepBeside(path string, patterns ...string) {
 	for _, pattern := range patterns {
+		prefix, _, _ := strings.Cut(pattern, "*")
 		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
 		for _, one := range found {
-			if info, err := os.Lstat(one); err != nil || time.Since(info.ModTime()) < sweepAge {
-				continue
+			if old, ok := oldEnough(one, prefix); ok && old {
+				_ = os.RemoveAll(one)
 			}
-			_ = os.RemoveAll(one)
 		}
 	}
+}
+
+// stampedTemp makes a folder like os.MkdirTemp, its creation time in its
+// name after prefix (`<prefix><unix seconds>-<random>`). On macOS a folder's
+// own mtime is not when it was made: a mount point shows the mounted volume's
+// root, as old as the release, and ditto keeps the source's times (#154).
+func stampedTemp(dir, prefix string) (string, error) {
+	return os.MkdirTemp(dir, prefix+strconv.FormatInt(time.Now().Unix(), 10)+"-")
+}
+
+// oldEnough says whether path, a leftover named after prefix, is at least
+// sweepAge old: by the time stampedTemp wrote in its name, or by its mtime
+// for a name with none (a file, or a folder an older release made). ok is
+// false when the age cannot be read.
+func oldEnough(path, prefix string) (old, ok bool) {
+	rest := strings.TrimPrefix(filepath.Base(path), prefix)
+	if stamp, _, found := strings.Cut(rest, "-"); found {
+		if secs, err := strconv.ParseInt(stamp, 10, 64); err == nil && secs > 0 {
+			return time.Since(time.Unix(secs, 0)) >= sweepAge, true
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, false
+	}
+	return time.Since(info.ModTime()) >= sweepAge, true
 }
 
 // installable says whether a kind's installer can run on this machine, for

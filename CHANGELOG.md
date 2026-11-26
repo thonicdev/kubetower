@@ -38,7 +38,8 @@ dialog draws it first, as a New extra line.
   What a quit-time install cut short is swept on Linux too. No download
   removes the files of an earlier helper still waiting to install. A
   read-only filesystem says Not writable instead of failing, a locked rpm
-  database no longer holds the start, and an update can no longer be asked
+  database no longer holds the start (nor lets a package be replaced as a
+  tar.gz), and an update can no longer be asked
   to stop KubeTower before the stop is wired (#154).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
