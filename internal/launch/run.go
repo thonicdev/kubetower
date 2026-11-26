@@ -1320,6 +1320,7 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 		MetricsSources: metricsSources{
 			measure: measure, store: p.sources, configured: p.promTarget,
 			editable: p.sources != nil && p.statePersistent && !p.replicas.Several,
+			resolve:  clusters.Resolve,
 		},
 		Hotbars:    p.bars,
 		Columns:    p.cols,

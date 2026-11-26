@@ -3,6 +3,8 @@ package launch
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/thonicdev/kubetower/internal/api"
@@ -68,5 +70,64 @@ func TestANotEditableDesktopCannotSetASource(t *testing.T) {
 	}
 	if store.Source("prod") != nil {
 		t.Fatal("the store was written")
+	}
+}
+
+// A context name with a slash reaches the API in two spellings: `a/b`, and the
+// DNS-friendly `a--b` that saved links carry. Both are one cluster, and the
+// source is kept under the name discovery looks it up by.
+func TestASourceIsKeptUnderTheResolvedClusterName(t *testing.T) {
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(kubeconfig, []byte(`apiVersion: v1
+kind: Config
+current-context: team/prod
+clusters:
+  - name: one
+    cluster: { server: https://127.0.0.1:1 }
+users:
+  - name: one
+    user: { token: not-a-token }
+contexts:
+  - name: team/prod
+    context: { cluster: one, user: one }
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clusters, err := cluster.NewManager(kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := metrics.NewSourceStore(t.TempDir(), func(string, ...any) {})
+	m := metricsSources{
+		measure:  metrics.New(metrics.Options{Clusters: noClusters{}, Sources: sourceLookup(store), Logf: func(string, ...any) {}}),
+		store:    store,
+		editable: true,
+		resolve:  clusters.Resolve,
+	}
+	ctx := context.Background()
+
+	if _, err := m.SaveMetricsSource(ctx, "team--prod", "vm/vmsingle-main:8428"); err != nil {
+		t.Fatal(err)
+	}
+	// Discovery asks the store under the resolved name.
+	if got := store.Source("team/prod"); got == nil || got.Address() != "vm/vmsingle-main:8428" {
+		t.Fatalf("under team/prod the store holds %+v", got)
+	}
+	if store.Source("team--prod") != nil {
+		t.Error("the source was also kept under the DNS-friendly spelling")
+	}
+	for _, name := range []string{"team/prod", "team--prod"} {
+		if got := m.MetricsSource(ctx, name); got.Source != "vm/vmsingle-main:8428" {
+			t.Errorf("GET %s: source %q", name, got.Source)
+		}
+	}
+
+	if _, err := m.SaveMetricsSource(ctx, "team/prod", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"team/prod", "team--prod"} {
+		if got := m.MetricsSource(ctx, name); got.Source != "" {
+			t.Errorf("GET %s after clearing: source %q", name, got.Source)
+		}
 	}
 }

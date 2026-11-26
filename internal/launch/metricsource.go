@@ -26,6 +26,21 @@ type metricsSources struct {
 	// editable says the PUT is registered: a store, in a state directory that
 	// is kept by this one process (api.Deps' `kept`).
 	editable bool
+	// resolve is the cluster manager's Resolve: the API takes a context's
+	// DNS-friendly form (`a--b` for `a/b`) as well as its name, and the store
+	// is keyed as discovery looks it up, by the resolved name. Nil keeps the
+	// name as given.
+	resolve func(string) (string, bool)
+}
+
+// resolved is the name the store and discovery know cluster by.
+func (m metricsSources) resolved(cluster string) string {
+	if m.resolve != nil {
+		if name, ok := m.resolve(cluster); ok {
+			return name
+		}
+	}
+	return cluster
 }
 
 // openMetricsSources is the desktop's store, or nil under the server profile.
@@ -75,6 +90,7 @@ func (m metricsSources) answer(cluster string, found *metrics.Discovery) api.Met
 }
 
 func (m metricsSources) MetricsSource(ctx context.Context, cluster string) api.MetricsSource {
+	cluster = m.resolved(cluster)
 	return m.answer(cluster, m.measure.Discover(ctx, cluster, false))
 }
 
@@ -83,6 +99,7 @@ func (m metricsSources) SaveMetricsSource(ctx context.Context, cluster, source s
 		return api.MetricsSource{}, fmt.Errorf("%w: the metrics source is the deployment's (%s)",
 			api.ErrNotInProfile, metrics.EnvPrometheusService)
 	}
+	cluster = m.resolved(cluster)
 	_, err := m.store.Set(cluster, source)
 	if err != nil && !errors.Is(err, statefile.ErrNotSaved) {
 		return api.MetricsSource{}, fmt.Errorf("%w: %s", api.ErrInvalid, textutil.FirstLine(err.Error()))
