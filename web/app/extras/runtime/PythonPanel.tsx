@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { Failure, Pending, Pill, btnSecondary, formatInstant } from '@kubetower/ui';
+import { Failure, HEAD_ROW, Pending, Pill, ROW, TABLE, bodyCell, btnSecondary, formatInstant, headCell } from '@kubetower/ui';
 
 import { pythonMetricsQuery, pythonProcessesQuery, type PythonMetrics, type PythonProcess } from './data';
 
@@ -60,16 +60,16 @@ function Processes({ cluster, namespace, name, container }: { cluster: string; n
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[32rem] text-left text-xs">
-            <thead className="text-muted">
-              <tr>
-                <th className="py-1 pr-3 font-medium">PID</th>
-                <th className="py-1 pr-3 font-medium">Python</th>
-                <th className="py-1 pr-3 font-medium">Program</th>
-                <th className="py-1 pr-3 text-right font-medium">Memory</th>
-                <th className="py-1 pr-3 text-right font-medium">Peak</th>
-                <th className="py-1 pr-3 text-right font-medium">Threads</th>
-                <th className="py-1 font-medium">Started</th>
+          <table className={`${TABLE} w-full`}>
+            <thead>
+              <tr className={HEAD_ROW}>
+                <th className={headCell()}>PID</th>
+                <th className={headCell()}>Python</th>
+                <th className={headCell()}>Program</th>
+                <th className={`${headCell()} text-right`}>Memory</th>
+                <th className={`${headCell()} text-right`}>Peak</th>
+                <th className={`${headCell()} text-right`}>Threads</th>
+                <th className={headCell()}>Started</th>
               </tr>
             </thead>
             <tbody>
@@ -86,18 +86,18 @@ function Processes({ cluster, namespace, name, container }: { cluster: string; n
 
 function ProcessRow({ p }: { p: PythonProcess }): ReactNode {
   return (
-    <tr data-python-pid={p.pid} className="border-t border-line">
-      <td className="py-1 pr-3 font-mono tabular-nums">{p.pid}</td>
-      <td className="py-1 pr-3">{p.version === '' ? <span className="text-muted">—</span> : <Pill neutral="normal">{p.version}</Pill>}</td>
-      <td className="max-w-[16rem] truncate py-1 pr-3 font-mono" title={p.executable}>
+    <tr data-python-pid={p.pid} className={ROW}>
+      <td className={`${bodyCell(true)} font-mono tabular-nums`}>{p.pid}</td>
+      <td className={bodyCell(true)}>{p.version === '' ? <span className="text-muted">—</span> : <Pill neutral="normal">{p.version}</Pill>}</td>
+      <td className={`${bodyCell(true)} truncate font-mono`} title={p.executable}>
         {p.comm}
       </td>
-      <td className="py-1 pr-3 text-right tabular-nums">{bytes(p.rss)}</td>
-      <td className="py-1 pr-3 text-right tabular-nums">{bytes(p.peak)}</td>
-      <td className="py-1 pr-3 text-right tabular-nums" title={threadTitle(p)}>
+      <td className={`${bodyCell(true)} text-right tabular-nums`}>{bytes(p.rss)}</td>
+      <td className={`${bodyCell(true)} text-right tabular-nums`}>{bytes(p.peak)}</td>
+      <td className={`${bodyCell(true)} text-right tabular-nums`} title={threadTitle(p)}>
         {p.threads}
       </td>
-      <td className="py-1">{p.started === undefined ? <span className="text-muted">—</span> : formatInstant(p.started)}</td>
+      <td className={`${bodyCell(true)} whitespace-nowrap`}>{p.started === undefined ? <span className="text-muted">—</span> : formatInstant(p.started)}</td>
     </tr>
   );
 }
@@ -182,22 +182,22 @@ function MetricsView({ m }: { m: PythonMetrics }): ReactNode {
       )}
       {m.gc.length === 0 ? null : (
         <div className="overflow-x-auto">
-          <table data-python-gc="" className="w-full min-w-[18rem] text-left text-xs">
-            <thead className="text-muted">
-              <tr>
-                <th className="py-1 pr-3 font-medium">GC generation</th>
-                <th className="py-1 pr-3 text-right font-medium">Collections</th>
-                <th className="py-1 pr-3 text-right font-medium">Collected</th>
-                <th className="py-1 text-right font-medium">Uncollectable</th>
+          <table data-python-gc="" className={`${TABLE} w-full`}>
+            <thead>
+              <tr className={HEAD_ROW}>
+                <th className={headCell()}>GC generation</th>
+                <th className={`${headCell()} text-right`}>Collections</th>
+                <th className={`${headCell()} text-right`}>Collected</th>
+                <th className={`${headCell()} text-right`}>Uncollectable</th>
               </tr>
             </thead>
             <tbody>
               {m.gc.map((g) => (
-                <tr key={g.generation} data-python-gc-generation={g.generation} className="border-t border-line">
-                  <td className="py-1 pr-3 font-mono">{g.generation}</td>
-                  <td className="py-1 pr-3 text-right tabular-nums">{count(g.collections)}</td>
-                  <td className="py-1 pr-3 text-right tabular-nums">{count(g.collected)}</td>
-                  <td className="py-1 text-right tabular-nums">
+                <tr key={g.generation} data-python-gc-generation={g.generation} className={ROW}>
+                  <td className={`${bodyCell(true)} font-mono`}>{g.generation}</td>
+                  <td className={`${bodyCell(true)} text-right tabular-nums`}>{count(g.collections)}</td>
+                  <td className={`${bodyCell(true)} text-right tabular-nums`}>{count(g.collected)}</td>
+                  <td className={`${bodyCell(true)} text-right tabular-nums`}>
                     {g.uncollectable !== null && g.uncollectable > 0 ? <Pill tone="warn">{count(g.uncollectable)}</Pill> : count(g.uncollectable)}
                   </td>
                 </tr>
