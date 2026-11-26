@@ -260,7 +260,7 @@ func TestATableTheCatalogueDoesNotNameIsNotRead(t *testing.T) {
 }
 
 // A wide table answers within a time and a memory ceiling: Postgres cuts
-// each value, so what crosses is bounded by MaxColumns × MaxRows × MaxCell.
+// each value, and a page stops before the row that would cross MaxAnswer.
 func TestAWideTableIsBounded(t *testing.T) {
 	var cols [][]string
 	for i := 0; i < 200; i++ {
@@ -288,7 +288,7 @@ func TestAWideTableIsBounded(t *testing.T) {
 	took := time.Since(start)
 	runtime.ReadMemStats(&after)
 	got := decode[Rows](t, rec)
-	if got.ColumnsTotal != 200 || len(got.Columns) != MaxColumns || len(got.Rows) != MaxRows {
+	if got.ColumnsTotal != 200 || len(got.Columns) != MaxColumns || len(got.Rows) == 0 || len(got.Rows) > MaxRows || !got.Bounded {
 		t.Fatalf("columns %d of %d, rows %d", len(got.Columns), got.ColumnsTotal, len(got.Rows))
 	}
 	if took > 5*time.Second {
@@ -297,7 +297,7 @@ func TestAWideTableIsBounded(t *testing.T) {
 	if grew := after.TotalAlloc - before.TotalAlloc; grew > 512<<20 {
 		t.Errorf("allocated %d MiB", grew>>20)
 	}
-	if rec.Body.Len() > 16<<20 {
+	if rec.Body.Len() > MaxAnswer {
 		t.Errorf("answer of %d MiB", rec.Body.Len()>>20)
 	}
 }

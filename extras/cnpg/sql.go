@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/thonicdev/kubetower/extension"
 )
 
@@ -33,6 +35,9 @@ const (
 	MaxCell = 512
 	// MaxHexBytes is how many of a binary value's bytes are read.
 	MaxHexBytes = 16
+	// MaxAnswer bounds a page of rows as JSON: a page stops before the row
+	// that would cross it.
+	MaxAnswer = 4 << 20
 )
 
 // Stats is `GET /clusters/{namespace}/{name}/stats`.
@@ -114,6 +119,9 @@ type Rows struct {
 	Next string `json:"next,omitempty"`
 	// Start is the first row's position, from 0.
 	Start int `json:"start"`
+	// Bounded is true when the page stopped short of MaxRows to stay under
+	// MaxAnswer; Next then goes on from its last row.
+	Bounded bool `json:"bounded,omitempty"`
 }
 
 // Column is one column: its name and its type as Postgres spells it.
@@ -288,9 +296,15 @@ func (x CNPG) sqlRoute(h extension.Host, read func(context.Context, *sqlSession,
 		defer cancel()
 		out, err := read(ctx, s, ask)
 		var p *sqlProblem
+		var pgErr *pgconn.PgError
 		switch {
 		case errors.As(err, &p):
 			writeProblem(w, p.status, p.code, p.message, nil)
+		case err != nil && r.Context().Err() != nil:
+			// The page went away: nobody reads an answer.
+			return
+		case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &pgErr) && pgErr.Code == "57014"):
+			writeProblem(w, http.StatusGatewayTimeout, CodeSQLTimeout, "Postgres in "+namespace+"/"+name+" did not finish the read in time.", err)
 		case err != nil:
 			writeProblem(w, http.StatusBadGateway, CodeSQLFailed, "Postgres in "+namespace+"/"+name+" did not answer the read.", err)
 		default:

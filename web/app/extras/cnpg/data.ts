@@ -397,6 +397,8 @@ export interface Rows {
   next?: string;
   /** The first row's position, from 0. */
   start?: number;
+  /** The page stopped short of 100 rows to stay under 4 MiB. */
+  bounded?: boolean;
 }
 
 const sqlBase = (cluster: string, namespace: string, name: string) => `${clusterPath(cluster, namespace, name)}`;

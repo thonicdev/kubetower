@@ -32,6 +32,14 @@ func TestLivePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer q.close()
+	// UTC, whatever the server's own time zone.
+	zone := ""
+	if err := q.query(ctx, "SELECT current_setting('TimeZone'), now()::text", nil, func(_ []column, row [][]byte) error {
+		zone = string(row[0]) + " " + string(row[1])
+		return nil
+	}); err != nil || !strings.HasPrefix(zone, "UTC ") || !strings.HasSuffix(zone, "+00") {
+		t.Errorf("the session's time zone: %q %v", zone, err)
+	}
 	// Read-only: a write in the door's transaction is refused by Postgres.
 	err = q.query(ctx, "CREATE TABLE kt_should_not_exist (id int)", nil, func([]column, [][]byte) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "read-only") {

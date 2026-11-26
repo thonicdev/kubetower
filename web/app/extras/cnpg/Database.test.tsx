@@ -130,6 +130,24 @@ describe("a CNPG cluster's database", () => {
     await waitFor(() => expect(screen.getByText('1–2')).toBeTruthy());
   });
 
+  it('marks where the pages stop short: 4 MiB, the offset ceiling, a key too long', async () => {
+    for (const [rows, mark] of [
+      [{ ...ROWS, bounded: true }, '4 MiB'],
+      [{ ...withoutNext(ROWS), key: 'offset' as const }, '10,000 max'],
+      [withoutNext(ROWS), 'last page'],
+    ] as const) {
+      stub({ [`${BASE}/stats`]: { body: STATS }, [`${BASE}/tables`]: { body: TABLES }, [`${BASE}/tables/public/orders`]: { body: rows } });
+      mount();
+      await openOrders();
+      expect(screen.getByText(mark)).toBeTruthy();
+      cleanup();
+    }
+    stub({ [`${BASE}/stats`]: { body: STATS }, [`${BASE}/tables`]: { body: TABLES }, [`${BASE}/tables/public/orders`]: { body: ROWS } });
+    mount();
+    await openOrders();
+    for (const mark of ['4 MiB', '10,000 max', 'last page']) expect(screen.queryByText(mark)).toBeNull();
+  });
+
   it('opens a cell in full, JSON laid out', async () => {
     stub({ [`${BASE}/stats`]: { body: STATS }, [`${BASE}/tables`]: { body: TABLES }, [`${BASE}/tables/public/orders`]: { body: ROWS } });
     mount();

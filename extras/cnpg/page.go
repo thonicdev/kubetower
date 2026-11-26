@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/thonicdev/kubetower/extension"
 )
 
@@ -90,6 +92,9 @@ func readAsk(r *http.Request) (sqlAsk, error) {
 // pageCursor is a cursor before it is encoded: how it pages, the position of
 // the page it asks for, and the last row's key (primary) or ctid.
 type pageCursor struct {
+	// Table is the table's oid: a cursor of another table, even one of the
+	// same shape, is refused.
+	Table  string   `json:"t"`
 	Key    string   `json:"k"`
 	Start  int      `json:"s"`
 	Values []string `json:"v,omitempty"`
@@ -106,18 +111,18 @@ func encodeCursor(c pageCursor) string {
 var errWrongCursor = &sqlProblem{http.StatusBadRequest, CodeBadRequest,
 	"The page asked for belongs to another reading of this table. Open it again from its first page."}
 
-// decodeCursor reads a cursor for a table paged by key over keyColumns
-// columns. The first page's cursor is "".
-func decodeCursor(text, key string, keyColumns int) (pageCursor, error) {
+// decodeCursor reads a cursor for the table oid, paged by key over
+// keyColumns columns. The first page's cursor is "".
+func decodeCursor(text, oid, key string, keyColumns int) (pageCursor, error) {
 	if text == "" {
-		return pageCursor{Key: key}, nil
+		return pageCursor{Table: oid, Key: key}, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(text)
 	if err != nil {
 		return pageCursor{}, errWrongCursor
 	}
 	var c pageCursor
-	if json.Unmarshal(raw, &c) != nil || c.Key != key || c.Start < 0 {
+	if json.Unmarshal(raw, &c) != nil || c.Table != oid || c.Key != key || c.Start < 0 {
 		return pageCursor{}, errWrongCursor
 	}
 	switch key {
@@ -176,7 +181,7 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 			return nil, err
 		}
 		key := pagedBy(relkind, len(keys))
-		cursor, err := decodeCursor(ask.cursor, key, len(keys))
+		cursor, err := decodeCursor(ask.cursor, oid, key, len(keys))
 		if err != nil {
 			return nil, err
 		}
@@ -213,15 +218,25 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 		shown := len(exprs)
 		statement, args := pageStatement(exprs, quoteIdent(schema)+"."+quoteIdent(table), key, keys, cursor)
 		var last []string
+		size := 0
 		err = s.q.query(ctx, statement, args, func(_ []column, row [][]byte) error {
 			if len(out.Rows) == MaxRows {
 				out.More = true
 				return errEnough
 			}
 			cells := make([]Cell, min(shown, len(row)))
+			grows := 2
 			for i := range cells {
 				cells[i] = cellOf(row[i], i < len(binary) && binary[i])
+				grows += cellSize(cells[i])
 			}
+			// The row that would cross MaxAnswer starts the next page; a
+			// first row always goes, as it is bounded by the cells' caps.
+			if len(out.Rows) > 0 && size+grows > MaxAnswer-answerRoom {
+				out.More, out.Bounded = true, true
+				return errEnough
+			}
+			size += grows
 			out.Rows = append(out.Rows, cells)
 			last = last[:0]
 			for i := shown; i < len(row); i++ {
@@ -229,11 +244,17 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 			}
 			return nil
 		})
+		var pgErr *pgconn.PgError
+		if err != nil && ask.cursor != "" && errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
+			// A cursor value that does not read as the key's type: not one
+			// this table handed out.
+			return nil, errWrongCursor
+		}
 		if err != nil {
 			return nil, err
 		}
 		if out.More {
-			next := pageCursor{Key: key, Start: cursor.Start + len(out.Rows)}
+			next := pageCursor{Table: oid, Key: key, Start: cursor.Start + len(out.Rows)}
 			if key != keyOffset {
 				next.Values = append([]string(nil), last...)
 			}
@@ -292,6 +313,28 @@ func pageStatement(exprs []string, from, key string, keys []keyColumn, c pageCur
 		b.WriteString(" OFFSET " + strconv.Itoa(c.Start))
 	}
 	return b.String(), args
+}
+
+// answerRoom is what a page holds besides its rows: the columns and the
+// fields around them, well under this.
+const answerRoom = 64 << 10
+
+// cellSize is a cell's size as JSON, from above: each character as the
+// encoder escapes it (a control character or <, >, & as \u00XX), and room
+// for the field names.
+func cellSize(c Cell) int {
+	n := 40 + len(c.Hex)
+	for _, r := range c.Text {
+		switch {
+		case r == '"' || r == '\\':
+			n += 2
+		case r < 0x20 || r == '<' || r == '>' || r == '&' || r == 0x2028 || r == 0x2029 || r == utf8.RuneError:
+			n += 6
+		default:
+			n += utf8.RuneLen(r)
+		}
+	}
+	return n
 }
 
 // cellOf is one value as the page draws it.

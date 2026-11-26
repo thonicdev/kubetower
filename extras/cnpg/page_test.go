@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/thonicdev/kubetower/extension"
 )
 
 // A table's pages: by its primary key, by ctid, or by offset; the cursor
@@ -125,7 +128,7 @@ func TestAViewPagesByOffsetUpToItsCeiling(t *testing.T) {
 		sqlPrimaryKey: rowsOf(),
 		sqlRowsPrefix: rowsOf(append(numbered(MaxRows), []string{"0"})...),
 	}}
-	last := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/v", `{"cursor":"`+encodeCursor(pageCursor{Key: keyOffset, Start: maxOffset - MaxRows})+`"}`)
+	last := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/v", `{"cursor":"`+encodeCursor(pageCursor{Table: "16384", Key: keyOffset, Start: maxOffset - MaxRows})+`"}`)
 	if !last.More || last.Next != "" {
 		t.Errorf("at the ceiling: more %v next %q", last.More, last.Next)
 	}
@@ -177,10 +180,10 @@ func TestACursorForAnotherReadingIsRefused(t *testing.T) {
 	for name, cursor := range map[string]string{
 		"not base64":     "%%%",
 		"not json":       "bm90IGpzb24",
-		"another key":    encodeCursor(pageCursor{Key: keyCtid, Start: 100, Values: []string{"(0,1)"}}),
-		"one value":      encodeCursor(pageCursor{Key: keyPrimary, Start: 100, Values: []string{"1"}}),
-		"three values":   encodeCursor(pageCursor{Key: keyPrimary, Start: 100, Values: []string{"1", "2", "3"}}),
-		"before the top": encodeCursor(pageCursor{Key: keyPrimary, Start: -1, Values: []string{"1", "2"}}),
+		"another key":    encodeCursor(pageCursor{Table: "16384", Key: keyCtid, Start: 100, Values: []string{"(0,1)"}}),
+		"one value":      encodeCursor(pageCursor{Table: "16384", Key: keyPrimary, Start: 100, Values: []string{"1"}}),
+		"three values":   encodeCursor(pageCursor{Table: "16384", Key: keyPrimary, Start: 100, Values: []string{"1", "2", "3"}}),
+		"before the top": encodeCursor(pageCursor{Table: "16384", Key: keyPrimary, Start: -1, Values: []string{"1", "2"}}),
 	} {
 		d := db()
 		body, _ := json.Marshal(map[string]string{"cursor": cursor})
@@ -196,7 +199,7 @@ func TestACursorForAnotherReadingIsRefused(t *testing.T) {
 	}
 	// An offset past the ceiling.
 	d := &fakeDB{answers: answers{sqlTableOID: rowsOf([]string{"16384", "v"}), sqlPrimaryKey: rowsOf(), sqlColumns: rowsOf([]string{"a", "integer", "false"})}}
-	body, _ := json.Marshal(map[string]string{"cursor": encodeCursor(pageCursor{Key: keyOffset, Start: maxOffset + 1})})
+	body, _ := json.Marshal(map[string]string{"cursor": encodeCursor(pageCursor{Table: "16384", Key: keyOffset, Start: maxOffset + 1})})
 	if rec := servePage(t, withDB(d, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/v", string(body)); rec.Code != http.StatusBadRequest {
 		t.Errorf("past the ceiling: answered %d", rec.Code)
 	}
@@ -259,5 +262,126 @@ func TestADatabaseTheUserMayNotOpenIsNamed(t *testing.T) {
 		if rec.Code != want.status || !strings.Contains(rec.Body.String(), `"`+want.code+`"`) {
 			t.Errorf("%s: answered %d %s", code, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// A page of wide rows of escaped characters stays under MaxAnswer, says it
+// stopped short, and the next page goes on from its last row.
+func TestAPageStaysUnderItsBound(t *testing.T) {
+	cols := make([][]string, MaxColumns)
+	row := make([]string, MaxColumns+1)
+	for i := range cols {
+		cols[i] = []string{"c" + strconv.Itoa(i), "text", "false"}
+		row[i] = strings.Repeat("\x01", MaxCell)
+	}
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf(),
+		sqlColumns:    rowsOf(cols...),
+		sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
+			for i := 0; i <= MaxRows; i++ {
+				values := make([][]byte, len(row))
+				for j, v := range row {
+					values[j] = []byte(v)
+				}
+				values[len(row)-1] = []byte("(0," + strconv.Itoa(i+1) + ")")
+				if err := each(nil, values); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}}
+	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d", rec.Code)
+	}
+	if rec.Body.Len() > MaxAnswer {
+		t.Fatalf("answer of %d bytes, over %d", rec.Body.Len(), MaxAnswer)
+	}
+	got := decode[Rows](t, rec)
+	if !got.Bounded || !got.More || got.Next == "" || len(got.Rows) == 0 || len(got.Rows) >= MaxRows {
+		t.Fatalf("bounded %v more %v next %q rows %d", got.Bounded, got.More, got.Next, len(got.Rows))
+	}
+	next, err := decodeCursor(got.Next, "16384", keyCtid, 0)
+	if err != nil || next.Start != len(got.Rows) || next.Values[0] != "(0,"+strconv.Itoa(len(got.Rows))+")" {
+		t.Errorf("next %+v %v", next, err)
+	}
+}
+
+// A read-only cluster refuses the tunnel before any Secret is revealed.
+func TestAReadOnlyClusterIsRefusedBeforeItsSecretIsRead(t *testing.T) {
+	for _, path := range []string{"/x/kind/cnpg/clusters/db/pg/stats", "/x/kind/cnpg/clusters/db/pg/tables"} {
+		h := sqlHost()
+		h.forwardErr = fmt.Errorf("%w: kind is marked read-only", extension.ErrReadOnly)
+		rec := serveWith(t, withDB(&fakeDB{}, nil), h, path)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"`+CodeReadOnly+`"`) || len(h.revealed) != 0 {
+			t.Errorf("%s: answered %d %s after revealing %v", path, rec.Code, rec.Body.String(), h.revealed)
+		}
+	}
+	h := sqlHost()
+	h.forwardErr = fmt.Errorf("%w: kind is marked read-only", extension.ErrReadOnly)
+	if rec := servePage(t, withDB(&fakeDB{}, nil), h, "/x/kind/cnpg/clusters/db/pg/tables/public/t", ""); rec.Code != http.StatusForbidden || len(h.revealed) != 0 {
+		t.Errorf("rows: answered %d after revealing %v", rec.Code, h.revealed)
+	}
+}
+
+// No Secret is revealed for a tunnel that reached a pod not the cluster's.
+func TestNoSecretIsReadForAnUnknownPod(t *testing.T) {
+	h := sqlHost()
+	h.tunnel.Pod = "stranger-0"
+	rec := serveWith(t, withDB(&fakeDB{}, nil), h, "/x/kind/cnpg/clusters/db/pg/tables")
+	if rec.Code != http.StatusConflict || len(h.revealed) != 0 {
+		t.Errorf("answered %d after revealing %v", rec.Code, h.revealed)
+	}
+}
+
+func TestACursorOfAnotherTableOrTypeIsRefused(t *testing.T) {
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf([]string{"id", "bigint"}),
+		sqlColumns:    rowsOf([]string{"id", "bigint", "false"}),
+		sqlRowsPrefix: func(args []string, _ func([]column, [][]byte) error) error {
+			if len(args) > 0 {
+				return &pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type bigint"}
+			}
+			return nil
+		},
+	}}
+	other := encodeCursor(pageCursor{Table: "99999", Key: keyPrimary, Start: 100, Values: []string{"7"}})
+	if rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t", `{"cursor":"`+other+`"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("another table's cursor: answered %d", rec.Code)
+	}
+	typed := encodeCursor(pageCursor{Table: "16384", Key: keyPrimary, Start: 100, Values: []string{"not a number"}})
+	if rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t", `{"cursor":"`+typed+`"}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), CodeBadRequest) {
+		t.Errorf("a value of another type: answered %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestATimeoutIsNamedApartFromAFailure(t *testing.T) {
+	for name, c := range map[string]struct {
+		err    error
+		status int
+		code   string
+	}{
+		"deadline":          {context.DeadlineExceeded, http.StatusGatewayTimeout, CodeSQLTimeout},
+		"statement timeout": {&pgconn.PgError{Code: "57014"}, http.StatusGatewayTimeout, CodeSQLTimeout},
+		"other":             {errors.New("boom"), http.StatusBadGateway, CodeSQLFailed},
+	} {
+		db := &fakeDB{answers: answers{sqlDatabases: func([]string, func([]column, [][]byte) error) error { return c.err }}}
+		rec := serveWith(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables")
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"`+c.code+`"`) {
+			t.Errorf("%s: answered %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestTheSessionIsReadOnlyAndInUTC(t *testing.T) {
+	cfg, err := pgConfig("127.0.0.1", 5432, credential{user: "app", password: "x", database: "app"}, &tls.Config{MinVersion: tls.VersionTLS12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RuntimeParams["TimeZone"] != "UTC" || cfg.RuntimeParams["default_transaction_read_only"] != "on" || cfg.Database != "app" {
+		t.Errorf("runtime params %v, database %q", cfg.RuntimeParams, cfg.Database)
 	}
 }

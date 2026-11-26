@@ -185,6 +185,7 @@ function TableView({
         {r !== undefined && r.columnsTotal > r.columns.length ? (
           <Pill tone="warn" title={`The first ${String(r.columns.length)} of ${String(r.columnsTotal)} columns`}>{`${String(r.columns.length)}/${String(r.columnsTotal)} columns`}</Pill>
         ) : null}
+        {r === undefined ? null : <Reach rows={r} />}
         <span className="ml-auto flex items-center gap-1">
           {r === undefined ? null : (
             <span className="text-muted tabular-nums">{range(r)}</span>
@@ -253,6 +254,28 @@ function TableView({
 
 function cellLook(type: string | undefined, on: boolean): string {
   return `max-w-72 cursor-pointer truncate ${numeric(type) ? 'text-right tabular-nums' : ''} ${on ? 'bg-accent/15' : ''}`;
+}
+
+/** Where the pages stop short: a page cut at 4 MiB, or no next page although
+ *  the table goes on (a view past 10,000 rows, a key too long to page on). */
+function Reach({ rows: r }: { rows: Rows }): ReactNode {
+  if (r.bounded === true) {
+    return (
+      <Pill tone="warn" title="This page stopped at 4 MiB; the next goes on from its last row">
+        4 MiB
+      </Pill>
+    );
+  }
+  if (!r.more || r.next !== undefined) return null;
+  return r.key === 'offset' ? (
+    <Pill tone="warn" title="A view pages by offset up to 10,000 rows">
+      10,000 max
+    </Pill>
+  ) : (
+    <Pill tone="warn" title="The key is too long to page on">
+      last page
+    </Pill>
+  );
 }
 
 function range(r: Rows): string {
