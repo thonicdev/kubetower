@@ -428,6 +428,9 @@ var notServing = map[string]bool{"--version": true, "-v": true, "--help": true, 
 // shells run their `-c` argument as a command line.
 var shells = map[string]bool{"sh": true, "bash": true, "ash": true, "dash": true, "zsh": true}
 
+// shellFileOptions are the shells' long options that take a file after them.
+var shellFileOptions = map[string]bool{"--rcfile": true, "--init-file": true}
+
 // serverCommand reports whether a container runs redis-server, valkey-server
 // or keydb-server, and which: as its program, by path or behind a launcher
 // (`tini -s --`, `exec`, `gosu redis`, `su-exec redis`, `env A=b`), or as the
@@ -475,17 +478,31 @@ func runs(argv []string, nested bool) (string, int, bool) {
 	program := base(argv[i])
 	if nested && shells[program] {
 		// The shell's own options come before its script or its -c line:
-		// `sh /start.sh -c redis-server` runs /start.sh.
+		// `sh /start.sh -c redis-server` runs /start.sh. A long option
+		// (`--login`) is stepped over, with the file `--rcfile` names, and so
+		// is the name an `-o`, `+o`, `-O` or `+O` sets (`-o pipefail`).
 		for j := i + 1; j < len(argv); j++ {
 			flag := argv[j]
-			if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") {
+			switch {
+			case flag == "--":
+				return "", 0, false
+			case strings.HasPrefix(flag, "--"):
+				if shellFileOptions[flag] {
+					j++
+				}
+				continue
+			case strings.HasPrefix(flag, "-"):
+				if strings.Contains(flag, "c") {
+					if j+1 >= len(argv) {
+						return "", 0, false
+					}
+					return shellLine(argv[j+1])
+				}
+			case !strings.HasPrefix(flag, "+") || len(flag) < 2:
 				return "", 0, false
 			}
-			if strings.Contains(flag, "c") {
-				if j+1 >= len(argv) {
-					return "", 0, false
-				}
-				return shellLine(argv[j+1])
+			if last := flag[len(flag)-1]; last == 'o' || last == 'O' {
+				j++
 			}
 		}
 		return "", 0, false
