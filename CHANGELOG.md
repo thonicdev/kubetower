@@ -28,6 +28,25 @@ dialog draws it first, as a New extra line.
   with a blue +, or under Fixed, with a green check; an extra a release
   introduces comes first, as New extra and its name (#121).
 
+### Fixed
+
+- **Missing metrics read as one quiet line.** A metrics panel that is drawn
+  when its read fails now says No metrics available in muted text, with the
+  reason on hover (#127). <!-- highlight -->
+  - The Overview's Over time (unreachable, unreadable, refused) and Most used
+    (unreadable, refused), and a Node's or Pod's Metrics tab on its first read,
+    drop the red boxed notice, its sentence written twice and its Try again
+    button for that line, with a small retry icon where the reason says asking
+    again could help. As before, Over time draws nothing when no metrics backend
+    is installed, and Most used draws nothing when its backend is absent or
+    unreachable.
+  - KubeAdjust's red "not measured" pill and red sentence on a page nothing
+    could measure, and the Runtime Inspector's "No Prometheus" and red
+    "Prometheus unreadable" pills, become the same words as a neutral badge or
+    line. They carry no retry icon; the Runtime Inspector keeps its Read again
+    button.
+  - A page built from the cluster's own refusal keeps that refusal's notice.
+
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 
 ### Added

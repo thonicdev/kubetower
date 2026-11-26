@@ -8,6 +8,7 @@ import { btnSecondary, btnToggle } from '../../components/buttons';
 import { focusRingTight } from '../../focus';
 import { KeyLayer } from '../../keyboard/layers';
 import { useIntent } from '../../router/prefetch';
+import { NoMetrics } from '../../state/NoMetrics';
 import { ValueView } from '../../state/Result';
 import { formatInstant } from '../../components/instant';
 
@@ -178,8 +179,13 @@ export function Metrics({
   const panel = ok ?? fallback;
   if (silent && (panel === undefined || !drawable(panel))) return null;
   if (panel === undefined) {
-    // Nothing drawn yet: waiting, or a first answer that is a refusal - which
-    // is `ValueView`'s to say, as everywhere else.
+    // Nothing drawn yet. A first answer that is a refusal is one quiet line
+    // (#127): a metrics backend missing or not reached is not a cluster
+    // failure. Waiting, `pending` and a request that failed outright stay
+    // `ValueView`'s to say, as everywhere else.
+    if (answer !== undefined && answer.state !== 'ok' && answer.state !== 'pending') {
+      return <NoMetrics state={answer.state} reason={answer.reason} onRetry={() => void query.refetch()} />;
+    }
     return (
       <ValueView query={query} what="these metrics">
         {() => null}

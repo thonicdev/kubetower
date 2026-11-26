@@ -596,3 +596,115 @@ describe('a list the server cut says so on its last page', () => {
     expect(page().textContent).toContain('event-399');
   });
 });
+
+describe('a metrics backend found and not reached (#127)', () => {
+  const dashboard = (history: unknown, top?: unknown): StubReply => ({
+    body: {
+      state: 'ok',
+      data: {
+        cluster: 'prod',
+        counts: { state: 'ok', items: [{ kind: 'nodes', label: 'Nodes', count: 6 }] },
+        history,
+        ...(top === undefined ? {} : { top }),
+        events: { state: 'empty', items: [] },
+      },
+    },
+  });
+
+  /** The overview's own reads, counted. */
+  function counted(reply: StubReply): string[] {
+    const asked: string[] = [];
+    stubFetch(withOverview(reply));
+    const answer = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (url.includes('/overview')) asked.push(url);
+      return answer(input, init);
+    });
+    return asked;
+  }
+
+  it('reads the overview again when the small retry is pressed', async () => {
+    const asked = counted(
+      dashboard({ state: 'unreachable', reason: { code: 'cluster_unreachable', message: 'Prometheus not reached', retryable: true } }),
+    );
+    mountApp('/c/prod');
+    const retry = await waitFor(() => {
+      const found = page().querySelector('[data-no-metrics] button[aria-label="Try again"]');
+      if (!(found instanceof HTMLButtonElement)) throw new Error('no retry yet');
+      return found;
+    });
+    const before = asked.length;
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(asked.length).toBe(before + 1);
+    });
+  });
+
+  it('never draws a pending Most used as No metrics available', async () => {
+    counted(
+      dashboard(
+        { state: 'absent', reason: { code: 'not_installed', message: 'this cluster keeps no series' } },
+        { state: 'pending', reason: { code: 'not_probed_yet', message: 'the first round has not reached this cluster', retryable: true } },
+      ),
+    );
+    mountApp('/c/prod');
+    await waitFor(() => {
+      expect([...page().querySelectorAll('h2')].map((heading) => heading.textContent?.trim())).toContain('Most used');
+      expect(page().querySelector('[data-state="pending"]')).not.toBeNull();
+    });
+    expect(page().querySelector('[data-no-metrics]')).toBeNull();
+    expect(page().textContent).not.toContain('No metrics available');
+  });
+
+  it('never draws a pending history as No metrics available', async () => {
+    counted(
+      dashboard({ state: 'pending', reason: { code: 'not_probed_yet', message: 'the first round has not reached this cluster' } }),
+    );
+    mountApp('/c/prod');
+    await waitFor(() => {
+      expect(page().querySelector('[data-state="pending"]')).not.toBeNull();
+    });
+    expect(page().querySelector('[data-no-metrics]')).toBeNull();
+    expect(page().textContent).not.toContain('No metrics available');
+  });
+
+  it('draws Over time as one quiet line, the sentence on hover, with a small retry', async () => {
+    const said = 'service monitoring/prometheus:9090 found, but neither the API service proxy nor a port-forward reached it';
+    stubFetch(
+      withOverview({
+        body: {
+          state: 'ok',
+          data: {
+            cluster: 'prod',
+            counts: { state: 'ok', items: [{ kind: 'nodes', label: 'Nodes', count: 6 }] },
+            history: {
+              state: 'unreachable',
+              reason: { code: 'cluster_unreachable', message: said, detail: said, retryable: true },
+            },
+            top: { state: 'unreadable', reason: { code: 'unreadable', message: 'the leaderboard query answered garbage' } },
+            events: { state: 'empty', items: [] },
+          },
+        },
+      }),
+    );
+
+    mountApp('/c/prod');
+
+    await waitFor(() => {
+      expect(page().textContent).toContain('Over time');
+    });
+    const text = page().textContent ?? '';
+    expect(text).not.toContain('Could not be asked');
+    expect(text).not.toContain(said);
+    const lines = Array.from(page().querySelectorAll('[data-no-metrics]'));
+    expect(lines.map((line) => line.getAttribute('data-state'))).toEqual(['unreachable', 'unreadable']);
+    expect(lines[0]?.getAttribute('title')).toBe(said);
+    expect(lines[1]?.getAttribute('title')).toBe('the leaderboard query answered garbage');
+    // Retry only where the reason allows it: the history, not the leaderboard.
+    expect(lines[0]?.querySelector('button[aria-label="Try again"]')).not.toBeNull();
+    expect(lines[1]?.querySelector('button')).toBeNull();
+    expect(page().querySelector('[data-no-metrics].font-mono, [data-no-metrics] .font-mono')).toBeNull();
+  });
+});
+

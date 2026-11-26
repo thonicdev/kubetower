@@ -71,6 +71,7 @@ export { externalHref } from './externalHref';
 // reviews.
 export { ListView, ValueView, type ListViewProps, type ValueViewProps } from './state/Result';
 export { StateNotice, Failure, Pending, GoneNotice, isGoneProblem, type StateNoticeProps } from './state/StateNotice';
+export { NoMetrics, NO_METRICS, type NoMetricsProps } from './state/NoMetrics';
 
 // The Shell, for the extras that need to put something in the drawer.
 export { useShell } from './shell/ShellContext';

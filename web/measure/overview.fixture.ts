@@ -476,6 +476,33 @@ export const OVERVIEW_UNMEASURED_ANSWERS: Readonly<Record<string, unknown>> = {
 };
 
 /**
+ * The same cluster with a Prometheus that was found and could not be reached:
+ * no service proxy, and the port-forward behind it failed, as on a k3s cluster.
+ * `history` is `unreachable` with the sentence `internal/metrics` sends, and
+ * `top` with it (which the leaderboards leave out).
+ */
+const PROMETHEUS_UNREACHED =
+  'service monitoring/prometheus-k8s:9090 found via app.kubernetes.io/name=prometheus, but neither the API service proxy nor a port-forward reached it: dial tcp 10.43.12.7:9090: i/o timeout';
+
+export const OVERVIEW_NO_PROMETHEUS_ANSWERS: Readonly<Record<string, unknown>> = {
+  ...OVERVIEW_ANSWERS,
+  [`/api/c/${CLUSTER}/overview`]: {
+    ...OVERVIEW,
+    data: {
+      ...OVERVIEW.data,
+      history: {
+        state: 'unreachable',
+        reason: { code: 'cluster_unreachable', message: PROMETHEUS_UNREACHED, detail: PROMETHEUS_UNREACHED, retryable: true },
+      },
+      top: {
+        state: 'unreachable',
+        reason: { code: 'cluster_unreachable', message: PROMETHEUS_UNREACHED, retryable: true },
+      },
+    },
+  },
+};
+
+/**
  * The same cluster as an in-cluster console on a local cluster reads it: a
  * Prometheus that answers and holds neither per-container nor pod cgroup
  * cAdvisor series, and no metrics-server. `history`, `top` and `allWell` are

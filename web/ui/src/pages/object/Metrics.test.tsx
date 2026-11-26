@@ -667,7 +667,7 @@ describe('the enlarged chart carries the span and the measurement', () => {
 
     view.rerender(at('api-1'));
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Prometheus did not answer in time');
+      expect(document.querySelector('[data-no-metrics]')?.getAttribute('title')).toBe('Prometheus did not answer in time');
     });
     expect(polylines()).toEqual([]);
     expect(document.querySelector('[data-span-failed]')).toBeNull();
@@ -1154,5 +1154,58 @@ describe("a finished pod's run", () => {
     });
     // network_tx still names 24h, which the row offers.
     expect(offer()?.textContent).toBe('Show the 24h period');
+  });
+});
+
+describe('a first answer with no metrics (#127)', () => {
+  function counted(reply: StubReply): string[] {
+    const asked: string[] = [];
+    stubFetch({ [METRICS]: reply });
+    const answer = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      asked.push(String(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url));
+      return answer(input, init);
+    });
+    return asked;
+  }
+
+  function mounted(): void {
+    render(
+      <QueryClientProvider client={createQueryClient()}>
+        <KeyboardStack>
+          <Metrics cluster="prod" kind="pods" namespace="argo" name="api-0" />
+        </KeyboardStack>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('asks again when the small retry is pressed', async () => {
+    const asked = counted({
+      body: { state: 'unreachable', reason: { code: 'cluster_unreachable', message: 'Prometheus not reached', retryable: true } },
+    });
+    mounted();
+    const retry = await waitFor(() => {
+      const found = document.querySelector('[data-no-metrics] button[aria-label="Try again"]');
+      if (!(found instanceof HTMLButtonElement)) throw new Error('no retry yet');
+      return found;
+    });
+    const before = asked.length;
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(asked.length).toBe(before + 1);
+    });
+  });
+
+  it('never draws pending as No metrics available', async () => {
+    const asked = counted({
+      body: { state: 'pending', reason: { code: 'not_probed_yet', message: 'the first round has not reached this cluster' } },
+    });
+    mounted();
+    await waitFor(() => {
+      expect(asked.length).toBeGreaterThan(0);
+      expect(document.querySelector('[data-state="pending"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-no-metrics]')).toBeNull();
+    expect(document.body.textContent).not.toContain('No metrics available');
   });
 });

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { Failure, Pending, Pill, btnSecondary } from '@kubetower/ui';
+import { Failure, NO_METRICS, Pending, Pill, btnSecondary } from '@kubetower/ui';
 
 import { HISTORY_RETRIES, HISTORY_RETRY_MS, InspectProblem, getHistory, type History, type HistoryLine } from './data';
 
@@ -86,8 +86,10 @@ export function HistorySection({ cluster, namespace, name }: { cluster: string; 
 
 /** Each state's pill: what it is, as a word, with the core's line on hover. */
 const STATE_PILL: Record<Exclude<History['state'], 'read' | 'pending'>, { tone: string | undefined; label: string }> = {
-  absent: { tone: undefined, label: 'No Prometheus' },
-  unreadable: { tone: 'bad', label: 'Prometheus unreadable' },
+  // No Prometheus, or one that could not be read: the console's one quiet
+  // wording for missing metrics (#127), the core's line on hover.
+  absent: { tone: undefined, label: NO_METRICS },
+  unreadable: { tone: undefined, label: NO_METRICS },
   empty: { tone: undefined, label: 'No series for this pod' },
 };
 
