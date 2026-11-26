@@ -191,9 +191,22 @@ func (e *Chromium) Release() uintptr {
 	return 1
 }
 
+// hresultFailed says an HRESULT is a failure. It is 32 bits and signed: a
+// callback receives it zero-extended in a uintptr, so 0x80070005 read as an
+// int64 is positive and only the int32 shows the sign.
+func hresultFailed(res uintptr) bool {
+	return int32(res) < 0
+}
+
 func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environment) uintptr {
-	if int64(res) < 0 {
-		e.initErr = fmt.Errorf("creating environment failed with %08x", res)
+	if hresultFailed(res) {
+		e.initErr = fmt.Errorf("creating environment failed with %08x", uint32(res))
+		return 0
+	}
+	if env == nil {
+		// A success with no environment: a session with no desktop (session 0,
+		// a service) has been seen to answer so.
+		e.initErr = fmt.Errorf("creating environment returned %08x and no environment", uint32(res))
 		return 0
 	}
 	_, _, _ = env.vtbl.AddRef.Call(uintptr(unsafe.Pointer(env)))
@@ -208,18 +221,27 @@ func (e *Chromium) EnvironmentCompleted(res uintptr, env *ICoreWebView2Environme
 }
 
 func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller *ICoreWebView2Controller) uintptr {
-	if int64(res) < 0 {
-		e.initErr = fmt.Errorf("creating controller failed with %08x", res)
+	if hresultFailed(res) {
+		e.initErr = fmt.Errorf("creating controller failed with %08x", uint32(res))
+		return 0
+	}
+	if controller == nil {
+		e.initErr = fmt.Errorf("creating controller returned %08x and no controller", uint32(res))
 		return 0
 	}
 	_, _, _ = controller.vtbl.AddRef.Call(uintptr(unsafe.Pointer(controller)))
 	e.controller = controller
 
 	var token _EventRegistrationToken
-	_, _, _ = controller.vtbl.GetCoreWebView2.Call(
+	r, _, _ := controller.vtbl.GetCoreWebView2.Call(
 		uintptr(unsafe.Pointer(controller)),
 		uintptr(unsafe.Pointer(&e.webview)),
 	)
+	if hresultFailed(r) || e.webview == nil {
+		e.webview = nil
+		e.initErr = fmt.Errorf("the controller gave no web view (%08x)", uint32(r))
+		return 0
+	}
 	_, _, _ = e.webview.vtbl.AddRef.Call(
 		uintptr(unsafe.Pointer(e.webview)),
 	)

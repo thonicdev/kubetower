@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -572,5 +573,50 @@ func TestTheWebView2CopyKeepsItsPatches(t *testing.T) {
 	}
 	if !strings.Contains(webview, "setWindowContext(w.hwnd, nil)\n\t_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)") {
 		t.Error("discard no longer destroys the window at once, without posting WM_QUIT")
+	}
+}
+
+// An HRESULT is a signed 32-bit value that a callback receives zero-extended
+// in a uintptr: `int64(res) < 0` and `int(res) < 0` never see 0x80070005 as a
+// failure, and the copy would go on to AddRef a nil environment. And a
+// success code with a nil environment, controller or web view (a session with
+// no desktop) is a failure, not a nil dereference (#84, as jchv/go-webview2#87
+// raises). Windows-only code: its source is read.
+func TestTheWebView2CopyReadsFailuresAsFailures(t *testing.T) {
+	dir := filepath.Join("..", "..", "third_party", "go-webview2", "pkg", "edge")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := regexp.MustCompile(`\bint(64)?\((res|r|hr)\) < 0`)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := unsigned.Find(b); m != nil {
+			t.Errorf("%s tests an HRESULT unsigned: %s", e.Name(), m)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "chromium.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chromium := string(b)
+	for _, want := range []string{
+		"return int32(res) < 0",
+		"if env == nil {",
+		"if controller == nil {",
+		"if hresultFailed(r) || e.webview == nil {",
+	} {
+		if !strings.Contains(chromium, want) {
+			t.Errorf("chromium.go no longer has %q", want)
+		}
+	}
+	if strings.Count(chromium, "if hresultFailed(res) {") != 2 {
+		t.Error("the two completion handlers no longer both test their HRESULT signed")
 	}
 }
