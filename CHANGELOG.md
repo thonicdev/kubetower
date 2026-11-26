@@ -13,6 +13,17 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+### Added
+
+- **Storage Inspector reads fill from Prometheus or VictoriaMetrics.** How
+  full each mounted claim is comes from the kubelets' own
+  `kubelet_volume_stats_*` series where the cluster's metrics backend holds
+  them, read for the claims the person may list; the kubelets, through
+  `nodes/proxy`, measure the claims it does not hold. A badge beside Mounts
+  names what gave the figures, and a page where nothing could be read says No
+  metrics available, with what grants the read on hover. Extras reach it
+  through a new Host door, `VolumeFill` (#91).
+
 ### Fixed
 
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the

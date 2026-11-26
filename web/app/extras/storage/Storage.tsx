@@ -31,7 +31,7 @@ import {
   type Show,
   type Volume,
 } from './data';
-import { FillBar, OrphanPill, ProblemNotice, SectionBadge, SnapshotBadge, SourceLine } from './parts';
+import { FillBar, FillVia, OrphanPill, ProblemNotice, SectionBadge, SnapshotBadge, SourceLine } from './parts';
 
 /** Rows drawn at once; "Show more" adds as many again. */
 export const PAGE_ROWS = 100;
@@ -182,6 +182,12 @@ function Answer({ cluster, data, show, pick }: { cluster: string; data: Overview
           <span className="text-muted">Mounts</span>
           {data.mountsRead.state === 'read' ? <span>read</span> : <SectionBadge section={data.mountsRead} />}
         </span>
+        {(data.fill.via ?? []).length === 0 ? null : (
+          <span className="flex items-center gap-2 text-xs" data-glance="fill">
+            <span className="text-muted">Fill</span>
+            <FillVia fill={data.fill} />
+          </span>
+        )}
         <SourceLine fill={data.fill} />
       </section>
 

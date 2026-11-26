@@ -119,6 +119,7 @@ func TestEveryDoorOnTheHostIsReachedFromOutside(t *testing.T) {
 		{"/containers", "ContainerUsage", "containers=1 default/web-0/app cpu=0m memory=67108864 complete=true"},
 		{"/window", "UsageWindow", "state=no-prometheus: this installation has no Prometheus configured"},
 		{"/dns", "DNSWindow", "state=no-prometheus: no Prometheus"},
+		{"/volume-fill", "VolumeFill", "default/data-db-0 used=8589934592 capacity=10737418240 engine=victoriametrics complete=true"},
 		{"/forward", "Forward", "addr=127.0.0.1:0 pod=a-service-0"},
 		{"/setting", "Setting", `setting="a-value"`},
 		{"/console-forward", "ForwardAsConsole", "addr=127.0.0.1:1 known=true"},
