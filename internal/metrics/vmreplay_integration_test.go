@@ -364,6 +364,17 @@ func TestVictoriaMetricsIntegrationAnswersEveryQuery(t *testing.T) {
 		}
 	}
 
+	replay(ctx, t, s, recordAll(ctx, t, s))
+}
+
+// recordAll is every query internal/metrics and internal/overview send,
+// recorded as sent to the cluster's Prometheus.
+func recordAll(ctx context.Context, t *testing.T, s setup) []query {
+	t.Helper()
+	client, err := s.Clusters.Client(s.Cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := &recorder{Q: s.Reference}
 	pods, err := client.Clients.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
 	if err != nil || len(pods.Items) == 0 {
@@ -386,8 +397,7 @@ func TestVictoriaMetricsIntegrationAnswersEveryQuery(t *testing.T) {
 	}
 
 	recordOverview(ctx, t, s, rec)
-
-	replay(ctx, t, s, rec.queries())
+	return rec.queries()
 }
 
 // recordOverview sends internal/overview's queries through rec: the cluster's
