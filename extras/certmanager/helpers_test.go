@@ -131,6 +131,10 @@ func (h *fakeHost) UsageWindow(*http.Request, string, string) (extension.Window,
 func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extension.DNS, error) {
 	return extension.DNS{}, nil
 }
+
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
 func (h *fakeHost) ForwardAsConsole(*http.Request, string, string, string, int) (extension.Tunnel, error) {
 	return extension.Tunnel{}, errors.New("this extra opens no tunnel")
 }

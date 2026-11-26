@@ -210,6 +210,10 @@ func (h *fakeHost) UsageWindow(*http.Request, string, string) (extension.Window,
 func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extension.DNS, error) {
 	return extension.DNS{}, nil
 }
+
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
 func (h *fakeHost) ConfiguredSecret(*http.Request, string, string, string, string) (string, error) {
 	h.fail("ConfiguredSecret")
 	return "", extension.ErrNotConfigured

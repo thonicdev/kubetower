@@ -22,24 +22,86 @@ const (
 	someNodes      = "Fill partial · some kubelets did not answer"
 )
 
-// fill measures every claim a running pod mounts, from the kubelets of the
-// nodes those pods run on, and grades it. A claim no running pod mounts has no
-// figure anywhere and is FillUnmounted; one whose kubelet gave none is
-// FillUnread. Never a zero drawn as empty.
+// fill measures every claim a running pod mounts and grades it. The cluster's
+// Prometheus (or VictoriaMetrics) is asked first (#91): the kubelets' own
+// kubelet_volume_stats_* series, through Host.VolumeFill. The claims it holds
+// no figure for are asked of the kubelets of the nodes their pods run on, as
+// before. A claim no running pod mounts has no figure anywhere and is
+// FillUnmounted; one nothing gave a figure for is FillUnread. Never a zero
+// drawn as empty.
 func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mounting map[string][]podInfo, incomplete func(string, string)) FillSource {
+	for i := range claims {
+		claims[i].Fill = Fill{State: FillUnmounted}
+	}
+	var refs []extension.ClaimRef
+	for _, c := range claims {
+		if running(mounting[c.Namespace+"/"+c.Name]) {
+			refs = append(refs, extension.ClaimRef{Namespace: c.Namespace, Name: c.Name})
+		}
+	}
+	if len(refs) == 0 {
+		return FillSource{State: SourceNone}
+	}
+
+	// The metrics backend. Its answer is a state, never a failure of the
+	// page: what it does not cover is the kubelets' to answer.
+	var via []string
+	covered := map[string]bool{}
+	if got, err := h.VolumeFill(r, cluster, refs); err == nil && got.State == extension.WindowRead {
+		byKey := map[string]extension.ClaimFill{}
+		for _, c := range got.Claims {
+			byKey[c.Namespace+"/"+c.Name] = c
+		}
+		for i := range claims {
+			c := &claims[i]
+			if f, ok := byKey[c.Namespace+"/"+c.Name]; ok && running(mounting[c.Namespace+"/"+c.Name]) {
+				c.Fill = measure(f.UsedBytes, f.CapacityBytes, c.CapacityBytes, extension.Trustworthy)
+				covered[c.Namespace+"/"+c.Name] = true
+			}
+		}
+		if len(covered) > 0 {
+			engine := got.Engine
+			if engine == "" {
+				engine = extension.EnginePrometheus
+			}
+			via = append(via, engine)
+		}
+		if !got.Complete {
+			incomplete("Fill", got.Note)
+		}
+	}
+	if len(covered) == len(refs) {
+		return FillSource{State: SourceRead, Via: via}
+	}
+
+	src := kubeletFill(r, h, cluster, claims, mounting, covered, incomplete)
+	if src.State != SourceUnreadable {
+		src.Via = append(via, ViaKubelet)
+	} else {
+		src.Via = via
+		// Some claims were measured from the backend: the rest is partial,
+		// not the whole source unreadable.
+		if len(covered) > 0 {
+			src.State = SourcePartial
+		}
+	}
+	return src
+}
+
+// kubeletFill measures the claims not covered, from the kubelets of the nodes
+// their running pods are on, through nodes/proxy.
+func kubeletFill(r *http.Request, h extension.Host, cluster string, claims []Claim, mounting map[string][]podInfo,
+	covered map[string]bool, incomplete func(string, string)) FillSource {
 	nodes := map[string]bool{}
 	for _, c := range claims {
+		if covered[c.Namespace+"/"+c.Name] {
+			continue
+		}
 		for _, p := range mounting[c.Namespace+"/"+c.Name] {
 			if p.running && p.node != "" {
 				nodes[p.node] = true
 			}
 		}
-	}
-	for i := range claims {
-		claims[i].Fill = Fill{State: FillUnmounted}
-	}
-	if len(nodes) == 0 {
-		return FillSource{State: SourceNone}
 	}
 	asked := make([]string, 0, len(nodes))
 	for n := range nodes {
@@ -48,7 +110,8 @@ func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mou
 	sort.Strings(asked)
 	unread := func() {
 		for i := range claims {
-			if running(mounting[claims[i].Namespace+"/"+claims[i].Name]) {
+			key := claims[i].Namespace + "/" + claims[i].Name
+			if !covered[key] && running(mounting[key]) {
 				claims[i].Fill = Fill{State: FillUnread}
 			}
 		}
@@ -84,10 +147,11 @@ func fill(r *http.Request, h extension.Host, cluster string, claims []Claim, mou
 	}
 	for i := range claims {
 		c := &claims[i]
-		if !running(mounting[c.Namespace+"/"+c.Name]) {
+		key := c.Namespace + "/" + c.Name
+		if covered[key] || !running(mounting[key]) {
 			continue
 		}
-		fs, ok := measured[c.Namespace+"/"+c.Name]
+		fs, ok := measured[key]
 		if !ok {
 			c.Fill = Fill{State: FillUnread}
 			continue

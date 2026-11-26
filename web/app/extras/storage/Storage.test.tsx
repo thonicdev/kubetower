@@ -105,12 +105,30 @@ describe('the Storage Inspector page', () => {
     expect(row('shop/legacy-uploads').querySelector('[data-fill]')?.getAttribute('data-fill')).toBe('unmounted');
   });
 
-  it('says in one line what grants the fill when no kubelet could be read', async () => {
+  it('names what gave the fill figures as one badge (#91)', async () => {
+    stub({ [ROUTE]: { body: STORAGE_OVERVIEW } });
+    mount();
+    await screen.findByRole('table');
+    const via = document.querySelector('[data-glance="fill"] [data-fill-via]');
+    expect(via?.getAttribute('data-fill-via')).toBe('victoriametrics,kubelet');
+    expect(via?.textContent).toBe('VictoriaMetrics + kubelet');
+    expect(via?.querySelector('[title]')?.getAttribute('title')).toBe('Fill read from VictoriaMetrics and kubelet');
+    cleanup();
+    // Nothing gave a figure: no badge.
     stub({ [ROUTE]: { body: STORAGE_BARE } });
     mount();
-    const line = await screen.findByText('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)');
-    expect(line.getAttribute('data-source')).toBe('unreadable');
-    expect(line.getAttribute('title')).toContain('nodes/proxy');
+    await screen.findByText('No metrics available');
+    expect(document.querySelector('[data-glance="fill"]')).toBeNull();
+  });
+
+  it('says No metrics available when no fill could be read, what grants it on hover', async () => {
+    stub({ [ROUTE]: { body: STORAGE_BARE } });
+    mount();
+    const line = await screen.findByText('No metrics available');
+    expect(line.closest('[data-source]')?.getAttribute('data-source')).toBe('unreadable');
+    expect(line.getAttribute('title')).toContain('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)');
+    // Never the red sentence of before #91.
+    expect(screen.queryByText('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)')).toBeNull();
     // How many are full is unknown, never 0.
     expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
     expect(document.querySelector('[data-filter="full"]')?.textContent).toContain('–');
