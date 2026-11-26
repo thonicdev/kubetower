@@ -13,6 +13,15 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+### Fixed
+
+- **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
+  desktop, Services claiming to be Prometheus in one namespace and
+  VictoriaMetrics in another are now refused as two Prometheus Services in two
+  namespaces already were, the detail naming both; in one namespace,
+  Prometheus is still chosen. The source can be set in Settings › General
+  (#133).
+
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
 ### Added
