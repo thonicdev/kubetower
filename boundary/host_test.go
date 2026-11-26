@@ -132,6 +132,15 @@ func (h *recordingHost) DNSWindow(r *http.Request, cluster string, span extensio
 	return extension.DNS{State: extension.WindowNoPrometheus, Detail: "no Prometheus"}, nil
 }
 
+func (h *recordingHost) VolumeFill(r *http.Request, cluster string, claims []extension.ClaimRef) (extension.VolumeFill, error) {
+	h.note("VolumeFill")
+	out := extension.VolumeFill{State: extension.WindowRead, Engine: extension.EngineVictoriaMetrics, Complete: true}
+	for _, c := range claims {
+		out.Claims = append(out.Claims, extension.ClaimFill{ClaimRef: c, UsedBytes: 8 << 30, CapacityBytes: 10 << 30})
+	}
+	return out, nil
+}
+
 func (h *recordingHost) Forward(ctx context.Context, cluster, namespace, service string, port int) (extension.Tunnel, error) {
 	h.note("Forward")
 	return extension.Tunnel{Addr: "127.0.0.1:0", Pod: "a-service-0", PodKnown: true,

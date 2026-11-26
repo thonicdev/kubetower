@@ -552,6 +552,10 @@ func (h *multiHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extensi
 	return extension.DNS{}, nil
 }
 
+func (h *multiHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 // Forward is the person's tunnel, which the diff never opens: argocd-server is
 // the console's backend, reached through ForwardAsConsole.
 func (h *multiHost) Forward(context.Context, string, string, string, int) (extension.Tunnel, error) {

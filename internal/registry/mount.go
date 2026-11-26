@@ -185,6 +185,10 @@ func (unmountedHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extens
 	return extension.DNS{}, errUnmounted
 }
 
+func (unmountedHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{}, errUnmounted
+}
+
 func (unmountedHost) Forward(context.Context, string, string, string, int) (extension.Tunnel, error) {
 	return extension.Tunnel{}, errUnmounted
 }

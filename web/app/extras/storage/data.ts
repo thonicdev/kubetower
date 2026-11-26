@@ -95,7 +95,17 @@ export interface FillSource {
   answered: number;
   message?: string;
   detail?: string;
+  /** What gave the figures, in the order asked: the metrics backend
+   *  (`prometheus`, `victoriametrics`), then `kubelet` (#91). */
+  via?: string[];
 }
+
+/** How each source of the fill figures is named. */
+export const VIA_WORDS: Readonly<Record<string, string>> = {
+  prometheus: 'Prometheus',
+  victoriametrics: 'VictoriaMetrics',
+  kubelet: 'kubelet',
+};
 
 export interface SnapshotSection extends Section {
   total: number;

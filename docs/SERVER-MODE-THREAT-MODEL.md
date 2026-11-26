@@ -501,10 +501,11 @@ verb and the same held answers:
   through `Host.List`, reviewed for the person as the console's own lists are
   (narrowed to the namespaces they may list, a read by name reviewed with the
   name), and `Host.Usage`, `Host.ContainerUsage`, `Host.UsageWindow`,
-  `Host.Reveal`, `Host.Exec`, `Host.Forward` and `Host.MayReadLogs` are
-  reviewed for the person too - the two usage doors as `list pods`, because
-  neither metrics-server read with these credentials nor Prometheus, which has
-  no RBAC, knows who is asking. **Two doors are not reviewed for the person, by
+  `Host.VolumeFill`, `Host.Reveal`, `Host.Exec`, `Host.Forward` and
+  `Host.MayReadLogs` are reviewed for the person too - the two usage doors as
+  `list pods` and the volume-fill door as `list persistentvolumeclaims`,
+  because neither metrics-server read with these credentials nor Prometheus,
+  which has no RBAC, knows who is asking. **Two doors are not reviewed for the person, by
   design**: `Host.ConfiguredSecret` and `Host.ConfiguredService` read, as the
   console (`AsConsole`, the ServiceAccount here), one Secret's key or one
   Service that the extension's `extension.Configured` names **from the
