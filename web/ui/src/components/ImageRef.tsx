@@ -98,8 +98,13 @@ export function ImageRef({
 }
 
 /** The repository cut in its middle where it does not fit: the start of the
- *  path, an ellipsis, then the last segment whole (`registry.int…/app`). The
- *  last segment gives way only once the start is down to two characters. */
+ *  path, an ellipsis, then the last segment whole (`registry.int…/app`).
+ *
+ *  With a start to give way, the last segment does not shrink at all: a share
+ *  of the shrink by weight, even a fraction of a pixel, is enough for the
+ *  browser to draw its ellipsis. It is cut only when it alone is wider than the
+ *  line less the start's two characters. With no start, it is the only part,
+ *  and is cut at its end. */
 function MiddleCut({ repository }: { repository: string }): ReactNode {
   const slash = repository.lastIndexOf('/');
   const head = slash < 0 ? '' : repository.slice(0, slash);
@@ -111,7 +116,10 @@ function MiddleCut({ repository }: { repository: string }): ReactNode {
           {head}
         </span>
       )}
-      <span data-image-name="" className="min-w-0 truncate">
+      <span
+        data-image-name=""
+        className={head === '' ? 'min-w-0 truncate' : 'max-w-[calc(100%-2ch)] shrink-0 truncate'}
+      >
         {tail}
       </span>
     </span>

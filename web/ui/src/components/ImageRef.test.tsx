@@ -132,7 +132,9 @@ describe('an image line', () => {
     expect(head?.className).toContain('min-w-[2ch]');
     expect(head?.className).toContain('truncate');
     expect(name?.className).toContain('truncate');
-    expect(name?.className).not.toContain('shrink-[999]');
+    // Never a share of the shrink while the start can give way.
+    expect(name?.className).toContain('shrink-0');
+    expect(name?.className).toContain('max-w-[calc(100%-2ch)]');
     expect(document.querySelector('[data-image-separator]')?.textContent).toBe(':');
     expect(document.querySelector('[data-image-version]')?.textContent).toBe('2.14.3-rc.2');
     expect(document.querySelector('[data-image-line]')?.getAttribute('title')).toBe(LONG);
@@ -142,6 +144,8 @@ describe('an image line', () => {
     render(<ImageLine image="busybox" />);
     expect(document.querySelector('[data-image-head]')).toBeNull();
     expect(document.querySelector('[data-image-name]')?.textContent).toBe('busybox');
+    expect(document.querySelector('[data-image-name]')?.className).toContain('min-w-0');
+    expect(document.querySelector('[data-image-name]')?.className).not.toContain('shrink-0');
     expect(document.querySelector('[data-image-version]')?.getAttribute('data-image-version')).toBe('implicit');
   });
 
@@ -165,7 +169,10 @@ describe('an image line', () => {
     expect(groups[1]?.querySelector('button')).not.toBeNull();
   });
 
-  it('copies the reference exactly as the spec wrote it', async () => {
+  it('copies the reference exactly as the spec wrote it, not the text it shows', async () => {
+    // Tag and digest: the line shows `…/log-shipper:1.8.0`, the copy is the
+    // whole reference with its digest.
+    const pinned = `ghcr.io/observability-collective/log-shipper:1.8.0@${DIGEST}`;
     const written: string[] = [];
     vi.stubGlobal('isSecureContext', true);
     Object.defineProperty(navigator, 'clipboard', {
@@ -173,9 +180,9 @@ describe('an image line', () => {
       value: { writeText: vi.fn(async (text: string) => void written.push(text)) },
     });
     try {
-      render(<ImageLine image={LONG} />);
+      render(<ImageLine image={pinned} />);
       fireEvent.click(screen.getByRole('button', { name: 'Copy image' }));
-      await waitFor(() => expect(written).toEqual([LONG]));
+      await waitFor(() => expect(written).toEqual([pinned]));
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
       vi.unstubAllGlobals();
