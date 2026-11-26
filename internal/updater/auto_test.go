@@ -474,8 +474,8 @@ func TestAtOnceSettlesTheFolderBeforeInstalling(t *testing.T) {
 	if _, err := u.Set(true, WhenNow); err != nil {
 		t.Fatal(err)
 	}
+	// Synchronous: the folder is settled before any install would start.
 	u.autoStep(context.Background(), func() string { return "0.1.3" }, nothingOpen)
-	time.Sleep(50 * time.Millisecond)
 	if s := u.Status(); s.Phase != Manual || s.Folder == "" || len(plans(rec)) != 0 {
 		t.Fatalf("%+v, %d installs", s, len(plans(rec)))
 	}
