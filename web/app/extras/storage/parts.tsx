@@ -21,9 +21,11 @@ export function FillBar({ fill, wide = false }: { fill: Fill; wide?: boolean }):
         </span>
       );
     case 'unread':
+      // Mounted, and neither the metrics backend nor its kubelet gave a
+      // figure: the console's quiet No metrics available (#91), never a 0.
       return (
-        <span data-fill="unread" className="text-xs text-warn" title="Its kubelet gave no figure">
-          Unread
+        <span data-fill="unread">
+          <NoMetrics variant="badge" detail="Neither the metrics backend nor the kubelet gave a figure for this claim" />
         </span>
       );
     case 'shared':

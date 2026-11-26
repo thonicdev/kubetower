@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -143,22 +142,17 @@ func ReadVolumeFill(ctx context.Context, q RangeQuerier, cluster string, claims 
 
 // claimSelector matches the batch's namespaces and names. It can match a
 // claim not asked (a name asked in one namespace that also exists in
-// another); the reader keeps only the pairs asked.
+// another); the reader keeps only the pairs asked. The names are escaped as
+// alternation does: a dot for the regular expression, and that backslash for
+// PromQL's double-quoted string - a single one is a parse error ("unknown
+// escape sequence") that would fail the whole batch.
 func claimSelector(batch []ClaimKey) string {
-	var namespaces, names []string
-	seenNS, seenName := map[string]bool{}, map[string]bool{}
+	namespaces, names := map[string]bool{}, map[string]bool{}
 	for _, k := range batch {
-		if !seenNS[k.Namespace] {
-			seenNS[k.Namespace] = true
-			namespaces = append(namespaces, regexp.QuoteMeta(k.Namespace))
-		}
-		if !seenName[k.Name] {
-			seenName[k.Name] = true
-			names = append(names, regexp.QuoteMeta(k.Name))
-		}
+		namespaces[k.Namespace] = true
+		names[k.Name] = true
 	}
-	return fmt.Sprintf(`namespace=~"%s",persistentvolumeclaim=~"%s"`,
-		strings.Join(namespaces, "|"), strings.Join(names, "|"))
+	return fmt.Sprintf(`namespace=~"%s",persistentvolumeclaim=~"%s"`, alternation(namespaces), alternation(names))
 }
 
 func sortClaims(keys []ClaimKey) {

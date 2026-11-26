@@ -133,8 +133,13 @@ func TestVolumeFillRefusesWhatCannotBeAClaimAndAsksNothing(t *testing.T) {
 	if _, err := ReadVolumeFill(context.Background(), p, "prod", []ClaimKey{long}); err != nil {
 		t.Errorf("a long claim name: %v", err)
 	}
-	if !strings.Contains(p.queries[0], `a\.data`) {
-		t.Errorf("the dot is not escaped: %q", p.queries[0])
+	// The dot escaped for the regex, and that backslash for PromQL's string:
+	// a lone `\.` is a PromQL parse error that fails the whole batch.
+	if !strings.Contains(p.queries[0], `a\\.data`) {
+		t.Errorf("the dot is not escaped for PromQL: %q", p.queries[0])
+	}
+	if strings.Contains(strings.ReplaceAll(p.queries[0], `\\`, ""), `\`) {
+		t.Errorf("a lone backslash, which PromQL refuses: %q", p.queries[0])
 	}
 }
 
