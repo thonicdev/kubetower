@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"path"
@@ -73,32 +74,39 @@ var (
 // in clock ticks), `lib` (a mapped libpython, if any) and `thread` per
 // thread name, then `btime` once. It reads files; it signals nothing. Every
 // command it uses is a shell builtin or readlink, so a minimal image runs it.
+// A process that exits while it is read leaves its files unreadable: what
+// could not be read is left out, and the script goes on and exits 0.
 const pythonProcScript = `for d in /proc/[0-9]*; do
   p=${d#/proc/}
   [ "$p" = "$$" ] && continue
   e=$(readlink "$d/exe" 2>/dev/null) || continue
-  read -r c < "$d/comm" 2>/dev/null || c=
+  c=; { read -r c < "$d/comm"; } 2>/dev/null
   echo "P $p"; echo "comm $c"; echo "exe $e"
-  while read -r k v _; do
+  { while read -r k v _; do
     case "$k" in PPid:|VmRSS:|VmHWM:|Threads:) echo "$k $v";; esac
-  done < "$d/status"
-  read -r s < "$d/stat"; s=${s##*) }; set -- $s; shift 19; echo "start $1"
-  while read -r a b c d2 e2 f _; do
+  done < "$d/status"; } 2>/dev/null
+  s=; { read -r s < "$d/stat"; } 2>/dev/null
+  s=${s##*) }; set -- $s
+  [ $# -ge 20 ] && { shift 19; echo "start $1"; }
+  { while read -r a b c2 d2 e2 f _; do
     case "$f" in *libpython*) echo "lib $f"; break;; esac
-  done < "$d/maps"
+  done < "$d/maps"; } 2>/dev/null
   n=0
   for t in "$d"/task/*; do
     n=$((n+1)); [ $n -gt ` + "THREADS" + ` ] && break
-    read -r tc < "$t/comm" 2>/dev/null && echo "thread $tc"
+    tc=; { read -r tc < "$t/comm"; } 2>/dev/null && echo "thread $tc"
   done
 done
-while read -r k v; do [ "$k" = btime ] && echo "btime $v"; done < /proc/stat
+{ while read -r k v; do [ "$k" = btime ] && echo "btime $v"; done < /proc/stat; } 2>/dev/null
 exit 0
 `
 
 // pythonProcPython is the same reading in Python, for an image with no
-// shell (distroless): the container's own interpreter reads /proc.
-const pythonProcPython = `import os,re
+// shell (distroless): the container's own interpreter reads /proc. It is run
+// isolated (`-I -S`): no PYTHON* variable, no site, user site or .pth file,
+// no working directory on sys.path, so nothing of the image's own code runs
+// (a sitecustomize, an auto-instrumentation, an /app/os.py).
+const pythonProcPython = `import os
 me=os.getpid()
 for p in sorted((int(x) for x in os.listdir('/proc') if x.isdigit())):
     if p==me: continue
@@ -134,7 +142,7 @@ func pythonReaders() [][]string {
 	threads := strconv.Itoa(pythonThreadNameLimit)
 	return [][]string{
 		{"sh", "-c", strings.ReplaceAll(pythonProcScript, "THREADS", threads)},
-		{"python3", "-c", strings.ReplaceAll(pythonProcPython, "THREADS", threads)},
+		{"python3", "-I", "-S", "-c", strings.ReplaceAll(pythonProcPython, "THREADS", threads)},
 	}
 }
 
@@ -488,7 +496,9 @@ func parseExposition(body string, wanted map[string]bool) []expoSample {
 			continue
 		}
 		value, err := strconv.ParseFloat(fields[0], 64)
-		if err != nil {
+		// NaN and ±Inf parse, and no JSON carries them: a series without a
+		// finite value is a series not read (process_max_fds +Inf).
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 			continue
 		}
 		out = append(out, expoSample{name: name, labels: labels, value: value})

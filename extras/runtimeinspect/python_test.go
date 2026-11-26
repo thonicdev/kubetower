@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -110,15 +111,85 @@ func TestTheProcessesAndTheirThreadNamesAreBounded(t *testing.T) {
 }
 
 func TestTheReadersArgvIsFixed(t *testing.T) {
-	for _, argv := range pythonReaders() {
-		if len(argv) != 3 || (argv[0] != "sh" && argv[0] != "python3") || strings.Contains(argv[2], "THREADS") {
-			t.Errorf("argv %q", argv)
+	readers := pythonReaders()
+	if len(readers) != 2 || strings.Join(readers[0][:2], " ") != "sh -c" || strings.Join(readers[1][:4], " ") != "python3 -I -S -c" {
+		t.Fatalf("readers %q", readers)
+	}
+	for _, argv := range readers {
+		script := argv[len(argv)-1]
+		if strings.Contains(script, "THREADS") {
+			t.Errorf("%s: the thread bound was not filled in", argv[0])
 		}
 		for _, forbidden := range []string{"kill", "ptrace", "SIGUSR", "environ", "cmdline"} {
-			if strings.Contains(argv[2], forbidden) {
+			if strings.Contains(script, forbidden) {
 				t.Errorf("the %s reader mentions %q: it reads status, stat, maps and comm only", argv[0], forbidden)
 			}
 		}
+	}
+	// The python3 reader imports os alone: nothing an image could shadow
+	// beyond the standard library, which -I keeps first on sys.path.
+	if !strings.HasPrefix(readers[1][4], "import os\n") {
+		t.Errorf("the python3 reader starts %q", readers[1][4][:20])
+	}
+}
+
+// A process that exits while it is read: its files are gone. The sh reader,
+// run by every sh this machine has (dash is /bin/sh on Debian images), leaves
+// it without a start time and exits 0, rather than failing the route.
+func TestTheShReaderToleratesAProcessThatExits(t *testing.T) {
+	root := t.TempDir()
+	proc := root + "/proc"
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(path[:strings.LastIndexByte(path, '/')], 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(target, path string) {
+		t.Helper()
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// pid 1: a whole Python process.
+	write(proc+"/1/comm", "python\n")
+	write(proc+"/1/status", "Name:\tpython\nPPid:\t0\nVmHWM:\t 2048 kB\nVmRSS:\t 1024 kB\nThreads:\t2\n")
+	write(proc+"/1/stat", "1 (python) S 0 1 1 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 2 0 5000 0 0\n")
+	write(proc+"/1/maps", "7f00-7f01 r-xp 0 08:01 1 /usr/local/lib/libpython3.12.so.1.0\n")
+	write(proc+"/1/task/1/comm", "python\n")
+	write(proc+"/1/task/2/comm", "worker\n")
+	link("/usr/local/bin/python3.12", proc+"/1/exe")
+	// pid 7: exited between its exe and the rest.
+	if err := os.MkdirAll(proc+"/7", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link("/usr/local/bin/python3.12", proc+"/7/exe")
+	write(proc+"/stat", "cpu 1 2 3\nbtime 1700000000\n")
+
+	script := strings.ReplaceAll(pythonReaders()[0][2], "/proc", proc)
+	ran := 0
+	for _, shell := range []string{"sh", "dash", "bash"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		ran++
+		out, err := exec.Command(path, "-c", script).Output() //nolint:gosec // the reader's own fixed script, on a test tree
+		if err != nil {
+			t.Errorf("%s: %v", shell, err)
+			continue
+		}
+		procs, _, _ := parsePythonProcs(string(out))
+		if len(procs) != 2 || procs[0].Started != "2023-11-14T22:14:10Z" || procs[0].Threads != 2 || procs[0].Version != "3.12" ||
+			procs[1].Pid != 7 || procs[1].Started != "" {
+			t.Errorf("%s read %+v from:\n%s", shell, procs, out)
+		}
+	}
+	if ran == 0 {
+		t.Skip("no sh on this machine")
 	}
 }
 
@@ -266,5 +337,66 @@ func TestMetricsNotServedAreUnreachableNotEmpty(t *testing.T) {
 	code, body := postPython(t, h, "/metrics")
 	if code != http.StatusOK || body["reachable"] != false || body["metrics"] != nil || !strings.Contains(body["detail"].(string), "404") {
 		t.Fatalf("%d %v", code, body)
+	}
+}
+
+// NaN and ±Inf parse as floats and are no JSON: such a series is not read,
+// and the route still answers (#150's review).
+func TestANonFiniteSeriesIsNotRead(t *testing.T) {
+	m := readPythonMetrics("process_max_fds +Inf\nprocess_open_fds NaN\nprocess_resident_memory_bytes 1024\n")
+	if m.MaxFDs != nil || m.OpenFDs != nil || m.RSS == nil {
+		t.Fatalf("%+v", m)
+	}
+	srv, _ := metricsServer(t, "process_max_fds +Inf\npython_gc_collections_total{generation=\"0\"} -Inf\n", http.StatusOK)
+	h := newPodHost(t, srv, pythonPod(nil, pythonContainer()))
+	if code, body := postPython(t, h, "/metrics"); code != http.StatusOK || body["reachable"] != true {
+		t.Fatalf("%d %v", code, body)
+	}
+}
+
+// The tunnel is the only address /metrics is read from: a redirect to
+// another host is still dialled to the pod, and that host is never asked.
+func TestMetricsAreReadFromThePodAlone(t *testing.T) {
+	elsewhere, asked := metricsServer(t, "python_info{version=\"9.9\"} 1\n", http.StatusOK)
+	pod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics":
+			http.Redirect(w, r, elsewhere.URL+"/redirected", http.StatusFound)
+		case "/redirected":
+			_, _ = w.Write([]byte(`python_info{implementation="CPython",version="3.12.1"} 1` + "\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(pod.Close)
+	h := newPodHost(t, pod, pythonPod(nil, pythonContainer()))
+	code, body := postPython(t, h, "/metrics")
+	if code != http.StatusOK || body["reachable"] != true {
+		t.Fatalf("%d %v", code, body)
+	}
+	if version := body["metrics"].(map[string]any)["version"]; version != "3.12.1" {
+		t.Errorf("version %v: read from somewhere other than the pod", version)
+	}
+	if len(*asked) != 0 {
+		t.Errorf("another host was asked: %v", *asked)
+	}
+}
+
+// What /metrics serves past pythonMetricsLimit is not read.
+func TestMetricsAreReadUpToTheirLimit(t *testing.T) {
+	defer func(limit int) { pythonMetricsLimit = limit }(pythonMetricsLimit)
+	head := `python_info{implementation="CPython",version="3.12.1"} 1` + "\n"
+	pythonMetricsLimit = len(head) + 64
+	body := head + strings.Repeat("# padding\n", 100) + "process_open_fds 6\n"
+	m := readPythonMetrics(body)
+	if m.OpenFDs == nil {
+		t.Fatal("the fixture does not hold the series past the limit")
+	}
+	srv, _ := metricsServer(t, body, http.StatusOK)
+	h := newPodHost(t, srv, pythonPod(nil, pythonContainer()))
+	_, answer := postPython(t, h, "/metrics")
+	metrics, _ := answer["metrics"].(map[string]any)
+	if metrics == nil || metrics["version"] != "3.12.1" || metrics["openFds"] != nil {
+		t.Fatalf("read past the limit: %v", answer)
 	}
 }
