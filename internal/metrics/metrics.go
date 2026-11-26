@@ -584,14 +584,31 @@ func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lo
 		return lookup{refused: refused}
 	}
 
-	// Prometheus first; VictoriaMetrics only where no Prometheus Service is
-	// there, so a VictoriaMetrics Service never makes a cluster with one
-	// Prometheus ambiguous.
-	if chosen, found := choose(candidates, promChoices()); found {
-		return chosen
+	// Prometheus first, VictoriaMetrics where no Prometheus Service is there.
+	// The two in one namespace keep Prometheus: one owner put both there.
+	// **In different namespaces neither is chosen** (#133): a Service labelled
+	// app=prometheus in a tenant's namespace beside a real vmsingle elsewhere is
+	// the same decoy as two Prometheus Services, and a label tells them apart
+	// no better across engines than within one.
+	prom, promFound, promIn := choose(candidates, promChoices())
+	vm, vmFound, vmIn := choose(candidates, vmChoices())
+	switch {
+	case !promFound:
+		return vm
+	case prom.unchosen != "" || !vmFound:
+		return prom
 	}
-	chosen, _ := choose(candidates, vmChoices())
-	return chosen
+	across := map[string]bool{}
+	for ns := range promIn {
+		across[ns] = true
+	}
+	for ns := range vmIn {
+		across[ns] = true
+	}
+	if len(across) > 1 {
+		return lookup{unchosen: notChosenAcross(promIn, vmIn)}
+	}
+	return prom
 }
 
 // listCandidates is every Service a selector of promQueries matches, or the
@@ -646,12 +663,13 @@ type choice struct {
 
 // choose applies choices in order to candidates. found says some candidate
 // matched with a usable port, whether or not one was chosen: candidates in
-// several namespaces are refused (notChosen).
+// several namespaces are refused (notChosen). in is every namespace a
+// candidate with a usable port was found in.
 //
 // A Service matching two selectors is reported under the first. Every
 // candidate is walked, because the refusal reads all their namespaces; one
 // with no port worth querying (an exporter on 8080) does not count.
-func choose(candidates []corev1.Service, choices []choice) (chosen lookup, found bool) {
+func choose(candidates []corev1.Service, choices []choice) (chosen lookup, found bool, in map[string]bool) {
 	namespaces := map[string]bool{}
 	for _, c := range choices {
 		parsed, err := labels.Parse(c.selector)
@@ -681,9 +699,9 @@ func choose(candidates []corev1.Service, choices []choice) (chosen lookup, found
 		}
 	}
 	if len(namespaces) > 1 {
-		return lookup{unchosen: notChosen(namespaces)}, true
+		return lookup{unchosen: notChosen(namespaces)}, true, namespaces
 	}
-	return chosen, len(namespaces) > 0
+	return chosen, len(namespaces) > 0, namespaces
 }
 
 // portFor finds the first Service port that is one of want, or forwards to
@@ -710,6 +728,26 @@ func prometheusPort(svc *corev1.Service) int {
 		}
 	}
 	return 0
+}
+
+// notChosenAcross is the sentence for Prometheus candidates and
+// VictoriaMetrics candidates in different namespaces (#133).
+func notChosenAcross(prom, vm map[string]bool) string {
+	return fmt.Sprintf("Prometheus was not chosen: Services claiming to be Prometheus (%s) and VictoriaMetrics (%s) "+
+		"are in different namespaces, and a label cannot say which is real", namesOf(prom), namesOf(vm))
+}
+
+// namesOf lists namespaces sorted, at most three named.
+func namesOf(namespaces map[string]bool) string {
+	names := make([]string, 0, len(namespaces))
+	for name := range namespaces {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > 3 {
+		return fmt.Sprintf("%s and %d more", strings.Join(names[:3], ", "), len(names)-3)
+	}
+	return strings.Join(names, ", ")
 }
 
 // notChosen is the sentence for Services claiming to be Prometheus in several

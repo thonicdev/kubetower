@@ -91,4 +91,3 @@ func (a *API) resolvedName(name string) string {
 	}
 	return name
 }
-

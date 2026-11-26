@@ -30,7 +30,7 @@ func VictoriaMetricsAlone(ctx context.Context, client *cluster.Client) (string, 
 	if refused != nil {
 		return "", "", fmt.Errorf("listing Services: %s", refused.detail)
 	}
-	chosen, ok := choose(candidates, vmChoices())
+	chosen, ok, _ := choose(candidates, vmChoices())
 	if !ok || chosen.target == nil {
 		return "", "", fmt.Errorf("none among %d candidates (%s)", len(candidates), chosen.unchosen)
 	}
