@@ -1337,7 +1337,11 @@ once. Repeated here only where the threat model adds something:
 > rendered notes are the same reveal under the key `notes` (`GET .../notes`):
 > charts print generated passwords in their `NOTES.txt`, so the page carries
 > only whether there are any. A server-profile gate wired without a log refuses
-> every act.
+> every act. **A debug container** is recorded as the write it is (`patch
+> pods/ephemeralcontainers`, on the pod) with its `image`, its `target` and the
+> `container` name it was given, and the shell opened in it as an `exec`
+> carrying the same three; a cluster in `KT_READONLY_CLUSTERS` refuses it before
+> anything is sent, recorded with decision `read_only`.
 >
 > **A write that fails, comes back short, or has not returned within five
 > seconds breaks the log for the rest of the process**: it may have left half
@@ -1500,6 +1504,7 @@ The addresses below are the ones the binary registers.
 | Local shell, socket (`/api/c/{cluster}/ws/terminal`) | **absent** | channel not registered — `Offers` is false for the profile | router walk |
 | Pod exec, `/kt-api/exec` | **absent** | route not registered — it goes with the other two, and §9.2 says why | `TestTheServerProfileMountsNoShellUpgrade` |
 | Pod exec, socket (`/api/c/{cluster}/ws/exec`) | **present**, reviewed for the person as `create pods/exec` on that pod; **Shell drawn only where the review says yes** | the review (§5), and the API server's own refusal of the ServiceAccount's `pods/exec`; the control is drawn from the pod's page (`DetailPage.shell`, `internal/web/access.go`) | `TestExecIsNotDrawnWhereTheChannelIsNotRegistered`, `TestTheReviewAsksTheAPIServerAboutThePerson` |
+| Debug container, socket (`/api/c/{cluster}/ws/debug`) | **present** wherever exec is, reviewed for the person as `patch pods/ephemeralcontainers` **and** `create pods/exec` on that pod before anything is added; refused before the upgrade, with its record, on a cluster in `KT_READONLY_CLUSTERS`; **Debug drawn only where both reviews say yes** | the two reviews (§5), the PATCH through `Gate.Perform` and the shell through the exec path, and the API server's own refusal of the ServiceAccount's `pods/ephemeralcontainers`; the control is drawn from the pod's page (`DetailPage.debug`, `internal/web/access.go`) | `TestBothDebugReviewsAreAskedAndARefusalIsRecorded`, `TestADebugOnAReadOnlyClusterIsRefusedWithNoCall`, `TestTheDebugOfferIsReviewedOnBothQuestions` |
 | Node shell, socket (`/api/c/{cluster}/ws/nodeshell`), its preview and its setting | **absent** | channel not registered — `Offers` is false for the profile; the preview and the setting follow it | `TestTheNodeShellPreviewAndSettingFollowTheChannel` |
 | Assistant control (`/api/ws/assistant`, and `/kt-api/claude`) | **absent** (§10) | neither route registered | router walk |
 | Port-forward (`/api/forwards`, all three operations) | **absent**, and the page shows the `kubectl port-forward` command instead (§7.3, option 1) | routes not registered — `if !a.deps.InCluster`, `internal/api/router.go` | router walk, `TestTheServerProfileSaysShowTheCommandForPortForward` |

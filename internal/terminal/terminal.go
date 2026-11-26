@@ -118,6 +118,12 @@ type Terminal struct {
 	// fake API server can.
 	openExec func(*rest.Config, *url.URL) (remotecommand.Executor, error)
 
+	// debugWait and debugPoll, when set, replace debugStartTimeout and
+	// debugStartPoll for this Terminal's debug sessions, for tests: two minutes
+	// is the bound in production and no test should wait it out.
+	debugWait time.Duration
+	debugPoll time.Duration
+
 	// open is every live session's stream, by the person who opened it, so
 	// signing a person out can close theirs. See hold and EndSessionsOf.
 	openMu sync.Mutex

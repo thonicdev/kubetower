@@ -2,7 +2,7 @@ package api
 
 import "net/http"
 
-// ChannelID names one of the four socket channels `api/websocket.md` describes.
+// ChannelID names one of the socket channels `api/websocket.md` describes.
 type ChannelID string
 
 const (
@@ -15,6 +15,11 @@ const (
 	// subresource. Refused on a cluster marked read-only: `exec` is one of the
 	// local shell's mutating verbs, and the fence must hold at every door.
 	ChannelExec ChannelID = "exec"
+	// ChannelDebug is a shell in a debug container: an ephemeral container added
+	// to a running pod, then exec-ed into. Offered wherever exec is, since its
+	// shell is an exec; refused on a cluster marked read-only, where adding a
+	// container is a change.
+	ChannelDebug ChannelID = "debug"
 	// ChannelNodeShell is a shell on a node, after a plan has been agreed.
 	ChannelNodeShell ChannelID = "nodeshell"
 	// ChannelAssistant is a long-lived control channel, absent (not disabled)
@@ -43,6 +48,9 @@ type Channels interface {
 	// ServeExec upgrades to a shell inside a pod. The backend reads and
 	// validates the pod, namespace, container and command off the query.
 	ServeExec(w http.ResponseWriter, r *http.Request, cluster string)
+	// ServeDebug upgrades to a shell in a new debug container. The backend reads
+	// and validates the pod, namespace, image and target off the query.
+	ServeDebug(w http.ResponseWriter, r *http.Request, cluster string)
 	// ServeNodeShell upgrades to a shell on node, taken from the agreed plan
 	// and never from the URL.
 	ServeNodeShell(w http.ResponseWriter, r *http.Request, cluster, node string)

@@ -266,8 +266,14 @@ func intOf(block map[string]any, field string) int {
 // across both lists (the API server validates that). A pod with no readable
 // status returns nil, and every container reads ContainerUnreported.
 func statusesOf(raw *unstructured.Unstructured) map[string]map[string]any {
+	return statusesIn(raw, "initContainerStatuses", "containerStatuses")
+}
+
+// statusesIn indexes the named status lists by container name, nil when none
+// carries anything.
+func statusesIn(raw *unstructured.Unstructured, fields ...string) map[string]map[string]any {
 	out := map[string]map[string]any{}
-	for _, field := range []string{"initContainerStatuses", "containerStatuses"} {
+	for _, field := range fields {
 		items, found, err := unstructured.NestedSlice(raw.Object, "status", field)
 		if err != nil || !found {
 			continue

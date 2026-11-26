@@ -334,3 +334,81 @@ status: {}
 		t.Errorf("a non-string argument was lost: %q", odd.Args)
 	}
 }
+
+// A debug container added to the pod is listed after the app containers,
+// marked, with the container it targets and the status the kubelet reports
+// for it under `ephemeralContainerStatuses`. Init semantics are unchanged.
+func TestEphemeralContainersAreListedLastAndMarked(t *testing.T) {
+	got := containersOf(nodeFrom(t, `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api-0
+  namespace: shop
+spec:
+  initContainers:
+    - name: migrate
+      image: migrate:1
+  containers:
+    - name: api
+      image: api:1
+  ephemeralContainers:
+    - name: kt-debug-ab12c
+      image: busybox:1.36
+      command: [sh]
+      stdin: true
+      tty: true
+      targetContainerName: api
+    - name: debugger-old
+      image: nicolaka/netshoot
+status:
+  initContainerStatuses:
+    - name: migrate
+      ready: false
+      restartCount: 0
+      state:
+        terminated:
+          exitCode: 0
+          reason: Completed
+  containerStatuses:
+    - name: api
+      ready: true
+      restartCount: 1
+      state:
+        running: {}
+  ephemeralContainerStatuses:
+    - name: kt-debug-ab12c
+      ready: false
+      restartCount: 0
+      state:
+        running: {}
+`), "Pod")
+
+	if len(got) != 4 {
+		t.Fatalf("%d containers, want migrate, api and two debug containers: %+v", len(got), got)
+	}
+	names := []string{got[0].Name, got[1].Name, got[2].Name, got[3].Name}
+	if strings.Join(names, ",") != "migrate,api,kt-debug-ab12c,debugger-old" {
+		t.Errorf("order %v, want init, app, then ephemeral in the order added", names)
+	}
+	if !got[0].Init || got[0].Ephemeral || got[1].Init || got[1].Ephemeral {
+		t.Errorf("init and app containers were re-marked: %+v %+v", got[0], got[1])
+	}
+	debug := got[2]
+	if !debug.Ephemeral || debug.Init || debug.Target != "api" || debug.Image != "busybox:1.36" {
+		t.Errorf("the debug container reads %+v", debug)
+	}
+	if debug.Status == nil || debug.Status.State != ContainerRunning {
+		t.Errorf("the debug container's status is %+v, want running from ephemeralContainerStatuses", debug.Status)
+	}
+	old := got[3]
+	if !old.Ephemeral || old.Target != "" {
+		t.Errorf("a debug container with no target reads %+v", old)
+	}
+	if old.Status == nil || old.Status.State != ContainerUnreported {
+		t.Errorf("an unreported debug container's status is %+v, want unreported", old.Status)
+	}
+	if got[1].Status == nil || got[1].Status.State != ContainerRunning || got[1].Status.Restarts != 1 {
+		t.Errorf("the app container's status changed: %+v", got[1].Status)
+	}
+}

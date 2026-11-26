@@ -7,7 +7,8 @@ import (
 
 // containerViews carries what a pod is made of to the wire, unfiltered. Init
 // containers stay first with their flag (the order they run in; the flag keeps
-// one that will not start from reading as a crashing app container). Env and
+// one that will not start from reading as a crashing app container); ephemeral
+// containers come last with theirs. Env and
 // Imported stay apart: Env is written in the pod spec, Imported was learned by
 // reading another object.
 func containerViews(containers []detail.Container) []api.PodContainer {
@@ -20,6 +21,9 @@ func containerViews(containers []detail.Container) []api.PodContainer {
 			Name:  container.Name,
 			Image: container.Image,
 			Init:  container.Init,
+			// A debug container, after the app containers, with the one it targets.
+			Ephemeral: container.Ephemeral,
+			Target:    container.Target,
 			// Set only where it is not the tag's default, so the surprising case stands out.
 			PullPolicy: container.PullPolicy,
 			// Element by element, as the spec gives them.

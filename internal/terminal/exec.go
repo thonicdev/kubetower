@@ -187,7 +187,7 @@ func (t *Terminal) serveExec(w http.ResponseWriter, r *http.Request, speaks wire
 		// be written, or the held answer changed): said as a refusal, not as a shell
 		// that ended.
 		t.logf("%s", identity.Line(r.Context(), "exec refused on %q %s/%s: %v", name, namespace, pod, err))
-		stream.refuse(stateUnreadable, codeUnclassified, fmt.Sprintf("the shell was not opened: %v", err))
+		stream.refuse(execRefusal(err))
 		return
 	}
 	// `exec` terminates, so an exit is expected (api/websocket.md). streamExec says
@@ -203,6 +203,30 @@ func (t *Terminal) serveExec(w http.ResponseWriter, r *http.Request, speaks wire
 // a multi-line error would staircase off the pane. The length is not capped: a
 // pane wraps and scrolls, and the sentence an admission webhook or a kubelet
 // writes is what the operator needs whole.
+
+// execRefusal is the framed refusal for a shell that was not opened: no_shell
+// where the runtime said the program is not in the image, unclassified for
+// anything else.
+func execRefusal(err error) (state, code, message string) {
+	if notInImage(err) {
+		return stateUnreadable, codeNoShell, "the shell was not opened: " + textutil.FirstLine(err.Error())
+	}
+	return stateUnreadable, codeUnclassified, fmt.Sprintf("the shell was not opened: %v", err)
+}
+
+// noShellMessage is the sentence for a shell whose program is not in the
+// image, naming the program and the container so the pane says which.
+func noShellMessage(target execTarget, err error) string {
+	program := "the shell"
+	if len(target.command) > 0 {
+		program = target.command[0]
+	}
+	where := "this container's image"
+	if target.container != "" {
+		where = "the image of container " + target.container
+	}
+	return program + " is not in " + where + ": " + textutil.FirstLine(err.Error())
+}
 
 type execTarget struct {
 	cluster   string
@@ -332,6 +356,14 @@ func (t *Terminal) streamExec(ctx context.Context, s *stream, target execTarget)
 		switch {
 		case streamErr == nil:
 			s.ended(nil)
+		case notInImage(streamErr):
+			// The shell program is not in the image. It surfaces here, after the
+			// door opened, since the runtime only says so once the stream has been
+			// asked for: its own branchable code, because the remedy is another
+			// container rather than another try. Ahead of the exit status, which a
+			// runtime may also report (126, 127) for the same failure: the sentence
+			// is the more precise of the two.
+			s.refuse(stateUnreadable, codeNoShell, noShellMessage(target, streamErr))
 		case errors.As(streamErr, &status):
 			code := status.ExitStatus()
 			s.ended(&code)

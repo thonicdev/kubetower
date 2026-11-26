@@ -85,6 +85,9 @@ const (
 	stateForbidden   = "forbidden"
 	stateUnreadable  = "unreadable"
 	stateUnreachable = "unreachable"
+	// stateAbsent is a thing asked for that is not there: a debug session's pod,
+	// or its target container.
+	stateAbsent = "absent"
 
 	// codeVerbDenied is this console refusing, rather than the cluster: the
 	// read-only fence, or a profile with no local shell.
@@ -98,6 +101,23 @@ const (
 	// codeUnclassified is anything that went wrong opening a session where this
 	// package knows the sentence and not the category.
 	codeUnclassified = "unclassified"
+	// codeNoSuchObject goes with stateAbsent.
+	codeNoSuchObject = "no_such_object"
+	// codeContainerNotStarted is a debug container that will not start on its
+	// own: an image that cannot be pulled, or a container that ended.
+	codeContainerNotStarted = "container_not_started"
+	// codeTimeout is a debug container still not running at the wait's bound.
+	codeTimeout = "timeout"
+	// codeNoShell is a pod shell whose program the container runtime could not
+	// find in the image (notInImage): a distroless or scratch image, where the
+	// remedy is a container that has one (a debug container), not a retry.
+	codeNoShell = "no_shell"
+	// codePodSecurity is a debug container the API server refused because the
+	// namespace's Pod Security level forbids it, which no RBAC grant changes.
+	codePodSecurity = "pod_security"
+	// codeAdmissionDenied is a debug container an admission webhook refused: a
+	// policy engine's decision, in the namespace or cluster, not RBAC.
+	codeAdmissionDenied = "admission_denied"
 )
 
 // serverFrame is what the framed wire sends: one type for every frame kind, so

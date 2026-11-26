@@ -27,6 +27,9 @@ func (r apiReads) GetResource(ctx context.Context, ref api.ObjectRef) (api.Detai
 	page.Actions = r.s.gatedActions(ctx, ref, r.s.offeredActions(ref, object, writable, note))
 	// Shell, under the server profile: asked for this pod, as the verbs are.
 	page.Shell = r.s.shellFor(ctx, ref)
+	// Debug, on both profiles: refused with the guardrail's sentence on a
+	// read-only cluster, asked for this pod under the server profile.
+	page.Debug = r.s.debugFor(ctx, ref, writable, note)
 	// Whether this console forwards at all is the server's state, not the object's.
 	page.Ports = r.s.portsFor(ref.Cluster, page.Ports)
 	return page, nil

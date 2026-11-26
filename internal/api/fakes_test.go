@@ -778,6 +778,18 @@ func (fakeReads) GetResource(context.Context, ObjectRef) (DetailPage, *Failure) 
 				},
 				Status: &ContainerStatus{State: ContainerRunning, Ready: true, Restarts: 2},
 			},
+			// A debug container added since, after the app containers: marked, with
+			// the container whose processes it joined.
+			{
+				Name: "kt-debug-x7k2p", Image: "busybox:1.36", Ephemeral: true, Target: "api",
+				Command: []string{"sh"},
+				Probes: []ContainerProbe{
+					{Kind: "liveness", State: ProbeAbsent},
+					{Kind: "readiness", State: ProbeAbsent},
+					{Kind: "startup", State: ProbeAbsent},
+				},
+				Status: &ContainerStatus{State: ContainerRunning, Ready: false},
+			},
 		},
 		EnvNote: "2 of 5 envFrom imports were not read: this panel stops after 3.",
 		Certificates: &CertificateSet{
@@ -847,6 +859,9 @@ func (fakeReads) GetResource(context.Context, ObjectRef) (DetailPage, *Failure) 
 		// members: the person may and the console's ServiceAccount may not.
 		Shell: &ShellOffer{Permitted: false, Reason: ptrTo(Because(CodeVerbDenied,
 			"you may, but this console may not: its ServiceAccount is not granted create on pods/exec in default"))},
+		// Debug on a read-only cluster: refused with the marking's sentence.
+		Debug: &ShellOffer{Permitted: false, Reason: ptrTo(Because(CodeVerbDenied,
+			"prod is marked read-only in KT_READONLY_CLUSTERS; changes are refused there"))},
 	}, nil
 }
 

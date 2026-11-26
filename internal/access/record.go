@@ -93,6 +93,7 @@ func (g *Gate) Record(ctx context.Context, act, cluster string, attrs Attributes
 	}
 	if n, ok := ctx.Value(noteKey{}).(Note); ok {
 		r.Extension, r.Command = n.Extension, n.Command
+		r.Image, r.Target, r.Container = n.Image, n.Target, n.Container
 	}
 	if actingAsConsole(ctx) {
 		r.AttributeToConsole(ctx)
@@ -111,6 +112,11 @@ type Note struct {
 	// Command is the argv of a command run in a pod, as recorded. Never a
 	// secret: whatever is here is written to the audit log.
 	Command string
+	// Image, Target and Container describe a debug container being added: its
+	// image, the container it targets, and its own name (audit.Record).
+	Image     string
+	Target    string
+	Container string
 }
 
 type noteKey struct{}

@@ -28,6 +28,9 @@ func (a *API) channels(m *http.ServeMux) {
 	if a.deps.Channels.Offers(ChannelExec) {
 		m.HandleFunc("/api/c/{cluster}/ws/exec", a.upgrade(a.channelExec))
 	}
+	if a.deps.Channels.Offers(ChannelDebug) {
+		m.HandleFunc("/api/c/{cluster}/ws/debug", a.upgrade(a.channelDebug))
+	}
 	if a.offersNodeShell() {
 		m.HandleFunc("/api/c/{cluster}/ws/nodeshell", a.upgrade(a.channelNodeShell))
 	}
@@ -84,6 +87,14 @@ func (a *API) channelExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.deps.Channels.ServeExec(w, r, name)
+}
+
+func (a *API) channelDebug(w http.ResponseWriter, r *http.Request) {
+	name, ok := a.cluster(w, r)
+	if !ok {
+		return
+	}
+	a.deps.Channels.ServeDebug(w, r, name)
 }
 
 // channelNodeShell is the one place a plan token crosses protocols: the
