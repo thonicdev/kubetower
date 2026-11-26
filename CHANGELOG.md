@@ -48,6 +48,18 @@ dialog draws it first, as a New extra line.
   pod's tiles come from one read of its namespace, and the labels a pod's tile
   trusts are the server's (#151).
 
+### Fixed
+
+- **Windows: a WebView2 failure refuses the window instead of ending
+  KubeTower.** When the WebView2 runtime cannot create its environment or
+  controller (a locked or full data folder, a policy), the library KubeTower
+  draws its windows with called `log.Fatalf` and the whole console exited, its
+  tunnels with it. A tool window is now refused (409) and its tunnel stays
+  open; the console's own window falls back to a browser window, and the
+  window that failed is closed rather than left blank on screen. The library
+  is carried patched in `third_party/go-webview2` until upstream takes the
+  change (#84).
+
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
 ### Added

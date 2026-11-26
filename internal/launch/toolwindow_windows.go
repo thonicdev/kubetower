@@ -42,9 +42,24 @@ type windowsToolHost struct {
 	tools   *toolWindows
 }
 
-func (h windowsToolHost) openToolWindow(id int, target toolWindowTarget) {
-	h.console.Dispatch(func() { drawToolWindow(h.tools, id, target) })
+// openToolWindow waits, a bounded time, for the window thread's answer: a
+// window WebView2 could not be drawn in is a refusal the API says (#84). Past
+// toolWindowBuildWait it is still being built, and reports itself.
+func (h windowsToolHost) openToolWindow(id int, target toolWindowTarget) error {
+	done := make(chan bool, 1)
+	h.console.Dispatch(func() { done <- drawToolWindow(h.tools, id, target) })
+	select {
+	case drawn := <-done:
+		if !drawn {
+			return errToolWindowRefused
+		}
+	case <-time.After(toolWindowBuildWait):
+	}
+	return nil
 }
+
+// toolWindowBuildWait bounds how long opening a tool window waits for it.
+const toolWindowBuildWait = 20 * time.Second
 
 func (h windowsToolHost) closeToolWindow(id int) {
 	h.console.Dispatch(func() {
@@ -150,14 +165,15 @@ func registerToolWindowClass() {
 
 // drawToolWindow draws one window. Main thread only. Whatever fails, the
 // window is reported closed, so the bookkeeping and the tunnel follow.
-func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) {
-	drawn := false
+func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) (drawn bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[kubetower] the tool window for %s failed inside the WebView2 runtime (%v)", loggableURL(target.URL), r)
+			drawn = false
 		}
 		if !drawn {
-			tools.closed(id)
+			// Refused, not closed: nothing was shown, so its tunnel stays.
+			tools.refused(id)
 		}
 	}()
 	toolWindowClassOnce.Do(registerToolWindowClass)
@@ -169,6 +185,7 @@ func drawToolWindow(tools *toolWindows, id int, target toolWindowTarget) {
 	if _, drawn = buildToolWindow(b, toolWindowsBuilding); drawn {
 		log.Printf("[kubetower] opened %s in a tool window, %q", loggableURL(target.URL), target.Title)
 	}
+	return drawn
 }
 
 // toolWindowsBuilding is every tool window whose engine is being embedded:
@@ -205,7 +222,11 @@ func (b *windowsToolBuilder) embed(hwnd uintptr) bool {
 	// No message callback: web messages are turned off in hold, and the
 	// engine drops a message that has no callback.
 	if !embedToolWindow(b.chromium, hwnd) {
-		log.Printf("[kubetower] the tool window for %s was not drawn: WebView2 could not be embedded", loggableURL(b.target.URL))
+		why := "WebView2 could not be embedded"
+		if err := b.chromium.Error(); err != nil {
+			why = "WebView2 could not be embedded: " + err.Error()
+		}
+		log.Printf("[kubetower] the tool window for %s was not drawn: %s", loggableURL(b.target.URL), why)
 		return false
 	}
 	return true
