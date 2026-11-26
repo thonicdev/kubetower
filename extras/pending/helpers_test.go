@@ -114,6 +114,10 @@ func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extensio
 	return extension.DNS{}, nil
 }
 
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 // fieldPath is where each selectable field lives in the object.
 var fieldPath = map[string][]string{
 	"status.phase":        {"status", "phase"},

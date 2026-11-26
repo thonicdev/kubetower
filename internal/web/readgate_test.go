@@ -157,6 +157,10 @@ func roleBindings(q accesstest.Question) (bool, error) {
 			if read {
 				return true, nil
 			}
+		case "oidc:shop-claims":
+			if a.Namespace == "shop" && a.Verb == "list" && a.Resource == "persistentvolumeclaims" {
+				return true, nil
+			}
 		case "oidc:shop-secrets":
 			if a.Namespace == "shop" && a.Verb == "list" && a.Resource == "secrets" {
 				return true, nil

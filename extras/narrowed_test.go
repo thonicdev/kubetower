@@ -286,6 +286,10 @@ func (h *clusterHost) DNSWindow(*http.Request, string, extension.DNSSpan) (exten
 	return extension.DNS{}, nil
 }
 
+func (h *clusterHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 func (h *clusterHost) Forward(context.Context, string, string, string, int) (extension.Tunnel, error) {
 	return extension.Tunnel{}, errors.New("no tunnel in this test")
 }

@@ -245,6 +245,10 @@ func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extensio
 	return extension.DNS{}, nil
 }
 
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 func (h *fakeHost) Usage(_ *http.Request, _ string, nodes []string) (extension.Usage, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
