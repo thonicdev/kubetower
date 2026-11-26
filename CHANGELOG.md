@@ -13,6 +13,15 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+### Added
+
+- **Updates install themselves.** Settings › Infos' "Install updates"
+  becomes "Install updates automatically", on by default: a newer release is
+  downloaded and verified on its own, then installed as KubeTower quits, so
+  nothing open is interrupted, or, set to At once, as soon as no terminal and
+  no port-forward is open. A .deb or .rpm, which asks for a password, stops at
+  Ready with Install. Off, Download and Install stay by hand (#122).
+
 ### Changed
 
 - **What's new lists New and Fixed.** Each highlight is one line under New,

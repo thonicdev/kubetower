@@ -244,7 +244,7 @@ func (a *API) getUpdateInstall(w http.ResponseWriter, _ *http.Request) {
 	writeOK(w, a.deps.Installer.UpdateInstall())
 }
 
-// saveUpdateInstall writes the "Install updates" setting.
+// saveUpdateInstall writes the "Install updates automatically" setting.
 func (a *API) saveUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	var body UpdateInstallWrite
 	if !decode(w, r, maxBody, &body) {
@@ -254,7 +254,15 @@ func (a *API) saveUpdateInstall(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "enabled is required")
 		return
 	}
-	out, err := a.deps.Installer.SetInstallUpdates(*body.Enabled)
+	when := ""
+	if body.When != nil {
+		when = *body.When
+		if when != "quit" && when != "now" {
+			badRequest(w, `when must be "quit" or "now"`)
+			return
+		}
+	}
+	out, err := a.deps.Installer.SetInstallUpdates(*body.Enabled, when)
 	if err != nil {
 		fail(w, err)
 		return

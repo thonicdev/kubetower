@@ -96,7 +96,7 @@ type SetupInfo struct {
 // UpdateInstaller is internal/updater.Updater, as the Settings page drives it.
 type UpdateInstaller interface {
 	Status() updater.Status
-	SetEnabled(on bool) (updater.Status, error)
+	Set(on bool, when string) (updater.Status, error)
 	Download() (updater.Status, error)
 	Install(ctx context.Context) (updater.Status, error)
 	OpenFolder() (updater.Status, error)

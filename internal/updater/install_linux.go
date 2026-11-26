@@ -35,7 +35,7 @@ func installAppImage(_ context.Context, plan Plan) error {
 	if err := replaceFile(plan.Installation.Path, plan.File); err != nil {
 		return err
 	}
-	return startAgain(plan.Installation.Path)
+	return startAgainUnlessQuit(plan)
 }
 
 // installTar replaces the binary from the tar.gz's root `kubetower`.
@@ -43,7 +43,7 @@ func installTar(_ context.Context, plan Plan) error {
 	if err := replaceFromTarGz(plan.Installation.Path, plan.File, "kubetower"); err != nil {
 		return err
 	}
-	return startAgain(plan.Installation.Path)
+	return startAgainUnlessQuit(plan)
 }
 
 // PromptWait bounds the password prompt and the package install behind it: a

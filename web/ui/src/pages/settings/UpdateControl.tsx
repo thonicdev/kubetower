@@ -2,8 +2,11 @@ import type { ReactNode } from 'react';
 import { useLocation } from 'react-router';
 
 import { btnPrimary, btnSecondary } from '../../components/buttons';
+import { focusRingTight } from '../../focus';
+import { Icon } from '../../components/Icon';
 import { Pill } from '../../components/Pill';
-import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from './updateInstall';
+import { ExtraSwitch } from './extraParts';
+import { needsPerson, PHASES, useForgetRefusals, useUpdateInstall, waitsOn, type UpdateInstall } from './updateInstall';
 
 /**
  * The update's control, in the place it is drawn: the banner atop Settings and
@@ -13,7 +16,9 @@ import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from 
  *   idle        Download
  *   downloading a bar and the megabytes
  *   verifying   Verifying
- *   ready       Ready, what the restart ends, Restart to update
+ *   ready       Ready, then by hand what the restart ends and Restart to
+ *               update; automatic (#122), On quit, the wait (open work or a
+ *               password) and Restart now, or Install for a password
  *   installing  Installing…, then Failed and Retry if the console is not back
  *               within INSTALL_TIMEOUT_MS
  *   failed      the reason, Retry
@@ -22,12 +27,12 @@ import { PHASES, useForgetRefusals, useUpdateInstall, type UpdateInstall } from 
  *
  * Two clicks and never one: Download only fetches and verifies; Restart to
  * update is a second request, because it ends the terminals and port-forwards
- * it counts. Nothing is drawn where installing is off or not supported here.
+ * it counts. Nothing is drawn where installing is not supported here.
  */
 export function UpdateControl({ prominent = false }: { prominent?: boolean }): ReactNode {
   const { latest, install, offered, busy, timedOut, waitAgain, refused, download, restart, openFolder } =
     useUpdateInstall();
-  if (install === undefined || !install.enabled || !install.supported) return null;
+  if (install === undefined || !install.supported) return null;
   // A download in any state is drawn; idle only while a newer release exists.
   if (install.phase === 'idle' && !offered) return null;
   if (!PHASES.has(install.phase)) return null;
@@ -50,7 +55,10 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
         </span>
       );
       break;
-    case 'ready':
+    case 'ready': {
+      const auto = install.enabled;
+      const waits = waitsOn(install);
+      const ends = endsText(install);
       step = (
         <>
           <span data-update-step="ready">
@@ -58,7 +66,37 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
               Ready {install.version}
             </Pill>
           </span>
-          <Ends install={install} />
+          {auto && waits === undefined && install.when === 'quit' ? (
+            <span data-update-on-quit="">
+              <Pill tone="info" title="Installed when KubeTower closes">
+                <span className="inline-flex items-center gap-1">
+                  <Icon name="clock" />
+                  On quit
+                </span>
+              </Pill>
+            </span>
+          ) : null}
+          {waits === 'open' && ends !== undefined ? (
+            <span data-update-waits="open">
+              <Pill tone="warn" title="Installs once these are closed">
+                <span className="inline-flex items-center gap-1">
+                  <Icon name="hourglass" />
+                  {ends}
+                </span>
+              </Pill>
+            </span>
+          ) : null}
+          {waits === 'password' ? (
+            <span data-update-waits="password">
+              <Pill tone="warn" title="Your password is asked on Install">
+                <span className="inline-flex items-center gap-1">
+                  <Icon name="lock" />
+                  Password
+                </span>
+              </Pill>
+            </span>
+          ) : null}
+          {auto ? null : <Ends install={install} />}
           {install.reason === undefined || install.reason === '' ? null : (
             <span className="min-w-0 max-w-full truncate text-bad" data-update-reason="" title={install.reason}>
               {install.reason}
@@ -66,18 +104,20 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           )}
           <button
             type="button"
-            className={btnPrimary}
+            className={!auto || waits === 'password' ? btnPrimary : btnSecondary}
             disabled={busy}
+            title={auto && ends !== undefined ? `Closes ${ends}` : undefined}
             onClick={() => {
               if (!busy) restart.mutate();
             }}
             data-update-restart=""
           >
-            Restart to update
+            {!auto ? 'Restart to update' : waits === 'password' ? 'Install' : 'Restart now'}
           </button>
         </>
       );
       break;
+    }
     case 'installing':
       step = timedOut ? (
         <>
@@ -200,30 +240,36 @@ function Progress({ install }: { install: UpdateInstall }): ReactNode {
   );
 }
 
-/** What the restart ends, as one warn badge; nothing when nothing is open. */
-function Ends({ install }: { install: UpdateInstall }): ReactNode {
+/** What the restart ends, as words; nothing when nothing is open. */
+function endsText(install: UpdateInstall): string | undefined {
   const parts: string[] = [];
   const { terminals, forwards } = install.ends;
   if (terminals > 0) parts.push(`${String(terminals)} ${terminals === 1 ? 'terminal' : 'terminals'}`);
   if (forwards > 0) parts.push(`${String(forwards)} ${forwards === 1 ? 'forward' : 'forwards'}`);
-  if (parts.length === 0) return null;
+  return parts.length === 0 ? undefined : parts.join(' · ');
+}
+
+/** What the restart ends, as one warn badge; nothing when nothing is open. */
+function Ends({ install }: { install: UpdateInstall }): ReactNode {
+  const ends = endsText(install);
+  if (ends === undefined) return null;
   return (
     <span data-update-ends="">
       <Pill tone="warn" title="Closed by the restart">
-        {parts.join(' · ')}
+        {ends}
       </Pill>
     </span>
   );
 }
 
-/** Settings' banner: shown while a newer release can be installed, or one is
- *  on its way. */
+/** Settings' banner: by hand, while a newer release can be installed or one is
+ *  on its way; automatic (#122), only while it waits on a person. */
 export function UpdateBanner(): ReactNode {
   const { latest, install, offered } = useUpdateInstall();
   // The banner is on every Settings tab: it forgets a refusal for all of them.
   useForgetRefusals(useLocation().pathname);
-  if (install === undefined || !install.enabled || !install.supported) return null;
-  if (!offered && install.phase === 'idle') return null;
+  if (install === undefined || !install.supported) return null;
+  if (!needsPerson(install, offered)) return null;
   if (!PHASES.has(install.phase)) return null;
   const version = install.version ?? latest;
   return (
@@ -241,25 +287,58 @@ export function UpdateBanner(): ReactNode {
   );
 }
 
-/** "Install updates", where this console can install. */
+/** When an automatic update installs, as the two choices draw it. */
+const WHEN = [
+  { value: 'quit', label: 'On quit', title: 'Installed when KubeTower closes' },
+  { value: 'now', label: 'At once', title: 'Installed as soon as no terminal or forward is open' },
+] as const;
+
+/**
+ * "Install updates automatically" (#122), where this console can install: a
+ * switch, and when it installs - on quit (the default) or at once. Off, the
+ * two choices are drawn but not offered, and Download stays by hand.
+ */
 export function InstallUpdatesSetting(): ReactNode {
   const { install, allow } = useUpdateInstall();
   if (install?.supported !== true) return null;
+  const on = install.enabled;
   return (
-    <label className="mt-1 flex items-center gap-2 text-xs text-fg" data-install-updates="">
-      <input
-        type="checkbox"
-        checked={install.enabled}
+    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-fg" data-install-updates={on ? 'on' : 'off'}>
+      <ExtraSwitch
+        on={on}
+        label="Install updates automatically"
         disabled={allow.isPending}
-        onChange={(event) => allow.mutate(event.target.checked)}
+        onToggle={() => allow.mutate({ enabled: !on })}
       />
-      Install updates
+      <span>Install updates automatically</span>
+      <span role="radiogroup" aria-label="When" className={`inline-flex overflow-hidden rounded-md border border-line ${on ? '' : 'opacity-50'}`}>
+        {WHEN.map((choice) => {
+          const picked = install.when === choice.value;
+          return (
+            <button
+              key={choice.value}
+              type="button"
+              role="radio"
+              aria-checked={picked}
+              disabled={!on || allow.isPending}
+              title={choice.title}
+              onClick={() => {
+                if (!picked) allow.mutate({ enabled: true, when: choice.value });
+              }}
+              data-install-when={choice.value}
+              className={`px-2 py-0.5 disabled:cursor-not-allowed ${focusRingTight} ${picked ? 'bg-accent text-fg' : 'text-muted hover:text-fg'}`}
+            >
+              {choice.label}
+            </button>
+          );
+        })}
+      </span>
       {allow.error === null ? null : (
         <span className="text-bad" role="alert">
           {allow.error.message}
         </span>
       )}
-    </label>
+    </div>
   );
 }
 

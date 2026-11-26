@@ -367,24 +367,55 @@ func TestADevelopmentBuildIsNeverUpdated(t *testing.T) {
 	}
 }
 
-func TestTheSettingOffRefusesTheDownloadAndIsKept(t *testing.T) {
+// "Install updates automatically" (#122): on and on quit by default; off, a
+// download by hand still works; both are kept for the next start; an unknown
+// moment is refused and changes nothing.
+func TestTheAutomaticSettingIsKeptAndOffStaysByHand(t *testing.T) {
 	f := newFake(t)
 	dir := t.TempDir()
 	u := f.updater(dir, &recorder{}, nil)
-	if s, err := u.SetEnabled(false); err != nil || s.Enabled {
+	if s := u.Status(); !s.Enabled || s.When != WhenQuit || s.Password {
+		t.Fatalf("defaults: %+v", s)
+	}
+	if s, err := u.Set(false, WhenNow); err != nil || s.Enabled || s.When != WhenNow {
 		t.Fatalf("%+v %v", s, err)
 	}
-	if _, err := u.Download(); !errors.Is(err, ErrDisabled) {
-		t.Fatalf("download with the setting off: %v", err)
+	if _, err := u.Download(); err != nil {
+		t.Fatalf("a download by hand with the setting off: %v", err)
+	}
+	if s := settle(t, u); s.Phase != Ready {
+		t.Fatalf("%+v", s)
 	}
 	// Read back by a new process.
-	if again := f.updater(dir, &recorder{}, nil); again.Status().Enabled {
-		t.Error("the setting off did not survive a restart")
+	if again := f.updater(dir, &recorder{}, nil).Status(); again.Enabled || again.When != WhenNow {
+		t.Errorf("not kept across a restart: %+v", again)
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.hits) != 0 {
-		t.Errorf("asked GitHub with the setting off: %v", f.hits)
+	// An empty moment keeps the one set; an unknown one is refused.
+	if s, err := u.Set(true, ""); err != nil || !s.Enabled || s.When != WhenNow {
+		t.Fatalf("%+v %v", s, err)
+	}
+	if s, err := u.Set(false, "later"); !errors.Is(err, ErrWhen) || !s.Enabled {
+		t.Fatalf("an unknown moment: %+v %v", s, err)
+	}
+	if again := f.updater(dir, &recorder{}, nil).Status(); !again.Enabled || again.When != WhenNow {
+		t.Errorf("the refused write was kept: %+v", again)
+	}
+	// The name the manual setting had: off before is off now.
+	old := t.TempDir()
+	if err := os.WriteFile(filepath.Join(old, settingsFile), []byte(`{"installUpdates":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.updater(old, &recorder{}, nil).Status(); s.Enabled || s.When != WhenQuit {
+		t.Errorf("an older setting off: %+v", s)
+	}
+}
+
+func TestAPackageAsksForAPassword(t *testing.T) {
+	f := newFake(t)
+	for kind, want := range map[Kind]bool{LinuxDeb: true, LinuxRPM: true, LinuxTar: false, LinuxAppImage: false, WindowsSetup: false} {
+		if got := f.updater(t.TempDir(), &recorder{}, func(o *Options) { o.Installation.Kind = kind }).Status().Password; got != want {
+			t.Errorf("%s: password %v", kind, got)
+		}
 	}
 }
 

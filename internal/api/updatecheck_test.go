@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +162,38 @@ func TestTheInstallWritesAreGuarded(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("the installer was reached %d times by refused requests", calls)
+	}
+}
+
+// The automatic setting's write (#122): `when` is on quit or now, and
+// anything else is refused before the installer is reached.
+func TestTheSettingsWriteTakesWhenAndRefusesAnUnknownOne(t *testing.T) {
+	a := New(Deps{
+		Sessions: fakeSessions{}, Profile: fakeProfile{}, Clusters: fakeClusters{},
+		Settings: fakeSettings{}, Prefs: fakePrefs{}, Reads: fakeReads{},
+		Acts: fakeActs{}, Dock: fakeDock{}, Probe: fakeProbe{},
+		Installer:   fakeInstaller{},
+		AllowOrigin: func(*http.Request, string) bool { return true },
+	})
+	put := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/api/settings/update", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set(requestMarker, "1")
+		w := httptest.NewRecorder()
+		a.mux.ServeHTTP(w, r)
+		return w
+	}
+	for body, want := range map[string]string{
+		`{"enabled":true,"when":"now"}`: "now",
+		`{"enabled":false}`:             "quit",
+	} {
+		w := put(body)
+		var got UpdateInstall
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.When != want {
+			t.Errorf("%s: %d %s, want when %q", body, w.Code, w.Body, want)
+		}
+	}
+	if w := put(`{"enabled":true,"when":"later"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("an unknown when: %d %s", w.Code, w.Body)
 	}
 }

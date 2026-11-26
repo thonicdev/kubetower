@@ -136,7 +136,23 @@ has not been tried on a real Linux desktop yet.
 
 The desktop checks for a newer release once a day, an hour after a check that
 failed, and on **Check now** in Settings › Infos (`KT_UPDATE_CHECK=off` turns the
-check off). It installs it from **Settings**, in two clicks:
+check off). **Install updates automatically**, in Settings › Infos and on by
+default, downloads and verifies a newer release on its own, then installs it
+either **On quit** (the default: as KubeTower closes, starting nothing; the
+next start runs the new version) or **At once** (as soon as no terminal and no
+port-forward is open, restarting KubeTower). A `.deb` or `.rpm`, whose install
+asks for a password, is never installed unasked: it waits, verified, for
+**Install**. With automatic updates, whether KubeTower's folder can be
+written is settled once the download is verified, while KubeTower runs: where
+it cannot, Settings says **Not writable** at once (below), and nothing is tried
+on quit. An install that fails on quit is said at the next start, with its
+reason - on Windows, a setup that failed after KubeTower closed shows as the
+next start still running the older version - and that release is neither
+downloaded nor tried again until **Retry**. Under
+`--unattended`, nothing is installed on quit: a service's stop is nobody
+quitting.
+
+Turned off, KubeTower installs from **Settings**, in two clicks:
 
 1. **Download** fetches the release file for this installation from GitHub over
    HTTPS and keeps it only when `checksums.txt.sig` verifies against the key
@@ -147,8 +163,8 @@ check off). It installs it from **Settings**, in two clicks:
    and port-forwards it ends are counted beside the button.
 
 A badge on Settings, and on the Dock icon on macOS, says a newer release is
-there. **Install updates**, in Settings › Infos, turns the download and the
-install off; the check stays.
+there; with automatic updates, the Settings badge appears only when the update
+waits on you (a password, open work with At once, a failure).
 
 | Installation | How it is replaced |
 |---|---|

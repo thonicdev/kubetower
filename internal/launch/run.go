@@ -298,6 +298,16 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 		p.updates.Check(ctx)
 		p.updates.Watch(ctx, update.RecheckEvery)
 	}()
+	// "Install updates automatically" (#122): downloads what the check found
+	// and, set to install now, installs once nothing a restart closes is open.
+	// On quit is quit's own step, below.
+	if p.installer != nil {
+		open := openWorkOf(w)
+		safego.Go("update: automatic", func() error {
+			p.installer.Auto(ctx, updater.AutoEvery, func() string { return newerOf(p.updates.Report()) }, open)
+			return nil
+		}, nil)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -375,12 +385,12 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 		close(windowDone)
 		<-watcherDone
 		if closed {
-			shutdown(srv, w.shells)
+			p.finish(ctx, func() { shutdown(srv, w.shells) })
 			return serveFailure(served)
 		}
 		select {
 		case <-interrupted:
-			shutdown(srv, w.shells)
+			p.finish(ctx, func() { shutdown(srv, w.shells) })
 			return serveFailure(served)
 		default:
 		}
@@ -393,9 +403,34 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 	case <-stop:
 	case <-ctx.Done():
 	}
-	shutdown(srv, w.shells)
+	p.finish(ctx, func() { shutdown(srv, w.shells) })
 	return serveFailure(served)
 }
+
+// newerOf is the release the update check found newer than this build, or
+// empty.
+func newerOf(report update.Report) string {
+	if report.State != update.Newer {
+		return ""
+	}
+	return report.Latest
+}
+
+// finish is every quit's last step: stop the server and the shells, then
+// install a verified update where "Install updates automatically" says on
+// quit (#122), bounded by updater.QuitWait; the next start runs it.
+//
+// Nothing installs where there is no installer, nor under --unattended, where
+// a service's stop or restart is nobody quitting.
+func (p *profile) finish(ctx context.Context, stop func()) {
+	stop()
+	if p.installer != nil && !unattended {
+		installOnQuit(ctx, p.installer)
+	}
+}
+
+// installOnQuit is updater.InstallOnQuit, held in a variable for the tests.
+var installOnQuit = func(ctx context.Context, u *updater.Updater) { u.InstallOnQuit(ctx) }
 
 // serveFailure is the error the server stopped with on its own, or nil when
 // it was stopped: by a signal, the window, or the caller's context.

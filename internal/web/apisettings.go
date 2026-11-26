@@ -254,6 +254,8 @@ func updateInstallOf(s *Server, status updater.Status) api.UpdateInstall {
 	out := api.UpdateInstall{
 		Phase:        string(status.Phase),
 		Enabled:      status.Enabled,
+		When:         status.When,
+		Password:     status.Password,
 		Supported:    status.Supported,
 		Installation: string(status.Installation),
 		Version:      status.Version,

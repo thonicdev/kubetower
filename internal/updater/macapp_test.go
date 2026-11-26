@@ -116,6 +116,18 @@ func TestATranslocatedAppOpensTheImageAndIsInstalledByHand(t *testing.T) {
 	}
 }
 
+// On quit, a translocated app opens nothing: no Finder, unasked, as
+// KubeTower closes (#122).
+func TestOnQuitATranslocatedAppOpensNothing(t *testing.T) {
+	f, relaunched := stubMac(t, "0.1.3")
+	plan := Plan{File: "/state/update/kubetower-0.1.3-arm64.dmg", Quit: true,
+		Installation: Installation{Kind: MacApp, Path: "/private/var/folders/x/T/AppTranslocation/ABC/d/KubeTower.app"}}
+	err := installApp(context.Background(), plan)
+	if !errors.Is(err, ErrNotWritable) || len(f.calls) != 0 || len(*relaunched) != 0 {
+		t.Fatalf("%v, calls %q, relaunched %q", err, f.calls, *relaunched)
+	}
+}
+
 func TestARestartThatFailsAfterTheSwapIsAnInstalledApp(t *testing.T) {
 	stubMac(t, "0.1.3")
 	restart = func(string, []string) error { return errors.New("no open") }

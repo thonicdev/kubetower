@@ -55,14 +55,23 @@ func psLog(log string) string {
 // Every step goes to the install log: the wait, the setup's arguments and its
 // exit code, the restart - so a real run that did not update says where it
 // stopped (#96).
-func setupScript(pid int, setup, exe string, args []string, log string) string {
+func setupScript(pid int, setup, exe string, args []string, log string, restart bool) string {
 	dir := "/D=" + windowsDir(exe)
 	return psLog(log) + fmt.Sprintf("L %s; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
 		"L %s; try { $p = Start-Process -FilePath %s -ArgumentList '/S',%s -Wait -PassThru; L ('setup exit code ' + $p.ExitCode) } "+
-		"catch { L ('setup did not run: ' + $_.Exception.Message) }; "+
-		"L %s; try { Start-Process -FilePath %s%s } catch { L ('restart failed: ' + $_.Exception.Message) }",
+		"catch { L ('setup did not run: ' + $_.Exception.Message) }",
 		psQuote(fmt.Sprintf("waiting for KubeTower (pid %d) to exit", pid)), pid,
-		psQuote("KubeTower exited; running "+setup+" /S "+dir), psQuote(setup), psQuote(dir),
+		psQuote("KubeTower exited; running "+setup+" /S "+dir), psQuote(setup), psQuote(dir)) +
+		startScript(exe, args, restart)
+}
+
+// startScript is the helper's last step: start the new build, or, where
+// KubeTower is quitting (InstallOnQuit), say that the next start runs it.
+func startScript(exe string, args []string, restart bool) string {
+	if !restart {
+		return "; L 'installed on quit; nothing started'"
+	}
+	return fmt.Sprintf("; L %s; try { Start-Process -FilePath %s%s } catch { L ('restart failed: ' + $_.Exception.Message) }",
 		psQuote("starting "+exe), psQuote(exe), psArgs(args))
 }
 
@@ -99,12 +108,32 @@ func finish(script string, start func(string) error, stop func()) error {
 
 // swapScript waits for pid, moves the new executable over the old one, then
 // starts it. The new file was written beside the old one, on its volume.
-func swapScript(pid int, next, exe string, args []string, log string) string {
+func swapScript(pid int, next, exe string, args []string, log string, restart bool) string {
 	return psLog(log) + fmt.Sprintf("L %s; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
 		"L %s; try { Move-Item -LiteralPath %s -Destination %s -Force -ErrorAction Stop; L 'moved' } "+
-		"catch { L ('move failed: ' + $_.Exception.Message) }; "+
-		"L %s; try { Start-Process -FilePath %s%s } catch { L ('restart failed: ' + $_.Exception.Message) }",
+		"catch { L ('move failed: ' + $_.Exception.Message) }",
 		psQuote(fmt.Sprintf("waiting for KubeTower (pid %d) to exit", pid)), pid,
-		psQuote("KubeTower exited; moving "+next+" over "+exe), psQuote(next), psQuote(exe),
-		psQuote("starting "+exe), psQuote(exe), psArgs(args))
+		psQuote("KubeTower exited; moving "+next+" over "+exe), psQuote(next), psQuote(exe)) +
+		startScript(exe, args, restart)
+}
+
+// setupHelper is the setup's helper script for plan: it starts the new build
+// afterwards, except while KubeTower quits (InstallOnQuit).
+func setupHelper(plan Plan, pid int, args []string) string {
+	return setupScript(pid, plan.File, plan.Installation.Path, args, plan.Log, !plan.Quit)
+}
+
+// swapHelper is the zip's helper script for plan, as setupHelper.
+func swapHelper(plan Plan, next string, pid int, args []string) string {
+	return swapScript(pid, next, plan.Installation.Path, args, plan.Log, !plan.Quit)
+}
+
+// handOver starts the helper the way the moment asks: while KubeTower quits
+// (InstallOnQuit) quitting starts it and asks nothing more, since the process
+// is exiting already; otherwise stopping starts it and stops this process.
+func handOver(plan Plan, script string, stopping, quitting func(string) error) error {
+	if plan.Quit {
+		return quitting(script)
+	}
+	return stopping(script)
 }
