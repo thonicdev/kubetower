@@ -16,15 +16,11 @@ import (
 )
 
 type Chromium struct {
-	hwnd        uintptr
-	focusOnInit bool
-	controller  *ICoreWebView2Controller
-	webview     *ICoreWebView2
-	inited      uintptr
-	// initErr is why the environment or the controller could not be created,
-	// when one could not: Embed then returns false instead of the process
-	// exiting.
-	initErr               error
+	hwnd                  uintptr
+	focusOnInit           bool
+	controller            *ICoreWebView2Controller
+	webview               *ICoreWebView2
+	inited                uintptr
 	envCompleted          *iCoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
 	controllerCompleted   *iCoreWebView2CreateCoreWebView2ControllerCompletedHandler
 	webMessageReceived    *iCoreWebView2WebMessageReceivedEventHandler
@@ -47,6 +43,10 @@ type Chromium struct {
 	WebResourceRequestedCallback func(request *ICoreWebView2WebResourceRequest, args *ICoreWebView2WebResourceRequestedEventArgs)
 	NavigationCompletedCallback  func(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs)
 	AcceleratorKeyCallback       func(uint) bool
+
+	// initErr is why the environment or the controller could not be created:
+	// Embed then returns false instead of the process exiting.
+	initErr error
 }
 
 func NewChromium() *Chromium {
