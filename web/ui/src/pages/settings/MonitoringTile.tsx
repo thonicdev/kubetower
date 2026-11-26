@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Pill } from '../../components/Pill';
+import { NO_METRICS, NoMetrics } from '../../state/NoMetrics';
 import { btnPrimary } from '../../components/buttons';
 import { focusRingTight } from '../../focus';
 import { metricsSourceKey, saveMetricsSource, useMetricsSource, useSettingsCluster, type MetricsSource } from './data';
@@ -97,8 +98,6 @@ function SourceForm({ cluster, current }: { cluster: string; current: MetricsSou
   );
 }
 
-export const NO_METRICS = 'No metrics available';
-
 const ENGINE: Readonly<Record<string, string>> = {
   prometheus: 'Prometheus',
   victoriametrics: 'VictoriaMetrics',
@@ -134,9 +133,7 @@ function SourceBadge({ source, failed }: { source: MetricsSource | undefined; fa
   }
   return (
     <span data-source-state={source.kind}>
-      <Pill neutral="muted" title={title}>
-        {NO_METRICS}
-      </Pill>
+      <NoMetrics variant="badge" detail={title} />
     </span>
   );
 }
