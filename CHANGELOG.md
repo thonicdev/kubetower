@@ -20,39 +20,41 @@ dialog draws it first, as a New extra line.
 - **What's new lists New and Fixed.** Each highlight is one line under New,
   with a blue +, or under Fixed, with a green check, in a short sentence taken
   from this changelog. An extra a release introduces comes first, as New extra
-  and its name, even when the release lists it past the fifth highlight
-  (#121, #123, #125, #126).
+  and its name, even when the release lists it past the fifth highlight (#121,
+  #123, #125, #126).
 - **Updates install themselves, on quit by default.** Settings › Infos'
   "Install updates" becomes "Install updates automatically", on by default: a
   newer release is downloaded and verified on its own, then installed as
-  KubeTower quits, starting nothing, or, set to At once, as soon as no terminal
-  and no port-forward is open. A .deb or .rpm, which asks for a password, stops
-  at Ready with Install. A folder KubeTower cannot write to shows Not writable
-  once the download is verified, and an install that fails on quit is said at
-  the next start and not tried again until Retry. Off, Download and Install
-  stay by hand; nothing installs on quit under `--unattended` (#122, #124).
+  KubeTower quits, starting nothing, or, set to At once, as soon as no
+  terminal and no port-forward is open. A .deb or .rpm, which asks for a
+  password, stops at Ready with Install. A folder KubeTower cannot write to
+  shows Not writable once the download is verified (with the setting off, on
+  Install, as before), and an install that fails on quit is said at the next
+  start and not tried again until Retry. Off, Download and Install stay by
+  hand; nothing installs on quit under `--unattended` (#122, #124).
 - **VictoriaMetrics as a metrics source.** Discovery finds vmsingle and
   vmselect where no Prometheus runs, as vm-operator, the
   victoria-metrics-k8s-stack chart and the victoria-metrics-single and
   victoria-metrics-cluster charts install them, and `KT_PROMETHEUS_SERVICE`
   takes a path, `vm/vmselect-main:8481/select/0/prometheus`. VictoriaMetrics
   answers every query the console sends. Rate and increase values can differ
-  from Prometheus', by a few percent on steady counters and far more on a
-  single point of a counter that barely moves. A container that just ended or
-  restarted leaves VictoriaMetrics' sums at once, where Prometheus keeps it for
-  five minutes. Everything else reads the same on the same data (#129, #131).
+  from Prometheus', by 10 to 25 % on a point for CPU and network, and far more
+  on a p99 latency or a counter that rarely moves. A container that just ended
+  or restarted leaves VictoriaMetrics' sums at once, where Prometheus keeps it
+  for five minutes. Everything else reads the same on the same data (#129,
+  #131).
 - **Monitoring in Settings › General.** A badge says what answers on the
   current cluster: Prometheus, VictoriaMetrics, metrics-server or no metrics.
-  Where no history source is found, a field takes the Service,
-  `namespace/service:port[/path]`, kept for that cluster whether the API is
-  called with its context's name or its DNS-friendly form; under the server
-  profile it shows `KT_PROMETHEUS_SERVICE`, read only (#130, #134, #135,
-  #140).
+  On a desktop that keeps its state, a field takes the Service,
+  `namespace/service:port[/path]`, where no history source is found or one was
+  set here; it is kept for that cluster whether the API is called with its
+  context's name or its DNS-friendly form. Under the server profile it shows
+  `KT_PROMETHEUS_SERVICE`, read only (#130, #134, #135, #140).
 - **A container's image has a line of its own.** On a pod's Containers tab,
   the image moves under the container's name. The image's name stays whole and
-  the path before it is cut in its middle when the line is too short, then come
-  the version badge and the copy of the exact reference, which go under the
-  name when both do not fit (#136, #137).
+  the path before it is cut at its end when the line is too short (a name too
+  long on its own is cut too), then come the version badge and the copy of the
+  exact reference, which go under the name when both do not fit (#136, #137).
 
 ### Fixed
 
