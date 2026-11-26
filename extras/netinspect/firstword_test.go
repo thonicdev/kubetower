@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -146,5 +147,27 @@ func TestFirstWordStopsWithTheCall(t *testing.T) {
 	}
 	if waited := time.Since(start); waited > time.Second {
 		t.Errorf("waited %v past a deadline of 150ms", waited)
+	}
+}
+
+// A call cancelled with no deadline is not watched by a goroutine: it waits at
+// most firstWordWait, then says it was cancelled.
+func TestFirstWordSaysACancelledCall(t *testing.T) {
+	defer func(was time.Duration) { firstWordWait = was }(firstWordWait)
+	firstWordWait = 100 * time.Millisecond
+	p := serveOnce(t, true, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
+	ctx, cancel := context.WithCancel(context.Background())
+	raw, err := net.Dial("tcp", p.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	conn := tls.Client(raw, p.client)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := firstWord(ctx, conn); !errors.Is(err, context.Canceled) {
+		t.Errorf("%v, want the cancellation", err)
 	}
 }

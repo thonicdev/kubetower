@@ -271,10 +271,10 @@ func firstWord(ctx context.Context, conn *tls.Conn) (net.Conn, error) {
 	if err := conn.SetReadDeadline(until); err != nil {
 		return nil, err
 	}
-	stop := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
+	// No goroutine watches the context: a call cancelled without a deadline
+	// waits at most firstWordWait, and is told so just below.
 	r := bufio.NewReader(conn)
 	_, err := r.Peek(1)
-	stop()
 	if cerr := ctx.Err(); cerr != nil {
 		return nil, cerr
 	}
