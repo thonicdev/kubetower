@@ -141,7 +141,9 @@ func TestVolumeFillRefusesWhatCannotBeAClaimAndAsksNothing(t *testing.T) {
 func TestVolumeFillAsksInBatches(t *testing.T) {
 	p := &volumeProm{used: map[ClaimKey]float64{}, cap: map[ClaimKey]float64{}}
 	var asked []ClaimKey
-	for i := range 2*volumeBatch + 1 {
+	// 201 claims, at 100 a batch: fixed numbers, so a change of the batch
+	// size is seen here rather than followed.
+	for i := range 201 {
 		k := ClaimKey{Namespace: "shop", Name: fmt.Sprintf("data-%03d", i)}
 		asked = append(asked, k)
 		p.used[k], p.cap[k] = 1, 2
@@ -155,7 +157,7 @@ func TestVolumeFillAsksInBatches(t *testing.T) {
 		t.Fatalf("%d queries", len(p.queries))
 	}
 	for _, q := range p.queries {
-		if n := strings.Count(q, "|") + 1; n > volumeBatch {
+		if n := strings.Count(q, "|") + 1; n > 100 {
 			t.Errorf("a query names %d claims", n)
 		}
 	}
