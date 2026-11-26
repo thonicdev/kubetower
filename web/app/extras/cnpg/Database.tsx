@@ -2,9 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Pending, Pill, btnSecondary, focusRing } from '@kubetower/ui';
 
-import { rowsQuery, statsQuery, tablesQuery, type Cell, type Stats, type TableRow, type Tables } from './data';
+import { statsQuery, tablesQuery, type Stats } from './data';
 import { bytes } from './parts';
 import { Problem } from './states';
+import { TableBrowser } from './TableBrowser';
 
 /**
  * What is inside the cluster: its statistics and its tables, read with the
@@ -60,7 +61,7 @@ function Connected({ cluster, namespace, name, section }: { cluster: string; nam
       <section className={section} aria-label="Tables" data-tables="">
         <h2 className="text-sm font-medium">Tables{tables.data !== undefined ? <span className="ml-2 text-xs font-normal text-muted">{tables.data.database}</span> : null}</h2>
         {tables.data !== undefined ? (
-          <TablesView cluster={cluster} namespace={namespace} name={name} tables={tables.data} />
+          <TableBrowser cluster={cluster} namespace={namespace} name={name} first={tables.data} />
         ) : tables.isError ? (
           <Problem error={tables.error} onRetry={() => void tables.refetch()} />
         ) : (
@@ -155,101 +156,3 @@ function StatsView({ stats: s }: { stats: Stats }): ReactNode {
 }
 
 // --- tables ---------------------------------------------------------------------------
-
-const KIND_WORD: Readonly<Record<TableRow['kind'], string>> = {
-  table: '',
-  partitioned: 'partitioned',
-  view: 'view',
-  materialized: 'mat. view',
-  foreign: 'foreign',
-};
-
-function TablesView({ cluster, namespace, name, tables: t }: { cluster: string; namespace: string; name: string; tables: Tables }): ReactNode {
-  const [picked, setPicked] = useState<{ schema: string; table: string } | undefined>(undefined);
-  if (t.tables.length === 0) return <p className="text-xs text-muted">no table you may read</p>;
-  return (
-    <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-      <ul className="flex max-h-96 flex-col overflow-y-auto rounded-md border border-line text-xs xl:col-span-1" data-table-list="">
-        {t.tables.map((row) => {
-          const id = `${row.schema}.${row.name}`;
-          const on = picked?.schema === row.schema && picked.table === row.name;
-          return (
-            <li key={id}>
-              <button
-                type="button"
-                data-table={id}
-                onClick={() => setPicked({ schema: row.schema, table: row.name })}
-                className={`flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-panel-2 ${on ? 'bg-accent/15' : ''} ${focusRing}`}
-              >
-                <span className="min-w-0 flex-1 truncate" title={id}>
-                  {t.schemas.length > 1 || row.schema !== 'public' ? <span className="text-muted">{row.schema}.</span> : null}
-                  {row.name}
-                </span>
-                {KIND_WORD[row.kind] === '' ? null : <span className="text-2xs text-muted">{KIND_WORD[row.kind]}</span>}
-                <span className="w-14 text-right text-muted tabular-nums" title="Postgres' estimate of its rows">
-                  {row.rows < 0 ? '?' : row.rows.toLocaleString('en-US')}
-                </span>
-                <span className="w-16 text-right text-muted tabular-nums">{bytes(row.bytes)}</span>
-              </button>
-            </li>
-          );
-        })}
-        {t.complete ? null : <li className="px-2 py-1 text-2xs text-muted">first {t.tables.length} tables</li>}
-      </ul>
-      {picked === undefined ? (
-        <p className="self-center text-xs text-muted xl:col-span-2">pick a table</p>
-      ) : (
-        <RowsView cluster={cluster} namespace={namespace} name={name} schema={picked.schema} table={picked.table} />
-      )}
-    </div>
-  );
-}
-
-function RowsView({ cluster, namespace, name, schema, table }: { cluster: string; namespace: string; name: string; schema: string; table: string }): ReactNode {
-  const query = useQuery(rowsQuery(cluster, namespace, name, schema, table));
-  if (query.isError) return <Problem error={query.error} onRetry={() => void query.refetch()} />;
-  const r = query.data;
-  if (r === undefined) return <Pending what={`${schema}.${table}`} />;
-  return (
-    <div className="flex min-w-0 flex-col gap-1 xl:col-span-2" data-rows={`${schema}.${table}`}>
-      <div className="max-h-96 overflow-auto rounded-md border border-line">
-        <table className="w-max min-w-full border-collapse font-mono text-xs">
-          <thead className="sticky top-0 bg-panel-2">
-            <tr>
-              {r.columns.map((c) => (
-                <th key={c.name} className="border-b border-line px-2 py-1 text-left font-sans font-medium whitespace-nowrap" title={c.type}>
-                  {c.name}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {r.rows.map((row, i) => (
-              <tr key={i} className="border-t border-line align-top">
-                {row.map((cell, j) => (
-                  <CellView key={j} cell={cell} />
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="flex gap-3 text-2xs text-muted">
-        <span>{r.more ? `first ${String(r.rows.length)} rows` : `${String(r.rows.length)} rows`}</span>
-        {r.columnsTotal > r.columns.length ? <span>first {r.columns.length} of {r.columnsTotal} columns</span> : null}
-      </p>
-    </div>
-  );
-}
-
-function CellView({ cell }: { cell: Cell }): ReactNode {
-  if (cell.null === true) return <td className="px-2 py-0.5 font-sans text-muted italic">null</td>;
-  if (cell.bytes !== undefined) return <td className="px-2 py-0.5 font-sans text-muted">{bytes(cell.bytes)}</td>;
-  const text = cell.text ?? '';
-  return (
-    <td className="max-w-80 truncate px-2 py-0.5" title={cell.cut === true ? `${text}…` : text.length > 40 ? text : undefined} data-cut={cell.cut === true ? '' : undefined}>
-      {text}
-      {cell.cut === true ? '…' : ''}
-    </td>
-  );
-}

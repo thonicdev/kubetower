@@ -60,6 +60,12 @@ const (
 	CodeUnreachable   = "unreachable"
 	CodeSQLFailed     = "sql_failed"
 	CodeNoSuchTable   = "no_such_table"
+	// CodeNoSuchDatabase and CodeDatabaseDenied answer a database picked
+	// from the list: gone since, or one the cluster's user may not open.
+	CodeNoSuchDatabase = "no_such_database"
+	CodeDatabaseDenied = "database_denied"
+	// CodeSQLTimeout is a read Postgres did not finish in time.
+	CodeSQLTimeout = "sql_timeout"
 )
 
 // querier runs one statement and hands each row over as text, its columns'
@@ -104,7 +110,11 @@ type credential struct {
 
 // openSQL opens the door to one cluster for the request, or answers the
 // request itself and returns false.
-func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, cluster, namespace, name string) (*sqlSession, bool) {
+//
+// database is the database to open, or "" for the Secret's own. It only ever
+// reaches the connection's startup message, never a statement, and Postgres
+// itself checks the user may connect to it.
+func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, cluster, namespace, name, database string) (*sqlSession, bool) {
 	_, crd, ok := resolveClusters(w, r, h, cluster)
 	if !ok {
 		return nil, false
@@ -117,13 +127,14 @@ func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, 
 	if secret == "" {
 		secret = name + "-app"
 	}
-	cred, ok := readCredential(w, r, h, cluster, namespace, secret)
-	if !ok {
-		return nil, false
-	}
-
+	// The tunnel first, as Redis does: a refusal (a read-only cluster, a
+	// port-forward the person may not open) answers before any Secret is
+	// revealed and audited.
 	tunnel, err := h.Forward(r.Context(), cluster, namespace, name+"-rw", postgresPort)
 	switch {
+	case errors.Is(err, extension.ErrReadOnly):
+		writeProblem(w, http.StatusForbidden, CodeReadOnly, cluster+" is read-only: no tunnel is opened to its databases.", err)
+		return nil, false
 	case errors.Is(err, extension.ErrDenied), errors.Is(err, extension.ErrUnreviewable):
 		status := http.StatusForbidden
 		if errors.Is(err, extension.ErrUnreviewable) {
@@ -135,13 +146,22 @@ func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, 
 		writeProblem(w, http.StatusBadGateway, CodeTunnelFailed, "No tunnel to "+namespace+"/"+name+"-rw could be opened.", err)
 		return nil, false
 	}
-	s := &sqlSession{tunnel: tunnel, database: cred.database}
+	s := &sqlSession{tunnel: tunnel}
 	// The password goes only to a pod this cluster's own.
 	if !tunnel.PodKnown || !isInstance(r, h, cluster, namespace, name, tunnel.Pod) {
 		s.close()
 		writeProblem(w, http.StatusConflict, CodePodUnknown, "The tunnel could not say which of "+name+"'s instances it reached, so no password was sent.", nil)
 		return nil, false
 	}
+	cred, ok := readCredential(w, r, h, cluster, namespace, secret)
+	if !ok {
+		s.close()
+		return nil, false
+	}
+	if database != "" {
+		cred.database = database
+	}
+	s.database = cred.database
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: name + "-rw." + namespace + ".svc"}
 	if pem, err := h.Reveal(r, cluster, namespace, name+"-ca", "ca.crt"); err == nil {
@@ -165,7 +185,15 @@ func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, 
 	q, err := open(r.Context(), tunnel.Addr, cred, tlsConfig)
 	if err != nil {
 		s.close()
-		writeProblem(w, http.StatusBadGateway, CodeUnreachable, "Postgres in "+namespace+"/"+name+" did not answer.", err)
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.Code == "3D000":
+			writeProblem(w, http.StatusNotFound, CodeNoSuchDatabase, "There is no database "+cred.database+" in "+namespace+"/"+name+".", err)
+		case errors.As(err, &pgErr) && pgErr.Code == "42501":
+			writeProblem(w, http.StatusForbidden, CodeDatabaseDenied, "The cluster's user may not open the database "+cred.database+".", err)
+		default:
+			writeProblem(w, http.StatusBadGateway, CodeUnreachable, "Postgres in "+namespace+"/"+name+" did not answer.", err)
+		}
 		return nil, false
 	}
 	s.q = q
@@ -232,14 +260,10 @@ func dialPostgres(ctx context.Context, addr string, c credential, tlsConfig *tls
 	if !ok || err != nil {
 		return nil, fmt.Errorf("the tunnel's address %q", addr)
 	}
-	cfg, err := pgconn.ParseConfig("sslmode=require")
+	cfg, err := pgConfig(host, uint16(port), c, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = host, uint16(port), c.user, c.password, c.database
-	cfg.TLSConfig, cfg.Fallbacks, cfg.ConnectTimeout = tlsConfig, nil, connectTimeout
-	cfg.RuntimeParams = map[string]string{"application_name": "kubetower", "default_transaction_read_only": "on"}
-	cfg.OnNotice, cfg.OnNotification = nil, nil
 	conn, err := pgconn.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -251,6 +275,21 @@ func dialPostgres(ctx context.Context, addr string, c credential, tlsConfig *tls
 		return nil, err
 	}
 	return &pgQuerier{conn: conn}, nil
+}
+
+// pgConfig is the connection's configuration. The session is read-only from
+// its startup message, and in UTC, so a timestamptz reads the same whatever
+// the server's own time zone.
+func pgConfig(host string, port uint16, c credential, tlsConfig *tls.Config) (*pgconn.Config, error) {
+	cfg, err := pgconn.ParseConfig("sslmode=require")
+	if err != nil {
+		return nil, err
+	}
+	cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database = host, port, c.user, c.password, c.database
+	cfg.TLSConfig, cfg.Fallbacks, cfg.ConnectTimeout = tlsConfig, nil, connectTimeout
+	cfg.RuntimeParams = map[string]string{"application_name": "kubetower", "default_transaction_read_only": "on", "TimeZone": "UTC"}
+	cfg.OnNotice, cfg.OnNotification = nil, nil
+	return cfg, nil
 }
 
 type pgQuerier struct{ conn *pgconn.PgConn }
