@@ -799,3 +799,38 @@ func TestACancelledProbeThatStillFoundSomethingIsCached(t *testing.T) {
 			h.listed(), before)
 	}
 }
+
+// A forced Discover - a save of the metrics source - takes only a probe that
+// began after it was asked. One that began before and ended after may have
+// read the source the save replaced, and is probed again (#156).
+func TestAForcedDiscoverTakesOnlyAProbeBegunAfterIt(t *testing.T) {
+	h := newHarness(t)
+	h.answer(rawAnswers{metricsAPIPath: {err: notFound(metricsAPIPath)}})
+	h.metrics.Discover(context.Background(), testCluster, false)
+	first := h.listed()
+
+	resolved, _ := h.metrics.clusters.Resolve(testCluster)
+	e := h.metrics.entry(resolved)
+	e.mu.Lock()
+	stale := *e.result
+	stale.startedAt = time.Now().Add(-time.Minute)
+	stale.CheckedAt = time.Now().Add(time.Minute)
+	e.result = &stale
+	e.mu.Unlock()
+
+	h.metrics.Discover(context.Background(), testCluster, true)
+	if h.listed() == first {
+		t.Fatal("a probe begun before the forced Discover was taken as its answer")
+	}
+	// And one begun after it is taken, without a second probe.
+	again := h.listed()
+	e.mu.Lock()
+	fresh := *e.result
+	fresh.startedAt = time.Now().Add(time.Hour)
+	e.result = &fresh
+	e.mu.Unlock()
+	h.metrics.Discover(context.Background(), testCluster, true)
+	if h.listed() != again {
+		t.Error("a probe begun after the forced Discover was not taken")
+	}
+}

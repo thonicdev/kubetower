@@ -393,7 +393,10 @@ verb and the same held answers:
   Configuration is what closes it; RBAC alone does not. The desktop is one
   person's console over their own kubeconfig, and keeps looking: there it
   refuses to choose when Services in more than one namespace claim to be
-  Prometheus, and says which. An answer larger than 16 MiB is refused on both
+  Prometheus, and says which. A source set by hand in Settings › Monitoring
+  replaces discovery on that cluster, as the server profile's configuration
+  does, and is kept in the desktop's state directory under the resolved
+  context's name. An answer larger than 16 MiB is refused on both
   transports.
 - **A tunnel is reviewed as the request it is**: `terminal.Forwarder.Forward`
   reads the Service and its pods for whoever the context carries and digs the

@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/thonicdev/kubetower/internal/cluster"
 )
 
-// For the integration test in package metrics_test (victoria_integration_test.go),
-// which cannot import vmreplay from inside this package.
+// For the integration tests in package metrics_test
+// (vmreplay_integration_test.go), which reach these through the package's own
+// discovery rather than a copy of it.
 
 // UsageQueries are the Prometheus fallback's instant queries for pod and node
 // usage, cluster-wide and in kube-system.
@@ -28,13 +26,9 @@ func UsageQueries() []string {
 // VictoriaMetricsAlone is the target discovery would choose on this cluster
 // if no Prometheus ran there, and the selector that found it.
 func VictoriaMetricsAlone(ctx context.Context, client *cluster.Client) (string, string, error) {
-	var candidates []corev1.Service
-	for _, query := range promQueries {
-		list, err := client.Clients.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: query})
-		if err != nil {
-			return "", "", err
-		}
-		candidates = append(candidates, list.Items...)
+	candidates, refused := listCandidates(ctx, client)
+	if refused != nil {
+		return "", "", fmt.Errorf("listing Services: %s", refused.detail)
 	}
 	chosen, ok := choose(candidates, vmChoices())
 	if !ok || chosen.target == nil {

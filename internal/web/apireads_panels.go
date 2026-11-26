@@ -237,6 +237,10 @@ func (r apiReads) mayReadObject(ctx context.Context, q api.MetricsQuery, scope a
 		}
 	}
 	if err := r.s.gate.Check(ctx, cluster, question); err != nil {
+		// The scope names the person's own question - verb and resource - so
+		// the tab tells "you may not read this object" from a metrics backend
+		// that refused the console, whose failures carry no verb (#156).
+		scope.Verb, scope.Resource = question.Verb, question.Resource
 		return stateOf(err, scope)
 	}
 	return nil

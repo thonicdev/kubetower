@@ -24,6 +24,16 @@ dialog draws it first, as a New extra line.
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
 
+### Fixed
+
+- **Metrics: fewer wrong answers about the source.** A metrics backend behind
+  an authenticating front (a 401 or a 5xx under the configured path) is now
+  tried through a port-forward instead of being reported as a wrong path; a
+  saved source never comes back with a probe of the one it replaced; the
+  Metrics tab says when the person may not read the object rather than "No
+  metrics available"; the Monitoring tile says why a failed read failed, on
+  hover (#156).
+
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
 ### Added

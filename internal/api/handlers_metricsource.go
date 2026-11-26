@@ -73,6 +73,22 @@ func (a *API) saveMetricsSource(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	consoleWrite(r, "the metrics source of %s was saved", name)
+	consoleWrite(r, "the metrics source of %s was saved", a.resolvedName(name))
 	writeOK(w, out)
 }
+
+// resolvedName is the context a cluster's name stands for, where the cluster
+// layer can say: the audit line of a write names the context it changed, not
+// the DNS-friendly form a URL may carry (#156). A layer that cannot resolve
+// leaves the name as given.
+func (a *API) resolvedName(name string) string {
+	if r, ok := a.deps.Clusters.(interface {
+		Resolve(name string) (string, bool)
+	}); ok {
+		if resolved, ok := r.Resolve(name); ok {
+			return resolved
+		}
+	}
+	return name
+}
+

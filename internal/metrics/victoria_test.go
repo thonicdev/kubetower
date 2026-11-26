@@ -15,8 +15,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -444,4 +446,71 @@ func TestEachHealthAttemptHasItsOwnTimeout(t *testing.T) {
 	if err != nil || string(body) != "Prometheus Server is Healthy." || asked != 3 {
 		t.Fatalf("%q, %v after %d asks", body, err, asked)
 	}
+}
+
+// Only "not here" - a 404, or VictoriaMetrics' 400 - is a wrong path (#156).
+// A 401, a 5xx or a timeout on the confirming query says nothing about the
+// path: it comes back as itself, so the proxy's failure falls back to the
+// port-forward instead of being reported as a typo.
+func TestOnlyNotFoundOrBadRequestIsAWrongPath(t *testing.T) {
+	target := &PromTarget{Namespace: "vm", Service: "vmselect-main", Port: 8481, Path: "/select/0/prometheus"}
+	status := func(code int) error {
+		return apierrors.NewGenericServerResponse(code, http.MethodGet, schema.GroupResource{Resource: "prometheus"}, "", "x", 0, false)
+	}
+	for _, c := range []struct {
+		name  string
+		err   error
+		wrong bool
+	}{
+		{"404", status(http.StatusNotFound), true},
+		{"400, unsupported path", status(http.StatusBadRequest), true},
+		{"401", status(http.StatusUnauthorized), false},
+		{"503", status(http.StatusServiceUnavailable), false},
+		{"timeout", context.DeadlineExceeded, false},
+	} {
+		_, err := target.answers(context.Background(), time.Second, func(_ context.Context, path string, _ url.Values) ([]byte, error) {
+			if path == endpointHealth {
+				return []byte(vmHealthy), nil
+			}
+			if strings.HasSuffix(path, endpointQuery) {
+				return nil, c.err
+			}
+			return nil, status(http.StatusNotFound)
+		})
+		var wrongPath *pathRefused
+		if got := errors.As(err, &wrongPath); got != c.wrong || err == nil {
+			t.Errorf("%s: %v, wrong path %v, want %v", c.name, err, got, c.wrong)
+		}
+	}
+}
+
+// The proxy reaches the Service's root, but an authenticating front refuses
+// the query under the path with a 401 (#156). That says nothing about the
+// path: the port-forward is tried, and the target is reached through it.
+func TestARefusedQueryUnderThePathFallsBackToThePortForward(t *testing.T) {
+	target, _ := ParseTarget("vm/vmselect-main:8481/select/0/prometheus")
+	vmselect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case endpointHealth:
+			w.Write([]byte(vmHealthy))
+		case target.Path + endpointQuery:
+			w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		default:
+			http.Error(w, "unsupported path", http.StatusBadRequest)
+		}
+	}))
+	defer vmselect.Close()
+	h := newHarnessWith(t, func(o *Options) { o.Configured, o.Prometheus = true, target })
+	unauthorised := apierrors.NewGenericServerResponse(http.StatusUnauthorized, http.MethodGet, schema.GroupResource{Resource: "services"}, "", "", 0, false)
+	h.answer(rawAnswers{
+		target.proxyRoot(endpointHealth):              {body: []byte(vmHealthy)},
+		target.proxyRoot(target.Path + endpointQuery): {err: unauthorised},
+	})
+	h.tunnels.addr = strings.TrimPrefix(vmselect.URL, "http://")
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Transport != TransportForward {
+		t.Fatalf("kind %q transport %q (%s); want reached by the port-forward", found.Kind, found.Transport, found.Detail)
+	}
+	h.metrics.Close()
 }

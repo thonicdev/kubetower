@@ -444,6 +444,10 @@ type apiClusters struct{ s *Server }
 
 func (c apiClusters) Known(name string) bool { return c.s.known(name) }
 
+// Resolve is the context a name stands for: itself, or the context its
+// DNS-friendly form names (`a--b` for `a/b`).
+func (c apiClusters) Resolve(name string) (string, bool) { return c.s.clusters.Resolve(name) }
+
 // kubeconfigUnreadable is the failure to report when there are no clusters
 // *because a kubeconfig file would not parse*, and nil when there is genuinely
 // nothing configured.
