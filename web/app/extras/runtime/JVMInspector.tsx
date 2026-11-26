@@ -614,7 +614,7 @@ function Row({
         <span className="block max-w-48 truncate" title={c.name}>
           {c.name}
         </span>
-        <ImageRef image={c.image} className="max-w-56" />
+        <ImageRef image={c.image} of={c.name} className="max-w-56" />
       </td>
       <td className={`${bodyCell(true)} wrap align-top`}>
         <MemoryBar c={c} />

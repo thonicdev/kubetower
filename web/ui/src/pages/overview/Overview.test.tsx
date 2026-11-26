@@ -703,7 +703,7 @@ describe('a metrics backend found and not reached (#127)', () => {
     expect(lines[1]?.getAttribute('title')).toBe('the leaderboard query answered garbage');
     // Retry only where the reason allows it: the history, not the leaderboard.
     expect(lines[0]?.querySelector('button[aria-label="Try again"]')).not.toBeNull();
-    expect(lines[1]?.querySelector('button')).toBeNull();
+    expect(lines[1]?.querySelector('button[aria-label="Try again"]')).toBeNull();
     expect(page().querySelector('[data-no-metrics].font-mono, [data-no-metrics] .font-mono')).toBeNull();
   });
 });

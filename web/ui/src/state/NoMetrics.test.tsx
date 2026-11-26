@@ -35,11 +35,11 @@ describe('NoMetrics', () => {
 
     cleanup();
     render(<NoMetrics state="forbidden" reason={{ code: 'verb_denied', message: 'm' }} onRetry={retry} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
 
     cleanup();
     render(<NoMetrics state="pending" reason={{ code: 'not_probed_yet', message: 'm', retryable: true }} onRetry={retry} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
 
   it('draws a neutral badge with a plain detail on hover, and no control', () => {
@@ -49,5 +49,18 @@ describe('NoMetrics', () => {
     expect(pill?.getAttribute('data-tone')).toBe('normal');
     expect(pill?.getAttribute('title')).toBe('no Prometheus matched');
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('puts its reason within a keyboard\'s and a touch screen\'s reach, with no retry to press', () => {
+    render(<NoMetrics state="forbidden" reason={{ code: 'verb_denied', message: 'You may not get pods in shop' }} />);
+    const why = screen.getByRole('button', { name: 'Why no metrics' });
+    expect(document.querySelector('[data-detail-tip-text]')).toBeNull();
+    why.focus();
+    fireEvent.click(why);
+    expect(why.getAttribute('aria-expanded')).toBe('true');
+    expect(document.getElementById(why.getAttribute('aria-controls') ?? '')?.textContent).toBe('You may not get pods in shop');
+    fireEvent.keyDown(why, { key: 'Escape' });
+    expect(document.querySelector('[data-detail-tip-text]')).toBeNull();
+    expect(document.activeElement).toBe(why);
   });
 });

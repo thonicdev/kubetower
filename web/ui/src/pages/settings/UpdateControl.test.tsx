@@ -696,6 +696,8 @@ describe('the account menu trigger', () => {
       expect(trigger.getAttribute('aria-describedby')).not.toBeNull();
     });
     expect(document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Update available');
+    // Its hover says the update too, under the account's line.
+    expect(trigger?.getAttribute('title')).toBe('Signed in as alice\nUpdate available\nRunning: kubetower 0.1.2\nNew: 0.1.3');
   });
 });
 

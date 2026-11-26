@@ -8,7 +8,7 @@ import { resetKeyboardStack } from '../../keyboard/stack';
 import { createQueryClient } from '../../query/client';
 import { buildRoutes } from '../../router/routes';
 import { ShellProvider } from '../../shell/ShellContext';
-import { originOf } from '../../shell/settingsOrigin';
+import { forgetSettingsScroll, originOf } from '../../shell/settingsOrigin';
 import { mountApp, stubFetch, type StubRoutes } from '../../testing/harness';
 
 /**
@@ -20,6 +20,7 @@ import { mountApp, stubFetch, type StubRoutes } from '../../testing/harness';
 afterEach(() => {
   vi.unstubAllGlobals();
   resetKeyboardStack();
+  forgetSettingsScroll();
 });
 
 const routes: StubRoutes = {
@@ -367,6 +368,77 @@ describe("the page's scroll after the browser's Back", () => {
       expect(top).toBe(480);
     });
   });
+
+  it("is the page's last one after Back, Forward and Back again", async () => {
+    stubFetch(routes);
+    const { router } = mountApp(ORIGIN);
+    const region = document.getElementById('page') as HTMLElement;
+    let top = 0;
+    Object.defineProperty(region, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+    });
+    top = 480;
+    await openFromTopbar(router);
+    top = 0;
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await waitFor(() => expect(top).toBe(480));
+    // Scrolled further down the page, then Forward to Settings and Back.
+    top = 900;
+    fireEvent.scroll(region);
+    await act(async () => {
+      await router.navigate(1);
+    });
+    await waitFor(() => expect(router.state.location.pathname).toBe('/settings/general'));
+    top = 0;
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await waitFor(() => expect(where(router)).toBe(ORIGIN));
+    await waitFor(() => expect(top).toBe(900));
+  });
+
+  /** Back to the origin while the page is not tall enough yet, pressed or
+   *  not, and then tall: the position it ends at. */
+  async function restoreWhileShort(pressed: boolean): Promise<number> {
+    stubFetch(routes);
+    const { router } = mountApp(ORIGIN);
+    const region = document.getElementById('page') as HTMLElement;
+    let top = 0;
+    let tall = true;
+    Object.defineProperty(region, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        if (tall) top = value;
+      },
+    });
+    top = 480;
+    await openFromTopbar(router);
+    tall = false;
+    top = 0;
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    await waitFor(() => expect(where(router)).toBe(ORIGIN));
+    if (pressed) fireEvent.pointerDown(region);
+    tall = true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return top;
+  }
+
+  it('keeps trying while the page grows', async () => {
+    expect(await restoreWhileShort(false)).toBe(480);
+  });
+
+  it('stops being forced once the page is pressed, as a scrollbar drag starts', async () => {
+    expect(await restoreWhileShort(true)).toBe(0);
+  });
 });
 
 describe('Settings opened directly', () => {
@@ -408,6 +480,10 @@ describe('the origin', () => {
     expect(originOf({ state: { from: { path: 'https://elsewhere.example' } } })).toBeUndefined();
     expect(originOf({ state: { from: { path: '//elsewhere.example/x' } } })).toBeUndefined();
     expect(originOf({ state: { from: { path: '/\\elsewhere.example/x' } } })).toBeUndefined();
+    // A browser drops a tab, CR or LF from a URL: each of these is another host.
+    for (const path of ['/\t/elsewhere.example/x', '/\n\\elsewhere.example', '/\r//elsewhere.example']) {
+      expect(originOf({ state: { from: { path } } }), JSON.stringify(path)).toBeUndefined();
+    }
     expect(originOf({ state: { from: { path: '/c/prod/pods', key: 'k', idx: 3, scroll: -5 } } })).toEqual({
       path: '/c/prod/pods',
       key: 'k',

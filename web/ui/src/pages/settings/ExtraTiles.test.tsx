@@ -498,3 +498,111 @@ describe('the order of the cards while the page is open (#62)', () => {
     });
   });
 });
+
+describe('a card across writes and clusters (#155)', () => {
+  const tree = (list: readonly ExtensionInfo[], cluster = 'prod', client = new QueryClient(), extensions: Extension[] = []) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ShellProvider extensions={extensions}>
+          <KeyboardStack>
+            <ExtraTab cluster={cluster} clusters={[]} items={list} />
+          </KeyboardStack>
+        </ShellProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const path = (input: RequestInfo | URL) => (typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url);
+  const json = (status: number, body: unknown, problem = false) =>
+    Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': problem ? 'application/problem+json' : 'application/json' } }));
+  const order = () => [...document.querySelectorAll('[data-extra]')].map((one) => one.getAttribute('data-extra'));
+
+  it('keeps the focus on a pressed switch while its write is pending, and says its new state once it lands', async () => {
+    let land: () => void = () => undefined;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') return new Promise<Response>((resolve) => (land = () => resolve(new Response(null, { status: 204 }))));
+      return json(200, path(input).endsWith('/suggestions') ? { state: 'ok', items: [] } : {});
+    });
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    const button = () => tile('c').querySelector<HTMLButtonElement>('[role="switch"]') as HTMLButtonElement;
+    button().focus();
+    fireEvent.click(button());
+    await waitFor(() => expect(button().getAttribute('aria-disabled')).toBe('true'));
+    expect(button().disabled).toBe(false);
+    expect(document.activeElement).toBe(button());
+    land();
+    // The listing read again has it on.
+    view.rerender(tree(items.map((one) => (one.key === 'c' ? { ...one, enabled: true } : one)), 'prod', client));
+    await waitFor(() => expect(tile('c').querySelector('[data-extra-switch-said]')?.textContent).toBe('Alpha, cluster prod: on'));
+    expect(button().hasAttribute('aria-disabled')).toBe(false);
+    expect(document.activeElement).toBe(button());
+  });
+
+  it("does not carry one cluster's refusal to another's card", async () => {
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') return json(403, { status: 403, title: 'Forbidden', code: 'forbidden', detail: 'You may not change prod' }, true);
+      return json(200, path(input).endsWith('/suggestions') ? { state: 'ok', items: [] } : {});
+    });
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    fireEvent.click(tile('c').querySelector('[role="switch"]') as Element);
+    await waitFor(() => expect(tile('c').querySelector('[data-extra-failure]')).not.toBeNull());
+    view.rerender(tree(items, 'staging', client));
+    await waitFor(() => expect(tile('c').querySelector('[role="switch"]')?.getAttribute('aria-label')).toBe('Alpha, cluster staging'));
+    expect(tile('c').querySelector('[data-extra-failure]')).toBeNull();
+  });
+
+  it('gets its Suggested badge back at once when the extra is turned off', async () => {
+    // The cluster suggests b only while it is off.
+    let bOn = true;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        bOn = (JSON.parse(String(init.body)) as { enabled: boolean }).enabled;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return json(200, path(input).endsWith('/suggestions') ? { state: 'ok', items: bOn ? [] : [{ key: 'b', label: 'beta', evidence: '2 Redis Services in 1 namespace' }] } : {});
+    });
+    const client = new QueryClient();
+    const on = items.map((one) => (one.key === 'b' ? { ...one, enabled: true } : one));
+    const view = render(tree(on, 'prod', client));
+    await waitFor(() => expect(tile('b').getAttribute('data-on')).toBe('true'));
+    fireEvent.click(tile('b').querySelector('[role="switch"]') as Element);
+    await waitFor(() => expect(bOn).toBe(false));
+    view.rerender(tree(items, 'prod', client));
+    await waitFor(() => expect(tile('b').querySelector('[data-extra-suggested]')).not.toBeNull());
+  });
+
+  it('draws a card the listing adds once the order is held after the held ones', async () => {
+    vi.stubGlobal('fetch', () => json(200, { state: 'ok', items: [] }));
+    const client = new QueryClient();
+    const view = render(tree(items, 'prod', client));
+    // Held once the suggestions have answered: a suggested card would go first.
+    await waitFor(() => {
+      const asked = client.getQueryCache().findAll().find((one) => JSON.stringify(one.queryKey).includes('suggestion'));
+      expect(asked?.state.status).not.toBe('pending');
+    });
+    await waitFor(() => expect(order()).toHaveLength(4));
+    const held = order();
+    view.rerender(tree([row('aa', 'Aardvark'), ...items], 'prod', client));
+    await waitFor(() => expect(order()).toHaveLength(5));
+    expect(order()).toEqual([...held, 'aa']);
+  });
+
+  it("offers Open in the window of an extra that is on and in the menu, and not of one the menu does not list", async () => {
+    vi.stubGlobal('fetch', () => json(200, { state: 'ok', items: [] }));
+    const extensions: Extension[] = [
+      { key: 'kubecron', nav: { label: 'KubeCron', path: 'x/kubecron' }, routes: [] },
+      { key: 'c', nav: { label: 'Alpha', path: 'x/c', menu: false }, routes: [] },
+    ];
+    const list = items.map((one) => (one.key === 'c' ? { ...one, enabled: true } : one));
+    render(tree(list, 'prod', new QueryClient(), extensions));
+    fireEvent.click(edit('kubecron'));
+    expect(modal().querySelector('a[data-extra-page]')?.getAttribute('href')).toBe('/c/prod/x/kubecron');
+    expect(modal().querySelector('a[data-extra-page]')?.textContent).toBe('Open KubeCron');
+    fireEvent.click(modal().querySelector('button:not([role="switch"])') as Element);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    fireEvent.click(edit('c'));
+    expect(modal().querySelector('[data-extra-page]')).toBeNull();
+  });
+});

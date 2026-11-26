@@ -32,6 +32,14 @@ dialog draws it first, as a New extra line.
 
 ### Fixed
 
+- **Settings and the shell, within a keyboard's reach.** A card's switch
+  keeps the focus while its write is pending and says its new state, a
+  refusal on one cluster no longer follows the card to another, and an
+  extra naming an icon the console lacks draws the extra glyph. Back from
+  Settings puts the page's last scroll back, after Back, Forward and Back
+  again. The unused kinds toggle says its state once. The reason for No
+  metrics and an image's tag with its digest open on a press, the image's
+  copy names its container, and the account's hover says an update (#155).
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
   desktop, Services claiming to be Prometheus in one namespace and
   VictoriaMetrics in another are now refused as two Prometheus Services in two

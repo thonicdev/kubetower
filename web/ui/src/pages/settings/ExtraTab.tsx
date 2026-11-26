@@ -97,7 +97,9 @@ export function ExtraTab({
       <TileGrid label="Extensions">
         {ordered.map((item) => (
           <ExtensionCard
-            key={item.key}
+            // By cluster too: a write pending or refused on one cluster's
+            // card stays with that cluster when another is picked.
+            key={`${cluster}/${item.key}`}
             cluster={cluster}
             item={item}
             own={own(item.key)}
@@ -338,7 +340,8 @@ function ExtensionCard({
           <ExtraSwitch
             on={item.enabled}
             label={`${item.label}, cluster ${cluster}`}
-            disabled={toggle.isPending || !writable}
+            disabled={!writable}
+            pending={toggle.isPending}
             onToggle={() => toggle.mutate(!item.enabled)}
             describedBy={reason === undefined ? undefined : reasonId}
           />
