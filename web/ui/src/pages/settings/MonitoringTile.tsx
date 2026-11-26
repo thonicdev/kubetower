@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { Pill } from '../../components/Pill';
-import { NO_METRICS, NoMetrics } from '../../state/NoMetrics';
+import { NoMetrics } from '../../state/NoMetrics';
 import { btnPrimary } from '../../components/buttons';
 import { focusRingTight } from '../../focus';
 import { metricsSourceKey, saveMetricsSource, useMetricsSource, useSettingsCluster, type MetricsSource } from './data';
@@ -108,7 +108,7 @@ function SourceBadge({ source, failed }: { source: MetricsSource | undefined; fa
   if (source === undefined) {
     return (
       <span data-source-state={failed ? 'failed' : 'pending'}>
-        <Pill neutral="muted">{failed ? NO_METRICS : '…'}</Pill>
+        {failed ? <NoMetrics variant="badge" /> : <Pill neutral="muted">…</Pill>}
       </span>
     );
   }

@@ -144,6 +144,7 @@ describe('the Monitoring tile', () => {
     await settled('none');
     expect(badge().textContent).toBe('No metrics available');
     expect(badge().querySelector('[title]')?.getAttribute('title')).toContain('metrics.k8s.io is not registered');
+    expect(badge().querySelector('[data-no-metrics]')).not.toBeNull();
     expect(tile().querySelector('input')?.value).toBe('');
   });
 
@@ -241,5 +242,6 @@ describe('the Monitoring tile', () => {
       { timeout: 10_000 },
     );
     expect(badge().textContent).toBe('No metrics available');
+    expect(badge().querySelector('[data-no-metrics]')).not.toBeNull();
   });
 });
