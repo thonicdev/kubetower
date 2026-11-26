@@ -482,3 +482,41 @@ func TestOnlyAFreshClickOrKeyPressCountsAsAGestureOnMacOS(t *testing.T) {
 		}
 	}
 }
+
+// The macOS hand-out sheet (#84): the host as its title, the whole address as
+// its detail, nothing else.
+func TestTheHandOutSheetNamesTheHostAndTheAddress(t *testing.T) {
+	message, detail := handOutQuestion("https://docs.cilium.io/en/stable/observability/hubble/")
+	if message != "docs.cilium.io" || detail != "https://docs.cilium.io/en/stable/observability/hubble/" {
+		t.Errorf("%q / %q", message, detail)
+	}
+	if message, _ := handOutQuestion("not a url"); message != "not a url" {
+		t.Errorf("an address with no host: %q", message)
+	}
+}
+
+// A script's a.click() after a real click elsewhere (#84) reaches at most a
+// question, never the browser: only the person's Open in browser opens, and a
+// second question while one is open is refused, not answered by the first.
+func TestOnlyAConfirmedHandOutOpensAndOneIsAskedAtATime(t *testing.T) {
+	var a handOutAsk
+	if !a.ask("https://a.example/") {
+		t.Fatal("the first question was refused")
+	}
+	if a.ask("https://b.example/") {
+		t.Fatal("a second question while one is open")
+	}
+	if target, open := a.answer(false); open || target != "https://a.example/" {
+		t.Fatalf("Cancel: %q %v", target, open)
+	}
+	if !a.ask("https://b.example/") {
+		t.Fatal("no question after the first was answered")
+	}
+	if target, open := a.answer(true); !open || target != "https://b.example/" {
+		t.Fatalf("Open in browser: %q %v", target, open)
+	}
+	// An answer with no question open opens nothing.
+	if _, open := a.answer(true); open {
+		t.Error("an answer with no question opened something")
+	}
+}

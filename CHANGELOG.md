@@ -24,6 +24,13 @@ dialog draws it first, as a New extra line.
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
 
+### Fixed
+
+- **macOS: a tool window asks before opening a link in the browser.** A
+  sheet shows the link's host and address, with Open in browser and Cancel:
+  WebKit cannot tell a person's click from a page script's, so a script
+  could otherwise send the browser to an address of its choosing (#84).
+
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
 ### Added

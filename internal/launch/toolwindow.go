@@ -540,3 +540,49 @@ func aRealGesture(eventType int, age time.Duration) bool {
 	}
 	return false
 }
+
+// openInBrowserButton is the button that hands a tool window's link to the
+// browser on macOS, once a person confirms it (#84).
+const openInBrowserButton = "Open in browser"
+
+// handOutQuestion is the sheet a macOS tool window shows before handing a
+// link to the browser: the link's host as its title and the whole address as
+// its detail, no sentence (#84). WebKit cannot say whether a person or a
+// script asked (a script's a.click() after a click elsewhere passes every
+// other check), so on macOS the person's second click decides.
+func handOutQuestion(target string) (message, detail string) {
+	host := target
+	if u, err := url.Parse(target); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	return host, target
+}
+
+// handOutAsk is the one hand-out question open at a time, across the tool
+// windows: AppKit's completion handler says only which button was pressed, so
+// a second question while one is open is refused rather than mistaken for it.
+// Main thread only, like the windows.
+type handOutAsk struct {
+	target string
+	open   bool
+}
+
+// ask records target as the question being asked; false while another is open.
+func (a *handOutAsk) ask(target string) bool {
+	if a.open {
+		return false
+	}
+	a.target, a.open = target, true
+	return true
+}
+
+// answer closes the question and gives the target to open, when the person
+// pressed openInBrowserButton.
+func (a *handOutAsk) answer(confirmed bool) (string, bool) {
+	if !a.open {
+		return "", false
+	}
+	target := a.target
+	a.target, a.open = "", false
+	return target, confirmed
+}

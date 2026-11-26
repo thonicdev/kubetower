@@ -827,8 +827,12 @@ func registerClasses() {
 			}},
 			{
 				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
-				Fn: func(_ objc.ID, _ objc.SEL, _, _, action, _ objc.ID) objc.ID {
-					handOutOfToolWindow(action)
+				Fn: func(_ objc.ID, _ objc.SEL, webView, _, action, _ objc.ID) objc.ID {
+					var window objc.ID
+					if w, ok := macToolWindows.byWeb[webView]; ok {
+						window = w.window
+					}
+					handOutOfToolWindow(window, action)
 					return 0
 				},
 			},
@@ -887,6 +891,8 @@ type macToolWindow struct {
 	id      int
 	origin  string
 	webView objc.ID
+	// window carries the hand-out question's sheet (#84).
+	window objc.ID
 }
 
 // macToolWindows is every drawn tool window, by window and by web view. Main
@@ -952,7 +958,7 @@ func drawToolWindow(id int, target toolWindowTarget) {
 	window.Send(hot.setDelegate, hot.toolDelegate)
 	window.Send(hot.center)
 
-	w := &macToolWindow{id: id, origin: target.Origin, webView: webView}
+	w := &macToolWindow{id: id, origin: target.Origin, webView: webView, window: window}
 	macToolWindows.byWindow[window] = w
 	macToolWindows.byWeb[webView] = w
 	webView.Send(hot.loadRequest, objc.ID(hot.nsURLRequest).Send(hot.requestWithURL, nsurl))
@@ -997,7 +1003,7 @@ func decideToolNavigation(webView, action objc.ID) uintptr {
 		return policyAllow
 	}
 	if handOut {
-		handOutOfToolWindow(action)
+		handOutOfToolWindow(w.window, action)
 	}
 	return policyCancel
 }
@@ -1009,9 +1015,14 @@ const (
 	navigationTypeFormSubmitted = 1
 )
 
-// handOutOfToolWindow opens the action's address in the default browser if
-// toolHandOuts allows it, and logs why not otherwise.
-func handOutOfToolWindow(action objc.ID) {
+// handOutOfToolWindow asks, in a sheet on the tool window, before opening the
+// action's address in the default browser (#84), if toolHandOuts allows it,
+// and logs why not otherwise. WebKit cannot tell a person's click from a
+// script's a.click() after a click elsewhere, so the person confirms.
+//
+// A sheet, not runModal, for the reason askBeforeQuitting gives: this is a
+// navigation callback.
+func handOutOfToolWindow(window, action objc.ID) {
 	target := actionURL(action)
 	kind := objc.Send[int](action, hot.navigationType)
 	user := (kind == navigationTypeLinkActivated || kind == navigationTypeFormSubmitted) && personMadeIt()
@@ -1019,7 +1030,36 @@ func handOutOfToolWindow(action objc.ID) {
 		log.Printf("[kubetower] a tool window's link was not opened in the browser: %s", why)
 		return
 	}
-	openOutside(target)
+	if window == 0 || !handOutAsking.ask(target) {
+		log.Printf("[kubetower] a tool window's link was not opened in the browser: another is being asked about")
+		return
+	}
+	message, detail := handOutQuestion(target)
+	if handOutAlert != 0 {
+		handOutAlert.Send(hot.release)
+	}
+	alert := objc.ID(hot.nsAlert).Send(hot.alloc).Send(hot.init)
+	alert.Send(hot.setMessageText, nsStringHot(message))
+	alert.Send(hot.setInformativeText, nsStringHot(detail))
+	alert.Send(hot.addButtonWithTitle, nsStringHot(openInBrowserButton))
+	alert.Send(hot.addButtonWithTitle, nsStringHot(cancelButton))
+	handOutAlert = alert
+	alert.Send(hot.beginSheet, window, hot.handOutAnswer)
+}
+
+// handOutAsking is the open hand-out question, and handOutAlert its NSAlert,
+// owned and released when the next is made. Main thread only.
+var (
+	handOutAsking handOutAsk
+	handOutAlert  objc.ID
+)
+
+// answerHandOut is the hand-out sheet's completion handler: Open in browser
+// opens the address, Cancel, Escape or the window closing opens nothing.
+func answerHandOut(_ objc.Block, response int) {
+	if target, open := handOutAsking.answer(response == alertFirstButtonReturn); open {
+		openOutside(target)
+	}
 }
 
 // personMadeIt says whether AppKit's current event is a click or a key press
@@ -1607,6 +1647,7 @@ var hot struct {
 	activityReason                                      objc.ID // activityReason, as an NSString
 	aboutOptions                                        objc.ID // aboutPanel(), as the panel's NSDictionary
 	quitAnswer                                          objc.Block
+	handOutAnswer                                       objc.Block
 
 	// The tool windows (#65): drawn and closed from kubeTowerToolWindows:.
 	toolWindows, object, nonPersistentDataStore           objc.SEL
@@ -1726,6 +1767,10 @@ func warmHotPath() {
 	// a callback and encodes a signature, which a callback may not do.
 	if hot.quitAnswer == 0 {
 		hot.quitAnswer = objc.NewBlock(answerQuitQuestion)
+	}
+	// The tool windows' hand-out question (#84), likewise.
+	if hot.handOutAnswer == 0 {
+		hot.handOutAnswer = objc.NewBlock(answerHandOut)
 	}
 	// The notification center's two completion handlers, likewise.
 	if hot.noticeAuthorized == 0 {
