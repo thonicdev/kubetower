@@ -1,6 +1,7 @@
 package cnpg
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -383,5 +384,75 @@ func TestTheSessionIsReadOnlyAndInUTC(t *testing.T) {
 	}
 	if cfg.RuntimeParams["TimeZone"] != "UTC" || cfg.RuntimeParams["default_transaction_read_only"] != "on" || cfg.Database != "app" {
 		t.Errorf("runtime params %v, database %q", cfg.RuntimeParams, cfg.Database)
+	}
+}
+
+// The bound counts the columns' names and types too: a hundred long names
+// of escaped characters still answer under MaxAnswer.
+func TestAPageWithLongColumnNamesStaysUnderItsBound(t *testing.T) {
+	cols := make([][]string, MaxColumns)
+	row := make([]string, MaxColumns+1)
+	for i := range cols {
+		// The longest a catalog spells: 63-byte names, a type qualified by
+		// its schema, every character one the encoder escapes.
+		cols[i] = []string{strings.Repeat("<", 60) + strconv.Itoa(i), `"` + strings.Repeat("<", 63) + `"."` + strings.Repeat(">", 63) + `"`, "false"}
+		row[i] = strings.Repeat("\x01", MaxCell)
+	}
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf(),
+		sqlColumns:    rowsOf(cols...),
+		sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
+			for i := 0; i <= MaxRows; i++ {
+				values := make([][]byte, len(row))
+				for j, v := range row {
+					values[j] = []byte(v)
+				}
+				values[len(row)-1] = []byte("(0," + strconv.Itoa(i+1) + ")")
+				if err := each(nil, values); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}}
+	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide", "")
+	if rec.Code != http.StatusOK || rec.Body.Len() > MaxAnswer {
+		t.Fatalf("answered %d with %d bytes, over %d", rec.Code, rec.Body.Len(), MaxAnswer)
+	}
+}
+
+// A view's own data error on a later page is a failure, not a stale cursor:
+// an offset binds no value.
+func TestAViewsDataErrorIsNotAStaleCursor(t *testing.T) {
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "v"}),
+		sqlPrimaryKey: rowsOf(),
+		sqlColumns:    rowsOf([]string{"ratio", "numeric", "false"}),
+		sqlRowsPrefix: func([]string, func([]column, [][]byte) error) error {
+			return &pgconn.PgError{Code: "22012", Message: "division by zero"}
+		},
+	}}
+	cursor := encodeCursor(pageCursor{Table: "16384", Key: keyOffset, Start: 100})
+	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/v", `{"cursor":"`+cursor+`"}`)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), `"`+CodeSQLFailed+`"`) {
+		t.Errorf("answered %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// What a page holds besides its rows is counted from above, the extreme
+// column list and the longest cursor included: more than a flat 64 KiB.
+func TestThePageHeadIsCountedFromAbove(t *testing.T) {
+	head := Rows{Schema: strings.Repeat("<", 63), Table: strings.Repeat("&", 63), Rows: [][]Cell{}, Key: keyPrimary, More: true, Bounded: true,
+		Next: strings.Repeat("A", maxCursor), Start: maxOffset}
+	for i := 0; i < MaxColumns; i++ {
+		head.Columns = append(head.Columns, Column{Name: strings.Repeat("\x01", 60) + strconv.Itoa(i), Type: `"` + strings.Repeat("<", 63) + `"."` + strings.Repeat("<", 63) + `"[]`, Primary: true})
+	}
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(head); err != nil {
+		t.Fatal(err)
+	}
+	if got := answerHead(head); got < b.Len() || b.Len() <= 64<<10 {
+		t.Errorf("the head counts %d bytes; encoded, it is %d", got, b.Len())
 	}
 }

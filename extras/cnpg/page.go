@@ -218,7 +218,7 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 		shown := len(exprs)
 		statement, args := pageStatement(exprs, quoteIdent(schema)+"."+quoteIdent(table), key, keys, cursor)
 		var last []string
-		size := 0
+		size := answerHead(out)
 		err = s.q.query(ctx, statement, args, func(_ []column, row [][]byte) error {
 			if len(out.Rows) == MaxRows {
 				out.More = true
@@ -232,7 +232,7 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 			}
 			// The row that would cross MaxAnswer starts the next page; a
 			// first row always goes, as it is bounded by the cells' caps.
-			if len(out.Rows) > 0 && size+grows > MaxAnswer-answerRoom {
+			if len(out.Rows) > 0 && size+grows > MaxAnswer {
 				out.More, out.Bounded = true, true
 				return errEnough
 			}
@@ -245,9 +245,10 @@ func (x CNPG) rows(h extension.Host) http.Handler {
 			return nil
 		})
 		var pgErr *pgconn.PgError
-		if err != nil && ask.cursor != "" && errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
+		if err != nil && len(args) > 0 && errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
 			// A cursor value that does not read as the key's type: not one
-			// this table handed out.
+			// this table handed out. Only where values were bound: a view's
+			// own data error (a division by zero on page 2) stays a failure.
 			return nil, errWrongCursor
 		}
 		if err != nil {
@@ -315,9 +316,16 @@ func pageStatement(exprs []string, from, key string, keys []keyColumn, c pageCur
 	return b.String(), args
 }
 
-// answerRoom is what a page holds besides its rows: the columns and the
-// fields around them, well under this.
-const answerRoom = 64 << 10
+// answerHead is what a page holds besides its rows, as JSON, from above:
+// the columns' names and types, its own names, its cursor and the fields
+// around them.
+func answerHead(r Rows) int {
+	n := 512 + 2*len(r.Schema) + 2*len(r.Table) + maxCursor
+	for _, c := range r.Columns {
+		n += 64 + cellSize(Cell{Text: c.Name}) + cellSize(Cell{Text: c.Type})
+	}
+	return n
+}
 
 // cellSize is a cell's size as JSON, from above: each character as the
 // encoder escapes it (a control character or <, >, & as \u00XX), and room
