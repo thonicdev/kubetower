@@ -67,6 +67,10 @@ dialog draws it first, as a New extra line.
   window that failed is closed rather than left blank on screen. The library
   is carried patched in `third_party/go-webview2` until upstream takes the
   change (#84).
+- **macOS: a tool window asks before opening a link in the browser.** A
+  sheet shows the link's host and address, with Open in browser and Cancel:
+  WebKit cannot tell a person's click from a page script's, so a script
+  could otherwise send the browser to an address of its choosing (#84).
 - **A kubeconfig edited while KubeTower runs is read whole.** A file
   truncated while the merge was being read no longer drops its contexts for
   good; a file renamed away for a moment by an editor keeps its clusters and
