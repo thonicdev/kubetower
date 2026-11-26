@@ -71,13 +71,6 @@ export function ImageRef({
   // The separator is drawn, so a selection made with the mouse reads as a
   // reference: `repo:tag`, `repo@sha256:…` (the digest's short form there).
   const separator = parts.tag === '' && parts.digest !== '' ? '@' : ':';
-  const versionTitle = parts.implicit
-    ? 'latest (implicit)'
-    : parts.tag !== '' && parts.digest !== ''
-      ? `${parts.tag}@${parts.digest}`
-      : parts.tag !== ''
-        ? parts.tag
-        : parts.digest;
   return (
     <span data-image={parts.full} className={`flex min-w-0 items-center gap-1.5 ${className}`} title={parts.full}>
       <span className="flex min-w-0 items-center font-mono text-xs">
@@ -93,15 +86,7 @@ export function ImageRef({
             far faster. A tag longer than the line (up to 128
             characters) is then cut at its end, inside the line, whole in its
             hover - the separator and the copy button keep their room. */}
-        <span
-          data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
-          className={`min-w-0 max-w-full shrink truncate rounded-sm border px-1 text-2xs leading-4 ${
-            parts.implicit ? 'border-line text-muted' : 'border-accent/40 bg-accent/10 text-fg'
-          }`}
-          title={versionTitle}
-        >
-          {parts.version}
-        </span>
+        <VersionBadge parts={parts} />
       </span>
       {copy ? (
         <span className="shrink-0">
@@ -109,5 +94,90 @@ export function ImageRef({
         </span>
       ) : null}
     </span>
+  );
+}
+
+/** The repository cut in its middle where it does not fit: the start of the
+ *  path, an ellipsis, then the last segment whole (`registry.int…/app`).
+ *
+ *  With a start to give way, the last segment does not shrink at all: a share
+ *  of the shrink by weight, even a fraction of a pixel, is enough for the
+ *  browser to draw its ellipsis. It is cut only when it alone is wider than the
+ *  line less the start's two characters. With no start, it is the only part,
+ *  and is cut at its end. */
+function MiddleCut({ repository }: { repository: string }): ReactNode {
+  const slash = repository.lastIndexOf('/');
+  const head = slash < 0 ? '' : repository.slice(0, slash);
+  const tail = slash < 0 ? repository : repository.slice(slash);
+  return (
+    <span data-image-repository="" className="flex min-w-0 font-mono text-xs text-muted">
+      {head === '' ? null : (
+        <span data-image-head="" className="min-w-[2ch] shrink-[999] truncate">
+          {head}
+        </span>
+      )}
+      <span
+        data-image-name=""
+        className={head === '' ? 'min-w-0 truncate' : 'max-w-[calc(100%-2ch)] shrink-0 truncate'}
+      >
+        {tail}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The version as a badge: the tag, else the short digest, else `latest`, with
+ * tag and digest whole in its hover. A tag longer than the line (up to 128
+ * characters) is cut at its end, never past the line.
+ */
+function VersionBadge({ parts }: { parts: ImageParts }): ReactNode {
+  const versionTitle = parts.implicit
+    ? 'latest (implicit)'
+    : parts.tag !== '' && parts.digest !== ''
+      ? `${parts.tag}@${parts.digest}`
+      : parts.tag !== ''
+        ? parts.tag
+        : parts.digest;
+  return (
+    <span
+      data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
+      className={`min-w-0 max-w-full shrink truncate rounded-sm border px-1 font-mono text-2xs leading-4 ${
+        parts.implicit ? 'border-line text-muted' : 'border-accent/40 bg-accent/10 text-fg'
+      }`}
+      title={versionTitle}
+    >
+      {parts.version}
+    </span>
+  );
+}
+
+/**
+ * A container's image on a line of its own (#136), the repository readable:
+ * `repository:version ⧉` on one line where it fits. Where it does not, the
+ * version and the copy wrap under it as one group, and the repository keeps
+ * the whole line, cut in its middle only if it is still too long. The whole
+ * reference is the line's hover, and the copy copies it exactly.
+ */
+export function ImageLine({ image }: { image: string | undefined }): ReactNode {
+  const parts = imageParts(image);
+  if (parts.full === '') return null;
+  const separator = parts.tag === '' && parts.digest !== '' ? '@' : ':';
+  return (
+    <div data-image={parts.full} data-image-line="" className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5" title={parts.full}>
+      {/* Content-sized, so the line breaks only where both do not fit. */}
+      <span className="flex max-w-full min-w-0 flex-[0_1_auto] items-center">
+        <MiddleCut repository={parts.repository} />
+        <span data-image-separator="" className="shrink-0 font-mono text-xs text-muted">
+          {separator}
+        </span>
+      </span>
+      <span className="flex max-w-full min-w-0 flex-[0_1_auto] items-center gap-1">
+        <VersionBadge parts={parts} />
+        <span className="shrink-0">
+          <CopyButton value={parts.full} label="Copy image" />
+        </span>
+      </span>
+    </div>
   );
 }

@@ -408,7 +408,10 @@ describe('a metrics source with nothing to say is not drawn', () => {
     );
 
     expect(headings()).toContain('Over time');
-    expect(page().querySelector('[role="status"][data-state="unreachable"]')?.textContent).toContain('i/o timeout');
+    // One quiet line, the server's sentence on hover (#127).
+    const line = page().querySelector('[data-no-metrics][data-state="unreachable"]');
+    expect(line?.textContent).toBe('No metrics available');
+    expect(line?.getAttribute('title')).toContain('i/o timeout');
   });
 
   // A read that panicked reaches the page as `unreadable`/`unclassified`, and it
@@ -422,7 +425,9 @@ describe('a metrics source with nothing to say is not drawn', () => {
     );
 
     expect(headings()).toContain('Over time');
-    expect(page().querySelector('[role="status"][data-state="unreadable"]')?.textContent).toContain('panicked');
+    const line = page().querySelector('[data-no-metrics][data-state="unreadable"]');
+    expect(line?.textContent).toBe('No metrics available');
+    expect(line?.getAttribute('title')).toContain('panicked');
   });
 
   it('keeps a usage read that panicked visible', async () => {
@@ -434,7 +439,9 @@ describe('a metrics source with nothing to say is not drawn', () => {
     );
 
     expect(headings()).toContain('Most used');
-    expect(page().textContent).toContain('the pod usage read panicked: a nil map');
+    expect(page().querySelector('[data-no-metrics][data-state="unreadable"]')?.getAttribute('title')).toBe(
+      'the pod usage read panicked: a nil map',
+    );
   });
 
   it('keeps an empty window over series that exist, short, with the caption on hover', async () => {
@@ -540,7 +547,9 @@ describe('a metrics source with nothing to say is not drawn', () => {
     );
 
     expect(headings()).toContain('Most used');
-    expect(page().textContent).toContain('you may not read pods.metrics.k8s.io');
+    expect(page().querySelector('[data-no-metrics][data-state="forbidden"]')?.getAttribute('title')).toBe(
+      'you may not read pods.metrics.k8s.io',
+    );
   });
 });
 
@@ -1502,6 +1511,8 @@ describe('Most used keeps its notice where the source answered unreadably', () =
 
     const titles = [...page().querySelectorAll('h2')].map((heading) => heading.textContent?.trim());
     expect(titles).toContain('Most used');
-    expect(page().textContent).toContain('the metrics reply could not be read');
+    expect(page().querySelector('[data-no-metrics][data-state="unreadable"]')?.getAttribute('title')).toBe(
+      'the metrics reply could not be read',
+    );
   });
 });

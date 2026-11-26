@@ -84,6 +84,15 @@ func startAgain(path string) error {
 	return nil
 }
 
+// startAgainUnlessQuit is startAgain, except while KubeTower quits
+// (InstallOnQuit): the new build is in place, and the next start runs it.
+func startAgainUnlessQuit(plan Plan) error {
+	if plan.Quit {
+		return nil
+	}
+	return startAgain(plan.Installation.Path)
+}
+
 // stopSelf ends this process through internal/launch's shutdown (SetStop),
 // or by SIGTERM to itself, which reaches the same path, where nothing was set.
 var stopSelf = func() error {

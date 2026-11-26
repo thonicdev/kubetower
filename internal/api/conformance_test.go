@@ -289,7 +289,7 @@ func exercises() map[string]exercise {
 
 		"checkUpdates":     {status: 200, path: at("/api/settings/update-check")},
 		"getUpdateInstall": {status: 200, path: at("/api/settings/update")},
-		"setUpdateInstall": {status: 200, path: at("/api/settings/update"), body: sends(`{"enabled":false}`)},
+		"setUpdateInstall": {status: 200, path: at("/api/settings/update"), body: sends(`{"enabled":false,"when":"now"}`)},
 		"downloadUpdate":   {status: 200, path: at("/api/settings/update/download")},
 		"installUpdate":    {status: 200, path: at("/api/settings/update/install")},
 		"openUpdateFolder": {status: 200, path: at("/api/settings/update/open-folder")},

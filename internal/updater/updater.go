@@ -41,8 +41,15 @@ const (
 // Status is what the Settings page is told.
 type Status struct {
 	Phase Phase `json:"phase"`
-	// Enabled is the operator's "Install updates" setting.
+	// Enabled is the operator's "Install updates automatically" setting (#122):
+	// a newer release is downloaded and verified on its own, and installed at
+	// the moment When names. Off, Download and Install stay by hand.
 	Enabled bool `json:"enabled"`
+	// When is when an automatic update installs: WhenQuit or WhenNow.
+	When string `json:"when"`
+	// Password says installing asks for one (a .deb or .rpm, through pkexec):
+	// never asked unprompted, so an automatic update stops at ready.
+	Password bool `json:"password"`
 	// Supported says this installation has an asset in a release and an
 	// installer in this build. False draws no Download.
 	Supported bool `json:"supported"`
@@ -70,19 +77,33 @@ type Plan struct {
 	// the console appends to. Paths and exit codes only: never a token or a
 	// URL.
 	Log string
+	// Quit: KubeTower is quitting (InstallOnQuit). The installer puts the new
+	// build in place and starts nothing, and never asks the console to stop.
+	Quit bool
 }
+
+// When an automatic update installs (#122).
+const (
+	// WhenQuit: as KubeTower quits, so nothing open is interrupted. The default.
+	WhenQuit = "quit"
+	// WhenNow: as soon as no terminal and no port-forward is open.
+	WhenNow = "now"
+)
+
+// ValidWhen says when is one of WhenQuit and WhenNow.
+func ValidWhen(when string) bool { return when == WhenQuit || when == WhenNow }
 
 // Installer replaces the running KubeTower with plan.File and restarts it.
 // On success it does not return: the process exits.
 type Installer func(ctx context.Context, plan Plan) error
 
 var (
-	// ErrDisabled: the operator turned "Install updates" off.
-	ErrDisabled = errors.New("installing updates is turned off")
 	// ErrUnsupported: no asset or no installer for this installation.
 	ErrUnsupported = errors.New("this installation cannot be updated from the console")
 	// ErrBusy: a download or an install is already running.
 	ErrBusy = errors.New("an update is already in progress")
+	// ErrWhen: when an automatic update installs is neither on quit nor now.
+	ErrWhen = errors.New(`when must be "quit" or "now"`)
 	// ErrNotReady: Install was asked before a verified download.
 	ErrNotReady = errors.New("no verified update is ready")
 	// ErrNotNewer: the release is not newer than this build.
@@ -212,6 +233,8 @@ type Options struct {
 	Install Installer
 	// ExitWait overrides ExitWait, for tests.
 	ExitWait time.Duration
+	// Writable overrides the probe of the installation's folder, for tests.
+	Writable func() bool
 	Logf     func(string, ...any)
 }
 
@@ -222,17 +245,52 @@ type Updater struct {
 	mu      sync.Mutex
 	status  Status
 	planned Plan
+	// downloaded and installed are the versions the automatic update last
+	// started a download and an install of: each is tried once, and a failure
+	// waits for a person or a newer release rather than repeating (#122).
+	autoDownloaded, autoInstalled string
+	// held is updater.json as last read or written.
+	held settings
+	// saving serializes the writes of updater.json: each writes held as it
+	// stands when the write runs, so a later setting is never overwritten by
+	// an earlier one landing after it.
+	saving sync.Mutex
 }
 
-// New reads the "Install updates" setting (on unless turned off).
+// New reads the "Install updates automatically" setting (on unless turned
+// off) and when it installs (on quit unless set otherwise).
 func New(o Options) *Updater {
 	u := &Updater{o: o}
 	_, supported := AssetName("0.0.0", o.GOOS, o.GOARCH, o.Installation.Kind)
+	held := u.readSettings()
+	u.held = held
 	u.status = Status{
 		Phase:        Idle,
-		Enabled:      u.readEnabled(),
+		Enabled:      held.on(),
+		When:         held.when(),
+		Password:     o.Installation.Kind == LinuxDeb || o.Installation.Kind == LinuxRPM,
 		Supported:    supported && u.installer() != nil && u.canInstall(),
 		Installation: o.Installation.Kind,
+	}
+	// A release handed over at the last quit that this build is older than
+	// did not get installed (a setup that failed after the exit): it is kept
+	// as failed on quit, as a failure seen at the quit itself is.
+	if held.InstalledOnQuit != "" {
+		if update.IsNewer(held.InstalledOnQuit, o.Version) {
+			held.FailedOnQuit, held.FailedReason = held.InstalledOnQuit, errNotInstalledOnQuit.Error()
+		}
+		held.InstalledOnQuit = ""
+		u.held = held
+		if err := u.saveSettings(); err != nil {
+			u.logf("update: the last quit's install could not be settled: %s", textutil.FirstLine(err.Error()))
+		}
+	}
+	// A release that could not be installed at the last quit is said, and
+	// neither downloaded nor tried again until a person asks (#122).
+	if held.FailedOnQuit != "" && update.IsNewer(held.FailedOnQuit, o.Version) {
+		u.status.Phase = Failed
+		u.status.Version = held.FailedOnQuit
+		u.status.Reason = held.FailedReason
 	}
 	if sweep := sweepers[o.Installation.Kind]; sweep != nil && o.Install == nil && o.Installation.Path != "" {
 		path := o.Installation.Path
@@ -248,20 +306,50 @@ func (u *Updater) Status() Status {
 	return u.status
 }
 
-// SetEnabled writes the "Install updates" setting.
-func (u *Updater) SetEnabled(on bool) (Status, error) {
-	raw, _ := json.Marshal(struct {
-		InstallUpdates bool `json:"installUpdates"`
-	}{on})
-	err := statefile.Write(filepath.Join(u.dir(), settingsFile), raw)
-	u.mu.Lock()
-	u.status.Enabled = on
-	if !on && u.status.Phase != Installing && u.status.Phase != Downloading {
-		u.forget()
+// Set writes the "Install updates automatically" setting and, when it is not
+// empty, when it installs. Turning it off keeps a download: Install stays by
+// hand. An unknown when is ErrWhen, and nothing is written.
+func (u *Updater) Set(on bool, when string) (Status, error) {
+	if when != "" && !ValidWhen(when) {
+		return u.Status(), ErrWhen
 	}
+	u.mu.Lock()
+	if when == "" {
+		when = u.status.When
+	}
+	u.held.InstallUpdates, u.held.InstallWhen = &on, when
+	u.status.Enabled = on
+	u.status.When = when
 	out := u.status
 	u.mu.Unlock()
-	return out, err
+	return out, u.saveSettings()
+}
+
+// saveSettings writes updater.json with held as it stands now, one write at a time.
+func (u *Updater) saveSettings() error {
+	u.saving.Lock()
+	defer u.saving.Unlock()
+	u.mu.Lock()
+	held := u.held
+	u.mu.Unlock()
+	raw, _ := json.Marshal(held)
+	return statefile.Write(filepath.Join(u.dir(), settingsFile), raw)
+}
+
+// failedOnQuit keeps the release an install at quit could not put in place,
+// with why: the next start says so rather than download it again (#122).
+// Empty clears it.
+func (u *Updater) failedOnQuit(version, reason string) {
+	u.mu.Lock()
+	if u.held.FailedOnQuit == version && u.held.FailedReason == reason {
+		u.mu.Unlock()
+		return
+	}
+	u.held.FailedOnQuit, u.held.FailedReason = version, reason
+	u.mu.Unlock()
+	if err := u.saveSettings(); err != nil {
+		u.logf("update: the failed install could not be kept: %s", textutil.FirstLine(err.Error()))
+	}
 }
 
 // Download starts fetching and verifying the latest release's asset. It
@@ -270,8 +358,6 @@ func (u *Updater) Download() (Status, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	switch {
-	case !u.status.Enabled:
-		return u.status, ErrDisabled
 	case !u.status.Supported:
 		return u.status, ErrUnsupported
 	case u.status.Phase == Downloading || u.status.Phase == Verifying || u.status.Phase == Installing:
@@ -279,6 +365,11 @@ func (u *Updater) Download() (Status, error) {
 	}
 	u.forget()
 	u.status.Phase = Downloading
+	// InstalledOnQuit needs nothing here: New settles it at every start.
+	if u.held.FailedOnQuit != "" {
+		u.held.FailedOnQuit, u.held.FailedReason = "", ""
+		safego.Go("update settings", u.saveSettings, nil)
+	}
 	safego.Go("update download", func() error { u.download(); return nil }, func(err error) {
 		// Only a panic gets here: download reports its own failures.
 		if err != nil {
@@ -291,12 +382,15 @@ func (u *Updater) Download() (Status, error) {
 // Install hands the verified file to the platform's installer. It checks the
 // file's hash and the version again first: the file sat on disk since.
 func (u *Updater) Install(ctx context.Context) (Status, error) {
+	return u.install(ctx, nil)
+}
+
+// install is Install; still, when given, is checked against the status under
+// the same lock that starts the install: the automatic update's own
+// conditions, so a switch turned off a moment before is honored (#122).
+func (u *Updater) install(ctx context.Context, still func(Status) bool) (Status, error) {
 	u.mu.Lock()
-	if !u.status.Enabled {
-		defer u.mu.Unlock()
-		return u.status, ErrDisabled
-	}
-	if u.status.Phase != Ready {
+	if u.status.Phase != Ready || (still != nil && !still(u.status)) {
 		defer u.mu.Unlock()
 		return u.status, ErrNotReady
 	}
@@ -344,6 +438,10 @@ func (u *Updater) Install(ctx context.Context) (Status, error) {
 	})
 	return out, nil
 }
+
+// errNotInstalledOnQuit is the reason kept when the release handed over at
+// the last quit is not the one this start runs.
+var errNotInstalledOnQuit = errors.New("the update handed over at the last quit was not installed; see update-install.log")
 
 // errNotStopped is the reason an install fails when the console did not stop
 // for its helper within ExitWait.
@@ -545,11 +643,41 @@ func (u *Updater) download() {
 		return
 	}
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	u.planned = plan
-	u.status.Phase = Ready
 	u.status.Version = plan.Version
 	u.status.Done = u.status.Total
+	u.mu.Unlock()
+	// Automatic: settled while KubeTower runs, not at quit - a folder it
+	// cannot write to is the manual phase (Open folder) now, never a silent
+	// failure as it closes. By hand, Install finds it, as before (macOS then
+	// opens the disk image for the person who clicked).
+	if u.Status().Enabled && !u.writable() {
+		u.manual(plan.File, fmt.Errorf("%w: %s", ErrNotWritable, filepath.Dir(u.o.Installation.Path)))
+		return
+	}
+	u.mu.Lock()
+	u.status.Phase = Ready
+	u.mu.Unlock()
+}
+
+// writable says the installer can put the new build where this one is: the
+// folder beside an AppImage, a tar's binary, a zip's exe or a macOS bundle
+// (not translocated). A setup or a package installs through its own installer.
+func (u *Updater) writable() bool {
+	if u.o.Writable != nil {
+		return u.o.Writable()
+	}
+	if u.o.Install != nil {
+		return true
+	}
+	path := u.o.Installation.Path
+	switch u.o.Installation.Kind {
+	case MacApp:
+		return !translocated(path) && writableBeside(path)
+	case LinuxAppImage, LinuxTar, MacTar, WindowsZip:
+		return writableBeside(path)
+	}
+	return true
 }
 
 type release struct {
@@ -793,18 +921,41 @@ func (u *Updater) dir() string {
 	return dir
 }
 
-func (u *Updater) readEnabled() bool {
+// settings is updater.json. installUpdates keeps the name the manual
+// setting had: an operator who turned installing off keeps it off, now as
+// "not automatically".
+type settings struct {
+	InstallUpdates *bool  `json:"installUpdates,omitempty"`
+	InstallWhen    string `json:"installWhen,omitempty"`
+	// FailedOnQuit is the release an install at quit did not put in place,
+	// and FailedReason why: kept until a person downloads again.
+	FailedOnQuit string `json:"failedOnQuit,omitempty"`
+	FailedReason string `json:"failedReason,omitempty"`
+	// InstalledOnQuit is the release handed over at the last quit. Windows'
+	// helper runs the setup after the exit, out of sight: the next start
+	// running an older build is that install having failed.
+	InstalledOnQuit string `json:"installedOnQuit,omitempty"`
+}
+
+// on is the automatic setting: on unless turned off.
+func (s settings) on() bool { return s.InstallUpdates == nil || *s.InstallUpdates }
+
+// when is when it installs: on quit unless set to a known other.
+func (s settings) when() string {
+	if ValidWhen(s.InstallWhen) {
+		return s.InstallWhen
+	}
+	return WhenQuit
+}
+
+// readSettings reads updater.json; missing or unreadable is the defaults.
+func (u *Updater) readSettings() settings {
+	var held settings
 	raw, err := os.ReadFile(filepath.Join(u.dir(), settingsFile))
-	if err != nil {
-		return true
+	if err != nil || json.Unmarshal(raw, &held) != nil {
+		return settings{}
 	}
-	var held struct {
-		InstallUpdates *bool `json:"installUpdates"`
-	}
-	if json.Unmarshal(raw, &held) != nil || held.InstallUpdates == nil {
-		return true
-	}
-	return *held.InstallUpdates
+	return held
 }
 
 // forget drops a download, under u.mu.

@@ -1158,8 +1158,8 @@ func (i apiInstaller) UpdateInstall() api.UpdateInstall {
 	return updateInstallOf(i.s, i.s.setup.Installer.Status())
 }
 
-func (i apiInstaller) SetInstallUpdates(on bool) (api.UpdateInstall, error) {
-	status, err := i.s.setup.Installer.SetEnabled(on)
+func (i apiInstaller) SetInstallUpdates(on bool, when string) (api.UpdateInstall, error) {
+	status, err := i.s.setup.Installer.Set(on, when)
 	out := updateInstallOf(i.s, status)
 	if err != nil {
 		return out, fmt.Errorf("%w: %s", api.ErrNotSaved, firstLine(err.Error()))

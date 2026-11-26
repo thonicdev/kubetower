@@ -1081,11 +1081,12 @@ paths:
     put:
       operationId: setUpdateInstall
       tags: [session]
-      summary: Turn "Install updates" on or off.
+      summary: Turn "Install updates automatically" on or off, and say when it installs.
       description: >-
-        Off, the check and its line in Settings › Infos stay, and nothing is
-        downloaded or installed. Kept in the state directory. A write that took
-        effect and could not be saved answers `not_saved`.
+        On, a newer release is downloaded, verified and installed at the moment
+        `when` names. Off, Download and Install stay by hand. Kept in the state
+        directory. A `when` other than `quit` or `now` is refused (400). A write
+        that took effect and could not be saved answers `not_saved`.
       parameters:
         - $ref: '#/components/parameters/RequestMarker'
       requestBody:
@@ -1114,8 +1115,8 @@ paths:
         kept that the release's signed `checksums.txt` does not vouch for**: the
         Ed25519 signature is checked first, then the asset's sha256, and a file
         failing either is deleted. Never a downgrade, never a development
-        build. Refused (409) when "Install updates" is off, when this
-        installation cannot be updated, or while a download or install runs.
+        build. Refused (409) when this installation cannot be updated, or while
+        a download or install runs.
       parameters:
         - $ref: '#/components/parameters/RequestMarker'
       responses:
@@ -1137,7 +1138,7 @@ paths:
         Checks the downloaded file's hash and the version again, then hands it to
         this platform's installer, which replaces KubeTower and restarts it: the
         terminals and port-forwards counted in `ends` close. Refused (409)
-        before a verified download, or when "Install updates" is off.
+        before a verified download.
       parameters:
         - $ref: '#/components/parameters/RequestMarker'
       responses:
@@ -3080,9 +3081,8 @@ components:
     Conflict:
       description: >-
         The request cannot be taken in the state things are in now, and the
-        detail says which: for an update, "Install updates" is off, this
-        installation cannot be updated, one is already running, or nothing is
-        verified yet. Code `conflict`.
+        detail says which: for an update, this installation cannot be
+        updated, one is already running, or nothing is verified yet. Code `conflict`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -4498,7 +4498,7 @@ components:
         Where the desktop's update download and install stands (#47), and what
         a restart would end. Present in `info.update.install` only where this
         console can install; absent on the server profile and in a container.
-      required: [phase, enabled, supported, installation, ends]
+      required: [phase, enabled, when, password, supported, installation, ends]
       properties:
         phase:
           type: string
@@ -4508,7 +4508,24 @@ components:
             file waits in `folder`.
         enabled:
           type: boolean
-          description: The "Install updates" setting.
+          description: >-
+            The "Install updates automatically" setting (#122): a newer release
+            the update check found is downloaded and verified on its own, and
+            installed at the moment `when` names. Off, Download and Install
+            stay by hand.
+        when:
+          type: string
+          enum: [quit, now]
+          description: >-
+            When an automatic update installs: `quit`, as KubeTower quits,
+            starting nothing (the default); `now`, as soon as no terminal and
+            no port-forward is open, restarting KubeTower.
+        password:
+          type: boolean
+          description: >-
+            Installing asks for a password (a .deb or .rpm, through pkexec). An
+            automatic update then stops at `ready`, for Install: a password is
+            never asked unprompted.
         supported:
           type: boolean
           description: >-
@@ -4553,7 +4570,11 @@ components:
       properties:
         enabled:
           type: boolean
-          description: The "Install updates" setting.
+          description: The "Install updates automatically" setting.
+        when:
+          type: string
+          enum: [quit, now]
+          description: When an automatic update installs. Absent, the moment set is kept.
     SettingsWrite:
       type: object
       description: |

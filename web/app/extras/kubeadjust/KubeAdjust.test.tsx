@@ -251,8 +251,14 @@ describe('KubeAdjust', () => {
       }),
     });
     mount(PAGE_PATH);
-    expect(await screen.findByText(/This is not a cluster with nothing to fix/)).toBeTruthy();
-    expect(screen.getByText('not measured')).toBeTruthy();
+    // One quiet line and one neutral badge, the failing note on hover (#127).
+    const unmeasured = await screen.findAllByText('No metrics available');
+    expect(unmeasured).toHaveLength(2);
+    for (const said of unmeasured) {
+      expect(said.closest('[title]')?.getAttribute('title')).toBe('no per-container usage (absent): the cluster has no metrics-server');
+    }
+    expect(document.querySelector('[data-counts="unmeasured"] [data-tone]')?.getAttribute('data-tone')).toBe('normal');
+    expect(document.querySelector('[data-unmeasured] .text-bad')).toBeNull();
     expect(screen.queryByText(/nothing to change/i)).toBeNull();
     expect(screen.queryByText(/At risk/)).toBeNull();
     // The four notes are drawn, the failing one in the warning tone.
@@ -989,7 +995,7 @@ describe('KubeAdjust', () => {
     await screen.findByRole('region', { name: 'In this cluster' });
     expect(document.querySelector('[data-prometheus-banner]')).toBeNull();
     await router.navigate('/c/docker-desktop/x/kubeadjust?ns=shop');
-    await screen.findByText(/Nothing could be measured here/);
+    await waitFor(() => expect(document.querySelector('[data-unmeasured] [data-no-metrics]')).not.toBeNull());
     expect(document.querySelector('[data-prometheus-banner]')).toBeNull();
   });
 

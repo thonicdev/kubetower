@@ -813,7 +813,7 @@ func parseMetricNames(raw []byte) (map[string]bool, error) {
 	// probe did not run".
 	names := make(map[string]bool, len(resp.Data.Result))
 	for _, series := range resp.Data.Result {
-		name := series.Metric["__name__"]
+		name := series.Metric[probeLabel]
 		if name == "" || len(series.Value) < 2 {
 			continue
 		}
