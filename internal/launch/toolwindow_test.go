@@ -511,16 +511,16 @@ func TestTheHandOutSheetNamesTheHostAndTheAddress(t *testing.T) {
 // second question while one is open is refused, not answered by the first.
 func TestOnlyAConfirmedHandOutOpensAndOneIsAskedAtATime(t *testing.T) {
 	var a handOutAsk
-	if !a.ask("https://a.example/") {
+	if !a.ask("https://a.example/", 1) {
 		t.Fatal("the first question was refused")
 	}
-	if a.ask("https://b.example/") {
+	if a.ask("https://b.example/", 1) {
 		t.Fatal("a second question while one is open")
 	}
 	if target, open := a.answer(false); open || target != "https://a.example/" {
 		t.Fatalf("Cancel: %q %v", target, open)
 	}
-	if !a.ask("https://b.example/") {
+	if !a.ask("https://b.example/", 1) {
 		t.Fatal("no question after the first was answered")
 	}
 	if target, open := a.answer(true); !open || target != "https://b.example/" {
@@ -529,6 +529,31 @@ func TestOnlyAConfirmedHandOutOpensAndOneIsAskedAtATime(t *testing.T) {
 	// An answer with no question open opens nothing.
 	if _, open := a.answer(true); open {
 		t.Error("an answer with no question opened something")
+	}
+}
+
+// A tool window closed by KubeTower (its tunnel went) while its hand-out
+// question is up frees the question: AppKit does not promise the sheet's
+// handler then, and one question left open would refuse every later hand-out
+// until a restart (#84). Another window's close leaves it, and the handler
+// that may still come opens nothing.
+func TestClosingTheAskingWindowFreesTheNextQuestion(t *testing.T) {
+	var a handOutAsk
+	a.ask("https://a.example/", 7)
+	if a.closed(8) || !a.busy() {
+		t.Fatal("another window's close freed the question")
+	}
+	if !a.closed(7) || a.busy() {
+		t.Fatal("the asking window's close left the question open")
+	}
+	if _, open := a.answer(true); open {
+		t.Error("the late handler of a closed window's sheet opened the browser")
+	}
+	if !a.ask("https://b.example/", 8) {
+		t.Error("no question could be asked after the asking window closed")
+	}
+	if a.closed(7) {
+		t.Error("a second close of the first window freed the new question")
 	}
 }
 

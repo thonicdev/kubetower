@@ -590,14 +590,32 @@ func handOutQuestion(target string) (message, detail string) {
 type handOutAsk struct {
 	target string
 	open   bool
+	// window is the tool window the question's sheet is on.
+	window uintptr
 }
 
-// ask records target as the question being asked; false while another is open.
-func (a *handOutAsk) ask(target string) bool {
+// busy says a question is open.
+func (a *handOutAsk) busy() bool { return a.open }
+
+// ask records target as the question being asked on window; false while
+// another is open.
+func (a *handOutAsk) ask(target string, window uintptr) bool {
 	if a.open {
 		return false
 	}
-	a.target, a.open = target, true
+	a.target, a.open, a.window = target, true, window
+	return true
+}
+
+// closed frees the question when the window it is asked on closes, and says
+// whether it did. AppKit does not promise a sheet's completion handler when
+// KubeTower closes the window itself (its tunnel went), so without this one
+// question would stay open and refuse every later hand-out until a restart.
+func (a *handOutAsk) closed(window uintptr) bool {
+	if !a.open || a.window != window {
+		return false
+	}
+	a.target, a.open, a.window = "", false, 0
 	return true
 }
 
@@ -608,6 +626,6 @@ func (a *handOutAsk) answer(confirmed bool) (string, bool) {
 		return "", false
 	}
 	target := a.target
-	a.target, a.open = "", false
+	a.target, a.open, a.window = "", false, 0
 	return target, confirmed
 }
