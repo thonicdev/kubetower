@@ -134,6 +134,8 @@ type Metrics struct {
 	// ever queries, and nil means none.
 	configured bool
 	prometheus *PromTarget
+	// sources is Options.Sources.
+	sources func(cluster string) *PromTarget
 
 	// raw reaches an arbitrary API path; a field so tests can answer without a
 	// cluster.
@@ -177,7 +179,16 @@ type Options struct {
 	// Prometheus is the configured target, read only when Configured is set.
 	// Nil there means no Prometheus: the charts have no history and say why.
 	Prometheus *PromTarget
+
+	// Sources is the desktop's choice per cluster (Settings › General): the
+	// cluster's source, or nil where discovery decides. A source set there is
+	// the only one queried on that cluster, never replaced by discovery when it
+	// does not answer. Never read when Configured is set; nil chooses nothing.
+	Sources func(cluster string) *PromTarget
 }
+
+// SourceSetting names a source chosen in Settings in a Discovery's detail line.
+const SourceSetting = "the source set in Settings"
 
 // entry is one cluster's discovery: the answer, whoever is working one out, and
 // what was last said about it in the log.
@@ -210,6 +221,7 @@ func New(opts Options) *Metrics {
 
 		configured: opts.Configured,
 		prometheus: opts.Prometheus,
+		sources:    opts.Sources,
 	}
 	if m.ttl <= 0 {
 		m.ttl = DefaultTTL
@@ -409,7 +421,7 @@ func (m *Metrics) probe(ctx context.Context, name string) *Discovery {
 		return &Discovery{Kind: KindUnreachable, Detail: shortError(err)}
 	}
 
-	look := m.lookForPrometheus(ctx, client)
+	look := m.lookForPrometheus(ctx, name, client)
 	target, selector, refused := look.target, look.via, look.refused
 	switch {
 	case target != nil:
@@ -529,8 +541,13 @@ type lookup struct {
 // lookForPrometheus is configuration under the server profile and discovery
 // elsewhere. They never mix: falling back to discovery would hand the choice
 // back to whoever writes labels (Options.Configured).
-func (m *Metrics) lookForPrometheus(ctx context.Context, client *cluster.Client) lookup {
+func (m *Metrics) lookForPrometheus(ctx context.Context, name string, client *cluster.Client) lookup {
 	if !m.configured {
+		if m.sources != nil {
+			if target := m.sources(name); target != nil {
+				return lookup{target: target, via: SourceSetting}
+			}
+		}
 		return m.findPrometheus(ctx, client)
 	}
 	if m.prometheus == nil {

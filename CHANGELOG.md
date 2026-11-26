@@ -28,6 +28,11 @@ dialog draws it first, as a New extra line.
   takes a path, `vm/vmselect-main:8481/select/0/prometheus`. VictoriaMetrics
   answers every console query; rate and increase can differ slightly at
   window edges (#129).
+- **Monitoring in Settings › General.** A badge says what answers on the
+  current cluster: Prometheus, VictoriaMetrics, metrics-server or no metrics.
+  Where no history source is found, a field takes the Service,
+  `namespace/service:port[/path]`; under the server profile it shows
+  `KT_PROMETHEUS_SERVICE`, read only (#130).
 
 ### Changed
 

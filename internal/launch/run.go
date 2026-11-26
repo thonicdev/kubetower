@@ -715,6 +715,10 @@ type profile struct {
 	gate       *access.Gate
 	readOnly   *cluster.ReadOnly
 	measure    *metrics.Metrics
+	// sources is the desktop's metrics source per cluster, nil under the server
+	// profile, where promTarget (KT_PROMETHEUS_SERVICE) is the one source.
+	sources    *metrics.SourceStore
+	promTarget *metrics.PromTarget
 	bars       *hotbars.Store
 	cols       *columns.Store
 	plates     *nameplates.Store
@@ -850,9 +854,13 @@ func openProfile(inCluster bool) (*profile, error) {
 		return nil, err
 	}
 	log.Printf("[kubetower] Prometheus: %s", prometheusSummary(promConfigured, promTarget))
+	// The desktop's per-cluster choice (Settings › General), in front of
+	// discovery; none under the server profile.
+	sources := openMetricsSources(inCluster)
 	measure := metrics.New(metrics.Options{
 		Clusters: clusters, Access: gate, Logf: logf,
 		Configured: promConfigured, Prometheus: promTarget,
+		Sources: sourceLookup(sources),
 	})
 
 	// The stores in the state directory. See openPreferences.
@@ -886,7 +894,7 @@ func openProfile(inCluster bool) (*profile, error) {
 	return &profile{
 		stateWrittenBy: stateWrittenBy, stateIsNewer: stateIsNewer, updates: updates, installer: installer,
 		kubeconfig: kubeconfig, kubefiles: kubefiles, clusters: clusters,
-		gate: gate, readOnly: readOnly, measure: measure,
+		gate: gate, readOnly: readOnly, measure: measure, sources: sources, promTarget: promTarget,
 		bars: bars, cols: cols, plates: plates, xtra: xtra, kinds: kinds, replicas: replicas,
 		seen:            seen.New(statefile.Dir(), logf),
 		statePersistent: statePersistent,
@@ -1305,8 +1313,14 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 			// composes its sentences from the same place.
 			Kubeconfig: kubefiles,
 		},
-		Clusters:   clusters,
-		Metrics:    measure,
+		Clusters: clusters,
+		Metrics:  measure,
+		// Settings › General's metrics source: editable where the settings
+		// writes are (api.Deps' `kept`).
+		MetricsSources: metricsSources{
+			measure: measure, store: p.sources, configured: p.promTarget,
+			editable: p.sources != nil && p.statePersistent && !p.replicas.Several,
+		},
 		Hotbars:    p.bars,
 		Columns:    p.cols,
 		Nameplates: p.plates,

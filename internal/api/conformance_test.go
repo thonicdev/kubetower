@@ -158,6 +158,7 @@ var order = []string{
 	"listClusters", "probeCluster", "getNav", "getNavGroup", "getNavOccupancy", "listExtensions", "listExtensionSuggestions", "setExtensionEnabled",
 	"setExtensionSetting",
 	"getSettings", "saveSettings", "saveNodeShellSettings", "getHealth",
+	"getMetricsSource", "saveMetricsSource",
 	"listNamespaces",
 	"listResources", "getClusterScopedResource", "getNamespacedResource",
 	"listHelmReleases", "getHelmRelease", "revealHelmValues", "revealHelmNotes",
@@ -216,7 +217,10 @@ func exercises() map[string]exercise {
 			body: sends(`{"archiveEnabled":true,"captureLogs":false,"retentionDays":7}`)},
 		"saveNodeShellSettings": {status: 200, path: at("/api/settings/nodeshell"),
 			body: sends(`{"enabled":true,"image":"busybox:1.36"}`)},
-		"getHealth": {status: 200, path: at("/api/health")},
+		"getHealth":        {status: 200, path: at("/api/health")},
+		"getMetricsSource": {status: 200, path: at("/api/c/prod/metrics/source")},
+		"saveMetricsSource": {status: 200, path: at("/api/c/prod/metrics/source"),
+			body: sends(`{"source":"vm/vmselect-main:8481/select/0/prometheus"}`)},
 
 		"listNamespaces":           {status: 200, path: at("/api/c/prod/namespaces")},
 		"listResources":            {status: 200, path: at("/api/c/prod/r/pods?namespace=default")},
@@ -433,7 +437,7 @@ func walkContract(t *testing.T, spec map[string]any,
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{}, MetricsSources: fakeMetricsSources{},
 		// Every channel on offer: this exercises every operation the contract
 		// declares, and two of them - the node-shell preview and its setting -
 		// exist only where the node-shell channel does. A build offering no
@@ -917,7 +921,7 @@ func TestEveryRequestBodyMatchesTheContract(t *testing.T) {
 		// checked against the contract.
 		SignIn:   fakeSignIn{password: true, sso: true, launch: true, handoffs: true},
 		Settings: fakeSettings{}, Prefs: fakePrefs{}, KindPrefs: fakeKindPrefs{}, Reads: fakeReads{},
-		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{},
+		Acts: fakeActs{}, Prereqs: fakePrereqs{}, Dock: fakeDock{}, Probe: fakeProbe{}, Updates: fakeUpdates{}, Installer: fakeInstaller{}, ToolWindows: fakeToolWindows{}, MetricsSources: fakeMetricsSources{},
 		AllowOrigin: func(*http.Request, string) bool { return true },
 	}).Mount(mux)
 

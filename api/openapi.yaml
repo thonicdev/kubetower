@@ -1579,6 +1579,59 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/c/{cluster}/metrics/source:
+    get:
+      operationId: getMetricsSource
+      tags: [session]
+      summary: Where one cluster's charts read their history from.
+      description: >-
+        The source set by hand, if any, and what discovery answered with it: the
+        engine (Prometheus or VictoriaMetrics), the Service, or why there is none.
+        From the discovery's cache when it has one; otherwise the cluster is
+        asked. Registered wherever there is a metrics layer.
+      parameters:
+        - $ref: '#/components/parameters/Cluster'
+      responses:
+        '200':
+          description: The source.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricsSource' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: saveMetricsSource
+      tags: [session]
+      summary: Set one cluster's metrics source, or clear it.
+      description: >-
+        `namespace/service:port[/path]`, the Service port, with the path the
+        Prometheus API is served under (vmselect: `/select/0/prometheus`). Empty
+        returns the cluster to discovery. The cluster is asked again before the
+        answer.
+
+        **The desktop only, and only where the settings writes are**: under the
+        server profile the deployment's `KT_PROMETHEUS_SERVICE` is the source,
+        and `MetricsSource.editable` is false.
+      parameters:
+        - $ref: '#/components/parameters/RequestMarker'
+        - $ref: '#/components/parameters/Cluster'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetricsSourceWrite' }
+      responses:
+        '200':
+          description: Set, and the cluster asked again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricsSource' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Refused' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/c/{cluster}/changes:
     get:
       operationId: getChangesPanel
@@ -4577,6 +4630,66 @@ components:
             could be written down, and the two failures are reported separately.
           readOnly: true
         note: { type: string, readOnly: true }
+
+    MetricsSource:
+      type: object
+      additionalProperties: false
+      required: [source, editable, kind, detail]
+      properties:
+        source:
+          type: string
+          maxLength: 512
+          description: >-
+            What is set, `namespace/service:port[/path]`: on the desktop the source
+            chosen for this cluster, under the server profile `KT_PROMETHEUS_SERVICE`.
+            Empty where discovery decides, or where the server profile has none.
+        editable:
+          type: boolean
+          description: >-
+            The PUT is registered: the desktop, with a state directory that is kept.
+          readOnly: true
+        kind:
+          type: string
+          enum: [prometheus, metrics-server, none, unreachable, unauthorised]
+          description: >-
+            The discovery's answer. `prometheus` is any engine serving the
+            Prometheus API; `unreachable` and `unauthorised` say the cluster could
+            not be asked, not that it has nothing.
+          readOnly: true
+        engine:
+          type: string
+          enum: [prometheus, victoriametrics]
+          description: What answers the Prometheus API. Only where `kind` is `prometheus`.
+          readOnly: true
+        address:
+          type: string
+          maxLength: 512
+          description: The Service queried. Only where `kind` is `prometheus`.
+          readOnly: true
+        transport:
+          type: string
+          enum: [proxy, port-forward]
+          readOnly: true
+        detail:
+          type: string
+          maxLength: 8192
+          description: One line saying what was found and how, or what failed.
+          readOnly: true
+        persisted:
+          type: boolean
+          description: A write's. See `NodeShellSettings.persisted`.
+          readOnly: true
+        note: { type: string, readOnly: true }
+
+    MetricsSourceWrite:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source:
+          type: string
+          maxLength: 512
+          description: '`namespace/service:port[/path]`, or empty for discovery.'
 
     ClearRequest:
       type: object

@@ -66,6 +66,7 @@ import { RBAC_CASES } from './rbac.fixture';
 import { STORAGE_ANSWERS } from './storage.fixture';
 import { securityPodCells } from './security.fixture';
 import { SETTINGS_EXTRA_ITEMS } from './settings.fixture';
+import { MONITORING_CASES, monitoringAnswers } from './metricsource.fixture';
 import { ExtraTab } from '../ui/src/pages/settings/ExtraTab';
 
 /**
@@ -1272,6 +1273,12 @@ const CONSOLES: Readonly<
   Record<string, { at: string; answers: Readonly<Record<string, unknown>>; extensions?: readonly Extension[]; extra?: Readonly<Record<string, ExtraAnswer>> }>
 > = {
   overview: { at: `/c/${OVERVIEW_CLUSTER}`, answers: OVERVIEW_ANSWERS },
+  // Settings › General's Monitoring tile: `settings-monitoring-<case>` on the
+  // desktop, opened from prod-eu, and `settings-monitoring-server`.
+  ...Object.fromEntries(
+    MONITORING_CASES.map((which) => [`settings-monitoring-${which}`, { at: '/settings/general?cluster=prod-eu', answers: monitoringAnswers(which) }]),
+  ),
+  'settings-monitoring-server': { at: '/settings/general', answers: monitoringAnswers('server') },
   // Four extras suggested at once: the one grouped line above the page.
   'suggestions-group': {
     at: `/c/${OVERVIEW_CLUSTER}`,

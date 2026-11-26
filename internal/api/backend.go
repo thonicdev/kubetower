@@ -125,6 +125,10 @@ type Deps struct {
 	// where no native window can be drawn, and the route is then not
 	// registered.
 	ToolWindows ToolWindows
+	// MetricsSources is each cluster's metrics source (Settings › General).
+	// Nil where there is no metrics layer, and the routes are then not
+	// registered; its PUT only where the settings writes are.
+	MetricsSources MetricsSources
 
 	// Now is the clock, held here so the plan store's expiry can be tested at
 	// its boundaries rather than by waiting.
