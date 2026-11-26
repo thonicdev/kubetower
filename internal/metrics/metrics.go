@@ -98,6 +98,11 @@ type Discovery struct {
 	// Detail is one line saying which service answered, or what failed.
 	Detail    string    `json:"detail"`
 	CheckedAt time.Time `json:"checkedAt"`
+	// startedAt is when the probe behind it began. A forced Discover takes
+	// only a probe that began after it was asked: one that began before may
+	// have read what was there before, such as a source a save replaced
+	// (#156).
+	startedAt time.Time
 	// cause is the error a could-not-ask discovery was classified from, so a
 	// refused history query carries its status to the edge's classifier. Nil
 	// otherwise.
@@ -321,8 +326,9 @@ func (m *Metrics) Discover(ctx context.Context, name string, force bool) *Discov
 			e.mu.Unlock()
 			return found
 
-		case force && e.result != nil && e.result.CheckedAt.After(asked):
-			// Somebody probed after we asked, which is what force wanted.
+		case force && e.result != nil && !e.result.startedAt.Before(asked):
+			// Somebody began a probe after we asked, which is what force
+			// wanted; one that only ended after may have read the old state.
 			found := e.result
 			e.mu.Unlock()
 			return found
@@ -349,9 +355,11 @@ func (m *Metrics) Discover(ctx context.Context, name string, force bool) *Discov
 		e.mu.Unlock()
 
 		// Outside the lock: see entry.mu.
+		started := time.Now()
 		found := m.probe(ctx, resolved)
 		found.Cluster = resolved
 		found.CheckedAt = time.Now()
+		found.startedAt = started
 
 		// A could-not-ask from a probe whose own request went away is about our
 		// deadline, not the cluster, so it is not cached: the next caller probes
@@ -571,24 +579,9 @@ func (m *Metrics) lookForPrometheus(ctx context.Context, name string, client *cl
 // A refusal is returned rather than raised: a 403 on listing Services says
 // nothing about whether metrics-server would answer.
 func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lookup {
-	var candidates []corev1.Service
-	for _, query := range promQueries {
-		list, err := client.Clients.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
-			LabelSelector: query,
-			// From the watch cache rather than a quorum read: the topology does
-			// not move between probes, and this runs for every cluster.
-			ResourceVersion: "0",
-		})
-		if err != nil {
-			f := classify(err)
-			if f == nil {
-				// Unclassified: try the next query.
-				continue
-			}
-			// The remaining queries would fail the same way.
-			return lookup{refused: f}
-		}
-		candidates = append(candidates, list.Items...)
+	candidates, refused := listCandidates(ctx, client)
+	if refused != nil {
+		return lookup{refused: refused}
 	}
 
 	// Prometheus first, VictoriaMetrics where no Prometheus Service is there.
@@ -616,6 +609,31 @@ func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lo
 		return lookup{unchosen: notChosenAcross(promIn, vmIn)}
 	}
 	return prom
+}
+
+// listCandidates is every Service a selector of promQueries matches, or the
+// refusal of the first list that was classified.
+func listCandidates(ctx context.Context, client *cluster.Client) ([]corev1.Service, *failure) {
+	var candidates []corev1.Service
+	for _, query := range promQueries {
+		list, err := client.Clients.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+			LabelSelector: query,
+			// From the watch cache rather than a quorum read: the topology does
+			// not move between probes, and this runs for every cluster.
+			ResourceVersion: "0",
+		})
+		if err != nil {
+			f := classify(err)
+			if f == nil {
+				// Unclassified: try the next query.
+				continue
+			}
+			// The remaining queries would fail the same way.
+			return nil, f
+		}
+		candidates = append(candidates, list.Items...)
+	}
+	return candidates, nil
 }
 
 func promChoices() []choice {

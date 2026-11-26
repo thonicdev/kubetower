@@ -36,7 +36,7 @@ function Tile({ cluster, label }: { cluster: string; label: string }): ReactNode
         <span className="min-w-0 flex-1 truncate text-xs text-muted" title={cluster}>
           {label}
         </span>
-        <SourceBadge source={current} failed={source.isError} />
+        <SourceBadge source={current} failed={source.isError} reason={source.error instanceof Error ? source.error.message : undefined} />
       </div>
       {current === undefined ? null : editing ? (
         <SourceForm cluster={cluster} current={current} />
@@ -104,11 +104,20 @@ const ENGINE: Readonly<Record<string, string>> = {
 };
 
 /** What answers on this cluster, and the discovery's line in the tooltip. */
-function SourceBadge({ source, failed }: { source: MetricsSource | undefined; failed: boolean }): ReactNode {
+function SourceBadge({
+  source,
+  failed,
+  reason,
+}: {
+  source: MetricsSource | undefined;
+  failed: boolean;
+  /** Why the read failed, on hover: a 500 is not "no backend" (#156). */
+  reason?: string | undefined;
+}): ReactNode {
   if (source === undefined) {
     return (
       <span data-source-state={failed ? 'failed' : 'pending'}>
-        {failed ? <NoMetrics variant="badge" /> : <Pill neutral="muted">…</Pill>}
+        {failed ? <NoMetrics variant="badge" detail={reason} /> : <Pill neutral="muted">…</Pill>}
       </span>
     );
   }

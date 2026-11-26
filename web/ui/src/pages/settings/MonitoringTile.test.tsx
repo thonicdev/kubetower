@@ -228,7 +228,12 @@ describe('the Monitoring tile', () => {
       ((original: typeof fetch) => (input: RequestInfo | URL, init?: RequestInit) => {
         const raw = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
         if (raw.includes('/metrics/source')) {
-          return Promise.resolve(new Response(JSON.stringify({ status: 500, title: 'x' }), { status: 500, headers: { 'Content-Type': 'application/problem+json' } }));
+          return Promise.resolve(
+            new Response(JSON.stringify({ status: 500, title: 'x', detail: 'discovery panicked' }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/problem+json' },
+            }),
+          );
         }
         return original(input, init);
       })(globalThis.fetch),
@@ -243,5 +248,26 @@ describe('the Monitoring tile', () => {
     );
     expect(badge().textContent).toBe('No metrics available');
     expect(badge().querySelector('[data-no-metrics]')).not.toBeNull();
+    // A 500 says why on hover, never reads as "no backend" (#156).
+    expect(badge().querySelector('[title]')?.getAttribute('title')).toContain('discovery panicked');
+  });
+
+  it('draws a read still on its way as waiting, never as no metrics', async () => {
+    serve({ lab: NONE });
+    vi.stubGlobal(
+      'fetch',
+      ((original: typeof fetch) => (input: RequestInfo | URL, init?: RequestInit) => {
+        const raw = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
+        if (raw.includes('/metrics/source')) return new Promise<Response>(() => undefined);
+        return original(input, init);
+      })(globalThis.fetch),
+    );
+    mountApp('/settings/general?cluster=lab');
+
+    await waitFor(() => {
+      expect(badge().getAttribute('data-source-state')).toBe('pending');
+    });
+    expect(badge().textContent).toBe('…');
+    expect(badge().querySelector('[data-no-metrics]')).toBeNull();
   });
 });

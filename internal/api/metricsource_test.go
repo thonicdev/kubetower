@@ -62,3 +62,28 @@ func TestNoMetricsLayerRegistersNoSourceRoute(t *testing.T) {
 		t.Fatalf("answered %d: %s", rec.Code, rec.Body)
 	}
 }
+
+// resolvingClusters is a cluster layer that knows `a--b` names the context
+// `a/b`.
+type resolvingClusters struct{ fakeClusters }
+
+func (resolvingClusters) Resolve(name string) (string, bool) {
+	if name == "a--b" {
+		return "a/b", true
+	}
+	return name, true
+}
+
+// The audit line of a metrics-source save names the context it changed, not
+// the DNS-friendly form the URL carried (#156).
+func TestTheSaveIsAuditedUnderTheResolvedContext(t *testing.T) {
+	a := &API{deps: Deps{Clusters: resolvingClusters{}}}
+	if got := a.resolvedName("a--b"); got != "a/b" {
+		t.Errorf("resolved %q", got)
+	}
+	// A layer that cannot resolve leaves the name as given.
+	plain := &API{deps: Deps{Clusters: fakeClusters{}}}
+	if got := plain.resolvedName("a--b"); got != "a--b" {
+		t.Errorf("unresolved %q", got)
+	}
+}
