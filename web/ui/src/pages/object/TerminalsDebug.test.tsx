@@ -298,10 +298,9 @@ describe('the page decides whether Debug is offered', () => {
     mountApp('/c/prod/pods/pay/api-0');
     await ready();
     expect(debugButton()).toBeNull();
-    fireEvent.click(shellMenu());
-    await waitFor(() => {
-      expect(document.querySelector('ul[aria-label="Container"]')).not.toBeNull();
-    });
+    // Nor the Shell menu control: without a debug container its menu would
+    // hold nothing Shell's own click does not.
+    expect(document.querySelector('[data-shell-menu]')).toBeNull();
     expect(document.querySelector('[data-debug-in-menu]')).toBeNull();
   });
 

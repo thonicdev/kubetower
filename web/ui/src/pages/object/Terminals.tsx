@@ -402,37 +402,39 @@ export function Terminals({
               // answered for must not draw the accent frame under the pointer,
               // which is a click it refuses. Square on its right: the menu
               // control is joined to it.
-              className={`${btn} rounded-r-none border-line text-muted ${watching}`}
+              className={`${btn} ${offersDebug ? 'rounded-r-none' : ''} border-line text-muted ${watching}`}
             >
               <Icon name="terminal" />
               Shell
             </button>
-            {/* The menu, always: the containers, then a debug container. Shell
-                keeps its one click; this is the way to the rest of the menu on a
-                pod where that click opens a shell without asking. Grayed only
-                where nothing in the menu could be taken: before the pod is read,
-                or with no container running. */}
-            <button
-              type="button"
-              data-shell-menu=""
-              aria-label="Shell menu"
-              aria-expanded={picking}
-              aria-controls={picking ? panelId : undefined}
-              disabled={unread || notRunning !== undefined}
-              title={unread ? unreadNote : (notRunning ?? 'Containers and a debug container')}
-              onClick={() => {
-                if (unread || notRunning !== undefined) return;
-                setDebugging(false);
-                setPicking((was) => !was);
-              }}
-              // Joined to Shell as one split control: no gap, a shared border,
-              // and a narrow side. A pod's control row has to fit the drawer at
-              // its 1024px cap (471px) on one line, and a separate button with
-              // its own gap overran it by six pixels.
-              className={`${btn} -ml-px rounded-l-none border-line !px-0.5 text-muted ${watching}`}
-            >
-              <Icon name="chevron" className="rotate-90" />
-            </button>
+            {/* The menu: the containers, then a debug container. Shell keeps
+                its one click; this is the way to the rest of the menu on a pod
+                where that click opens a shell without asking. Drawn only where
+                a debug container is offered, since without one the menu holds
+                nothing Shell's own click does not, and narrow, joined to Shell:
+                a pod's control row has to fit the drawer's 1024px cap (471px)
+                on one line, and a separate button overran it. Grayed only where
+                nothing in the menu could be taken: before the pod is read, or
+                with no container running. */}
+            {offersDebug ? (
+              <button
+                type="button"
+                data-shell-menu=""
+                aria-label="Shell menu"
+                aria-expanded={picking}
+                aria-controls={picking ? panelId : undefined}
+                disabled={unread || notRunning !== undefined}
+                title={unread ? unreadNote : (notRunning ?? 'Containers and a debug container')}
+                onClick={() => {
+                  if (unread || notRunning !== undefined) return;
+                  setDebugging(false);
+                  setPicking((was) => !was);
+                }}
+                className={`${btn} -ml-px rounded-l-none border-line !px-0 text-muted ${watching}`}
+              >
+                <Icon name="chevron" className="size-3 rotate-90" />
+              </button>
+            ) : null}
           </div>
 
           {picking ? (
@@ -676,7 +678,7 @@ export function Terminals({
 /** A popover holding the debug form: 288px under its control, and at phone
  *  width the drawer's width from its static top (the rail and the drawer's
  *  gutter on the left, the gutter on the right). */
-const POPOVER_WIDE = 'w-72 max-sm:fixed max-sm:right-3 max-sm:left-[4.25rem] max-sm:w-auto';
+const POPOVER_WIDE = 'w-72 max-sm:fixed max-sm:right-3 max-sm:left-[4.25rem] max-sm:w-auto'; // style-allow: the rail (56px) and the drawer's 12px gutter, where the drawer's content starts at phone width
 
 /**
  * Why no container can take a shell, in the kubelet's own word where it gave

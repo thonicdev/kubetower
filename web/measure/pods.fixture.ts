@@ -168,6 +168,9 @@ const DETAILS = Object.fromEntries(
         tabs: [],
         sections: [],
         containers: (CONTAINERS[row.name] ?? ['app']).map(running),
+        // Offered, so the drawer is measured with the Shell menu control,
+        // its widest pod row (#147).
+        debug: { permitted: true },
         actions: [
           { verb: 'evict', label: 'Evict', permitted: true, destructive: true },
           { verb: 'restart', label: 'Restart', permitted: true, destructive: true },
@@ -389,6 +392,9 @@ const DRAWER_OBJECTS = {
     name: 'kube-prometheus-stack-prometheus-node-exporter-x7k2p',
     title: 'Pod',
     containers: ['node-exporter'].map(running),
+    // Offered, so the drawer is measured on a pod's widest control row, with
+    // the Shell menu (#147).
+    debug: { permitted: true },
     // `verbsFor("pods")`, in its order.
     actions: [
       { verb: 'restart', label: 'Restart', permitted: true, destructive: true },
