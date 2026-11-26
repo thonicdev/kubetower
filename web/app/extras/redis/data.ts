@@ -355,6 +355,51 @@ export function getInventory(cluster: string, scope: string, signal?: AbortSigna
   );
 }
 
+/**
+ * One namespace's inventory, read once for a pod's two tiles (the deployment
+ * tile and "not checked", `shortcut.ts`), which are asked side by side: a
+ * second read would list the namespace's Services, slices and pods twice, and
+ * could answer otherwise than the first and draw both tiles. A read, failed or
+ * not, is shared for SHARED_READ_MS; a caller that goes away stops waiting, and
+ * the read goes on for the other.
+ */
+const SHARED_READ_MS = 10_000;
+const sharedReads = new Map<string, { at: number; read: Promise<Inventory> }>();
+
+export function sharedInventory(cluster: string, scope: string, signal?: AbortSignal): Promise<Inventory> {
+  const key = `${cluster}\u0000${scope}`;
+  const now = Date.now();
+  let entry = sharedReads.get(key);
+  if (entry === undefined || now - entry.at > SHARED_READ_MS) {
+    entry = { at: now, read: getInventory(cluster, scope) };
+    // Rejected for every caller alike, and never left unhandled.
+    entry.read.catch(() => undefined);
+    sharedReads.set(key, entry);
+  }
+  const read = entry.read;
+  if (signal === undefined) return read;
+  if (signal.aborted) return Promise.reject(new DOMException('The read was canceled', 'AbortError'));
+  return new Promise<Inventory>((resolve, reject) => {
+    const stop = () => reject(new DOMException('The read was canceled', 'AbortError'));
+    signal.addEventListener('abort', stop, { once: true });
+    read.then(
+      (value) => {
+        signal.removeEventListener('abort', stop);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', stop);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/** Forgets the shared reads: for tests. */
+export function forgetSharedInventory(): void {
+  sharedReads.clear();
+}
+
 const isInstance = (b: InstanceAnswer) => typeof b.server === 'object' && b.server !== null && typeof b.instance === 'object';
 
 export function getInstance(cluster: string, door: Door | Pick<Door, 'namespace' | 'service' | 'port'>, q: InstanceQuery, signal?: AbortSignal): Promise<InstanceAnswer> {

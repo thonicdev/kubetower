@@ -857,8 +857,11 @@ func registerClasses() {
 // thread asked to run the queue, through the same door as refreshNativeWindow.
 type darwinToolHost struct{}
 
-func (darwinToolHost) openToolWindow(id int, target toolWindowTarget) {
+// openToolWindow queues the window and answers at once: a window that could
+// not be drawn is refused from the main thread (toolWindows.refused).
+func (darwinToolHost) openToolWindow(id int, target toolWindowTarget) error {
 	queueToolWindowOp(toolWindowOp{id: id, target: target})
+	return nil
 }
 
 func (darwinToolHost) closeToolWindow(id int) {
@@ -927,14 +930,14 @@ func drawToolWindow(id int, target toolWindowTarget) {
 	tools := macToolWindows.tools
 	if tools == nil || hot.toolDelegate == 0 || hot.wkWebView == 0 {
 		if tools != nil {
-			tools.closed(id)
+			tools.refused(id)
 		}
 		return
 	}
 	nsurl := objc.ID(hot.nsURL).Send(hot.urlWithString, nsStringHot(target.URL))
 	if nsurl == 0 {
 		log.Printf("[kubetower] the tool window for %s was not drawn: the address does not parse", loggableURL(target.URL))
-		tools.closed(id)
+		tools.refused(id)
 		return
 	}
 	configuration := objc.ID(hot.wkWebViewConfiguration).Send(hot.alloc).Send(hot.init)

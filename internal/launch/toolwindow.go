@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
@@ -135,13 +136,21 @@ func toolWindowAllowed(raw string, live []forward.Tunnel) (forward.Tunnel, error
 }
 
 // toolWindowHost is a platform's native side. Both calls come from any
-// goroutine and return at once; the platform draws or closes the window on
-// its own thread. When a window closes, by the operator or by closeToolWindow,
-// the platform calls toolWindows.closed with its id.
+// goroutine; the platform draws or closes the window on its own thread. When a
+// window closes, by the operator or by closeToolWindow, the platform calls
+// toolWindows.closed with its id; when one could not be drawn,
+// toolWindows.refused.
+//
+// openToolWindow returns errToolWindowRefused when the platform answered, in
+// time, that the window could not be drawn (#84: WebView2 could not create its
+// environment or controller); nil when it is drawn or still being drawn.
 type toolWindowHost interface {
-	openToolWindow(id int, target toolWindowTarget)
+	openToolWindow(id int, target toolWindowTarget) error
 	closeToolWindow(id int)
 }
+
+// errToolWindowRefused is a platform that could not draw a tool window.
+var errToolWindowRefused = errors.New("the tool window could not be drawn")
 
 // tunnelSet is what the tool windows read of the forward set.
 type tunnelSet interface {
@@ -252,8 +261,21 @@ func (t *toolWindows) OpenToolWindow(id, tool, path string, closeTunnel bool) er
 	t.mu.Unlock()
 
 	log.Printf("[kubetower] opening %s in a tool window (%s)", loggableURL(raw), target.Title)
-	host.openToolWindow(n, target)
+	if err := host.openToolWindow(n, target); err != nil {
+		// Refused: the window is forgotten and its tunnel stays open (#84).
+		t.refused(n)
+		return fmt.Errorf("%w: %v", api.ErrConflict, err)
+	}
 	return nil
+}
+
+// refused is the platform saying window n could not be drawn. It is forgotten,
+// and its tunnel stays open whatever the page asked: nothing was shown, so
+// nothing a person closed (#84).
+func (t *toolWindows) refused(n int) {
+	t.mu.Lock()
+	delete(t.open, n)
+	t.mu.Unlock()
 }
 
 // closed is the platform saying window n has closed. The tunnel goes with it
@@ -441,11 +463,15 @@ func (b *handOutBudget) allow(raw string, userInitiated bool, now time.Time) (bo
 // Embed builds the engine inside a GetMessage loop of its own, on the
 // console's thread, until the controller exists. That loop hands every
 // message to DispatchMessage, which drops the WM_APP thread message the
-// console window's Dispatch posts, and it stops on WM_QUIT, the console
-// window closing, after which go-webview2 calls Init on a web view that does
-// not exist and panics. So, whatever happened, Dispatch is woken again
-// (wakeDispatch); and when the loop stopped with no controller, it stopped on
-// WM_QUIT, which is posted again (repostQuit) so the console's own loop ends.
+// console window's Dispatch posts. So, whatever happened, Dispatch is woken
+// again (wakeDispatch).
+//
+// The loop also stops on WM_QUIT, the console window closing. The patched
+// copy (third_party/go-webview2) then posts WM_QUIT again itself and returns
+// false, so that row needs nothing more here. Upstream instead called Init on
+// a web view that did not exist and panicked: a return or a panic with no
+// controller is still read as that stop, and WM_QUIT posted again
+// (repostQuit), for a copy dropped once upstream has the fix.
 type embedOutcome struct {
 	usable       bool
 	repostQuit   bool
@@ -484,8 +510,7 @@ type buildingWindows map[uintptr]struct{}
 
 // closeHonoured says whether a close request (the title bar's X, Alt+F4)
 // may destroy the window: not while it is built, for the engine would then be
-// asked for a controller on a window that no longer exists, and go-webview2
-// ends the process on that failure.
+// asked for a controller on a window that no longer exists.
 func (b buildingWindows) closeHonoured(handle uintptr) bool {
 	_, building := b[handle]
 	return !building

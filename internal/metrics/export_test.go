@@ -36,7 +36,7 @@ func VictoriaMetricsAlone(ctx context.Context, client *cluster.Client) (string, 
 		}
 		candidates = append(candidates, list.Items...)
 	}
-	chosen, ok := choose(candidates, vmChoices())
+	chosen, ok, _ := choose(candidates, vmChoices())
 	if !ok || chosen.target == nil {
 		return "", "", fmt.Errorf("none among %d candidates (%s)", len(candidates), chosen.unchosen)
 	}

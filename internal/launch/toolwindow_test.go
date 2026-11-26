@@ -2,6 +2,9 @@ package launch
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -48,13 +51,19 @@ func (f *fakeTunnels) drop(id string) {
 type fakeHost struct {
 	opened map[int]toolWindowTarget
 	closed []int
+	// refuse is the platform's answer that the window could not be drawn.
+	refuse error
 }
 
-func (h *fakeHost) openToolWindow(id int, target toolWindowTarget) {
+func (h *fakeHost) openToolWindow(id int, target toolWindowTarget) error {
+	if h.refuse != nil {
+		return h.refuse
+	}
 	if h.opened == nil {
 		h.opened = map[int]toolWindowTarget{}
 	}
 	h.opened[id] = target
+	return nil
 }
 
 func (h *fakeHost) closeToolWindow(id int) { h.closed = append(h.closed, id) }
@@ -315,7 +324,9 @@ func TestEmbedGivesBackWhatItsLoopTook(t *testing.T) {
 		want                           embedOutcome
 	}{
 		{"built", true, false, true, embedOutcome{usable: true, wakeDispatch: true}},
-		{"stopped on WM_QUIT, Init panicked", false, true, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		{"upstream: stopped on WM_QUIT, Init panicked", false, true, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
+		// The patched copy: stopped on WM_QUIT, which it posted again itself.
+		{"the copy: stopped on WM_QUIT, reposted by it", false, false, false, embedOutcome{wakeDispatch: true}},
 		{"stopped with no controller", true, false, false, embedOutcome{repostQuit: true, wakeDispatch: true}},
 		{"refused before its loop", false, false, false, embedOutcome{wakeDispatch: true}},
 		{"panicked once built", false, true, true, embedOutcome{wakeDispatch: true}},
@@ -518,5 +529,132 @@ func TestOnlyAConfirmedHandOutOpensAndOneIsAskedAtATime(t *testing.T) {
 	// An answer with no question open opens nothing.
 	if _, open := a.answer(true); open {
 		t.Error("an answer with no question opened something")
+	}
+}
+
+// A platform that could not draw the window (#84: WebView2 refused to create
+// its environment or controller) is a 409, the window is forgotten, and the
+// tunnel stays open even when the page opened it for the window.
+func TestARefusedToolWindowIsAConflictAndKeepsItsTunnel(t *testing.T) {
+	tunnels := &fakeTunnels{live: []forward.Tunnel{hubbleTunnel()}}
+	tw := newToolWindows(tunnels, nil)
+	host := &fakeHost{refuse: errToolWindowRefused}
+	tw.attach(host)
+
+	err := tw.OpenToolWindow("f1", "hubble", "/", true)
+	if !errors.Is(err, api.ErrConflict) || !strings.Contains(err.Error(), "could not be drawn") {
+		t.Fatalf("a refused window = %v; want ErrConflict saying it could not be drawn", err)
+	}
+	if len(tunnels.closed) != 0 {
+		t.Errorf("the tunnel was closed: %v", tunnels.closed)
+	}
+	tw.mu.Lock()
+	open := len(tw.open)
+	tw.mu.Unlock()
+	if open != 0 {
+		t.Errorf("%d windows still counted after the refusal", open)
+	}
+	// The console carries on: once the platform draws again, a window opens.
+	host.refuse = nil
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil || len(host.opened) != 1 {
+		t.Fatalf("after a refusal = %v, opened %v", err, host.opened)
+	}
+}
+
+// refused forgets the window and closes nothing, whatever the page asked.
+func TestARefusedWindowNeverClosesItsTunnel(t *testing.T) {
+	tunnels := &fakeTunnels{live: []forward.Tunnel{hubbleTunnel()}}
+	tw := newToolWindows(tunnels, nil)
+	host := &fakeHost{}
+	tw.attach(host)
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil {
+		t.Fatal(err)
+	}
+	tw.refused(1)
+	if len(tunnels.closed) != 0 {
+		t.Errorf("refused closed %v", tunnels.closed)
+	}
+	// closed, by contrast, closes the tunnel opened for the window.
+	if err := tw.OpenToolWindow("f1", "hubble", "/", true); err != nil {
+		t.Fatal(err)
+	}
+	tw.closed(2)
+	if len(tunnels.closed) != 1 {
+		t.Errorf("closed closed %v", tunnels.closed)
+	}
+}
+
+// The patched go-webview2 (#84) keeps the two promises afterEmbed and
+// openWindow rely on. Windows-only code, which no CI here runs, so the copy's
+// source is read: a re-vendoring that drops either patch fails here.
+//   - Embed's loop posts WM_QUIT again when it takes it, or closing the
+//     console while a tool window is built leaves KubeTower running unseen.
+//   - A window that failed to embed is destroyed at once, never left blank
+//     on screen beside the browser fallback.
+func TestTheWebView2CopyKeepsItsPatches(t *testing.T) {
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "third_party", "go-webview2", p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	chromium := read(filepath.Join("pkg", "edge", "chromium.go"))
+	quit := strings.Index(chromium, "if r == 0 {")
+	if quit < 0 || !strings.Contains(chromium[quit:quit+300], "User32PostQuitMessage.Call(msg.WParam)") {
+		t.Error("Embed's loop no longer posts WM_QUIT again")
+	}
+	webview := read("webview.go")
+	embed := strings.Index(webview, "if !w.browser.Embed(w.hwnd) {")
+	if embed < 0 || !strings.Contains(webview[embed:embed+80], "w.discard()") {
+		t.Error("a window that failed to embed is not discarded")
+	}
+	if !strings.Contains(webview, "setWindowContext(w.hwnd, nil)\n\t_, _, _ = w32.User32DestroyWindow.Call(w.hwnd)") {
+		t.Error("discard no longer destroys the window at once, without posting WM_QUIT")
+	}
+}
+
+// An HRESULT is a signed 32-bit value that a callback receives zero-extended
+// in a uintptr: `int64(res) < 0` and `int(res) < 0` never see 0x80070005 as a
+// failure, and the copy would go on to AddRef a nil environment. And a
+// success code with a nil environment, controller or web view (a session with
+// no desktop) is a failure, not a nil dereference (#84, as jchv/go-webview2#87
+// raises). Windows-only code: its source is read.
+func TestTheWebView2CopyReadsFailuresAsFailures(t *testing.T) {
+	dir := filepath.Join("..", "..", "third_party", "go-webview2", "pkg", "edge")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := regexp.MustCompile(`\bint(64)?\((res|r|hr)\) < 0`)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m := unsigned.Find(b); m != nil {
+			t.Errorf("%s tests an HRESULT unsigned: %s", e.Name(), m)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "chromium.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chromium := string(b)
+	for _, want := range []string{
+		"return int32(res) < 0",
+		"if env == nil {",
+		"if controller == nil {",
+		"if hresultFailed(r) || e.webview == nil {",
+	} {
+		if !strings.Contains(chromium, want) {
+			t.Errorf("chromium.go no longer has %q", want)
+		}
+	}
+	if strings.Count(chromium, "if hresultFailed(res) {") != 2 {
+		t.Error("the two completion handlers no longer both test their HRESULT signed")
 	}
 }

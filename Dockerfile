@@ -96,6 +96,9 @@ WORKDIR /src
 
 # Dependencies first, so a code change does not re-download the module graph.
 COPY go.mod go.sum ./
+# go.mod replaces go-webview2 with the patched copy in third_party/ (#84), and
+# `go mod download` reads a replacement directory: it must be there first.
+COPY third_party/ ./third_party/
 RUN go mod download
 
 COPY . .
