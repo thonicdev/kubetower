@@ -256,23 +256,22 @@ var firstWordWait = 2 * time.Second
 //
 // An HTTP/2 server speaks first (its SETTINGS frame; grpc-go writes it before it
 // reads the client's preface), so the wait is short. It is bounded all the
-// same, by firstWordWait and the call's own deadline: a server that waits for
-// the client is still asked. What was read stays in front of the connection's
-// reads; a reset or a closed connection is returned as it is, never reworded.
+// same, by firstWordWait alone: a server that waits for the client is still
+// asked, two seconds later. The call's own deadline does not reach here, since
+// net/http dials with context.WithoutCancel of the request's context, which
+// carries neither a deadline nor a cancellation; the context is still read
+// after the wait, for a caller that dials with its own. What was read stays in
+// front of the connection's reads; a reset or a closed connection is returned
+// as it is, never reworded.
 func firstWord(ctx context.Context, conn *tls.Conn) (net.Conn, error) {
 	if conn.ConnectionState().Version != tls.VersionTLS13 {
 		return conn, nil // TLS 1.2 checks the client certificate inside the handshake.
 	}
-	until := time.Now().Add(firstWordWait)
-	callsDeadline := false
-	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
-		until, callsDeadline = deadline, true
-	}
-	if err := conn.SetReadDeadline(until); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(firstWordWait)); err != nil {
 		return nil, err
 	}
-	// No goroutine watches the context: a call cancelled without a deadline
-	// waits at most firstWordWait, and is told so just below.
+	// No goroutine watches the context: a cancelled call waits at most
+	// firstWordWait, and is told so just below.
 	r := bufio.NewReader(conn)
 	_, err := r.Peek(1)
 	if cerr := ctx.Err(); cerr != nil {
@@ -281,11 +280,6 @@ func firstWord(ctx context.Context, conn *tls.Conn) (net.Conn, error) {
 	var timeout net.Error
 	if err != nil && (!errors.As(err, &timeout) || !timeout.Timeout()) {
 		return nil, err
-	}
-	if err != nil && callsDeadline {
-		// The call's own time ran out while waiting, a moment before its
-		// context says so.
-		return nil, context.DeadlineExceeded
 	}
 	// A read timeout leaves a TLS connection usable: crypto/tls keeps only a
 	// failure that is not temporary.

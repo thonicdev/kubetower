@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strings"
 	"testing"
 	"time"
 )
@@ -134,24 +133,9 @@ func TestFirstWordWaitsBoundedForAServerThatListensFirst(t *testing.T) {
 	}
 }
 
-// A call already over is not held by the wait.
-func TestFirstWordStopsWithTheCall(t *testing.T) {
-	// Says nothing until the client hangs up.
-	p := serveOnce(t, true, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	_, err := dialHeard(t, ctx, p)
-	if err == nil || !strings.Contains(err.Error(), "deadline") {
-		t.Errorf("%v, want the call's deadline", err)
-	}
-	if waited := time.Since(start); waited > time.Second {
-		t.Errorf("waited %v past a deadline of 150ms", waited)
-	}
-}
-
-// A call cancelled with no deadline is not watched by a goroutine: it waits at
-// most firstWordWait, then says it was cancelled.
+// A cancelled call is not watched by a goroutine: it waits at most
+// firstWordWait, then says it was cancelled. A call that ran out of time says
+// so the same way.
 func TestFirstWordSaysACancelledCall(t *testing.T) {
 	defer func(was time.Duration) { firstWordWait = was }(firstWordWait)
 	firstWordWait = 100 * time.Millisecond
@@ -169,5 +153,31 @@ func TestFirstWordSaysACancelledCall(t *testing.T) {
 	cancel()
 	if _, err := firstWord(ctx, conn); !errors.Is(err, context.Canceled) {
 		t.Errorf("%v, want the cancellation", err)
+	}
+}
+
+func TestFirstWordSaysACallOutOfTime(t *testing.T) {
+	defer func(was time.Duration) { firstWordWait = was }(firstWordWait)
+	firstWordWait = 100 * time.Millisecond
+	p := serveOnce(t, true, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	raw, err := net.Dial("tcp", p.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	conn := tls.Client(raw, p.client)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	expired, stop := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer stop()
+	start := time.Now()
+	if _, err := firstWord(expired, conn); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("%v, want the deadline", err)
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Errorf("waited %v, past firstWordWait", waited)
 	}
 }

@@ -78,7 +78,7 @@ dialog draws it first, as a New extra line.
   Inspector could report Goldmane as not answering when it had refused the
   client certificate: the connection was reset before its TLS alert was read.
   It now reads Goldmane's first answer before sending anything, so the refusal
-  is named every time (#141).
+  is named reliably (#141).
 
 ## 0.2.1 — Welcome dialog, favorite extras and update fixes
 
