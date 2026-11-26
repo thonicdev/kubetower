@@ -1,6 +1,7 @@
 package netinspect
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -207,7 +208,12 @@ func listGoldmane(ctx context.Context, addr string, cfg *tls.Config, limit int, 
 				_ = raw.Close()
 				return nil, err
 			}
-			return &watchedConn{Conn: conn, seen: &seen}, nil
+			heard, err := firstWord(ctx, conn)
+			if err != nil {
+				_ = raw.Close()
+				return nil, err
+			}
+			return &watchedConn{Conn: heard, seen: &seen}, nil
 		},
 	}
 	defer transport.CloseIdleConnections()
@@ -232,6 +238,70 @@ func listGoldmane(ctx context.Context, addr string, cfg *tls.Config, limit int, 
 	}
 	return dedupeReporters(out), total > int64(len(out)) || len(out) >= limit, nil
 }
+
+// firstWordWait bounds how long a client waits for the server to speak first
+// after a TLS 1.3 handshake. A variable so a test can shorten it.
+var firstWordWait = 2 * time.Second
+
+// firstWord reads the server's first word on a TLS 1.3 connection before the
+// client writes anything (#141).
+//
+// In TLS 1.3 the client's handshake is over before the server has checked the
+// client certificate. A server that refuses it sends an alert and closes; if
+// the HTTP/2 preface the client wrote in the meantime reached it unread, the
+// close is a TCP reset, which discards the alert still waiting to be read, and
+// the call fails as "connection reset by peer" or "broken pipe": a refused
+// certificate read as an unreachable Goldmane. With nothing written yet the
+// close is a plain FIN, so the alert is read, every time.
+//
+// An HTTP/2 server speaks first (its SETTINGS frame; grpc-go writes it before it
+// reads the client's preface), so the wait is short. It is bounded all the
+// same, by firstWordWait and the call's own deadline: a server that waits for
+// the client is still asked. What was read stays in front of the connection's
+// reads; a reset or a closed connection is returned as it is, never reworded.
+func firstWord(ctx context.Context, conn *tls.Conn) (net.Conn, error) {
+	if conn.ConnectionState().Version != tls.VersionTLS13 {
+		return conn, nil // TLS 1.2 checks the client certificate inside the handshake.
+	}
+	until := time.Now().Add(firstWordWait)
+	callsDeadline := false
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
+		until, callsDeadline = deadline, true
+	}
+	if err := conn.SetReadDeadline(until); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetReadDeadline(time.Now()) })
+	r := bufio.NewReader(conn)
+	_, err := r.Peek(1)
+	stop()
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, cerr
+	}
+	var timeout net.Error
+	if err != nil && (!errors.As(err, &timeout) || !timeout.Timeout()) {
+		return nil, err
+	}
+	if err != nil && callsDeadline {
+		// The call's own time ran out while waiting, a moment before its
+		// context says so.
+		return nil, context.DeadlineExceeded
+	}
+	// A read timeout leaves a TLS connection usable: crypto/tls keeps only a
+	// failure that is not temporary.
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	return &heardConn{Conn: conn, r: r}, nil
+}
+
+// heardConn is a connection whose first bytes were already read into r.
+type heardConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *heardConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 
 // decodeList reads a FlowListResult - meta (1) with the total number of
 // results (2), flows (2) as FlowResults - adding to out at most limit flows
