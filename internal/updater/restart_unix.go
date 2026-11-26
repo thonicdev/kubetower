@@ -96,8 +96,8 @@ func startAgainUnlessQuit(plan Plan) error {
 // stopSelf ends this process through internal/launch's shutdown (SetStop),
 // or by SIGTERM to itself, which reaches the same path, where nothing was set.
 var stopSelf = func() error {
-	if stopper != nil {
-		stopper()
+	if stop := stopFunc(); stop != nil {
+		stop()
 		return nil
 	}
 	return syscall.Kill(os.Getpid(), syscall.SIGTERM)

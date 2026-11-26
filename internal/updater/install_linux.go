@@ -12,6 +12,11 @@ import (
 func init() {
 	installers[LinuxAppImage] = installAppImage
 	installers[LinuxTar] = installTar
+	// What a replace cut short leaves beside the file (replaceWith), as at a
+	// quit past QuitWait (#154).
+	for _, kind := range []Kind{LinuxAppImage, LinuxTar} {
+		sweepers[kind] = func(path string) { sweepBeside(path, ".kubetower-update-*") }
+	}
 	installers[LinuxDeb] = installPackage
 	installers[LinuxRPM] = installPackage
 	for _, kind := range []Kind{LinuxDeb, LinuxRPM} {
