@@ -68,6 +68,12 @@ dialog draws it first, as a New extra line.
   window that failed is closed rather than left blank on screen. The library
   is carried patched in `third_party/go-webview2` until upstream takes the
   change (#84).
+- **A kubeconfig edited while KubeTower runs is read whole.** A file
+  truncated while the merge was being read no longer drops its contexts for
+  good; a file renamed away for a moment by an editor keeps its clusters and
+  their connections; a Retry and the watcher no longer apply an older read
+  after a newer one; and a context pointed at another server discovers its
+  kinds there rather than reusing the old server's (#153).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

@@ -420,3 +420,31 @@ func TestACancelledRequestStopsTheDiscoveryWalk(t *testing.T) {
 		t.Fatal("the build never saw the cancellation — it has no context to see it with")
 	}
 }
+
+// A key is a client's, and a re-pointed context's old key is never asked
+// again: it goes once expired, when the next mapper is built (#153).
+func TestAnExpiredMapperGoesWhenTheNextIsBuilt(t *testing.T) {
+	c := NewCache()
+	c.ttl = time.Hour
+	build := func(context.Context) (meta.RESTMapper, error) { return meta.NewDefaultRESTMapper(nil), nil }
+	if _, err := c.Mapper(context.Background(), "prod\x001", false, build); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	old := c.entries["prod\x001"]
+	old.built = time.Now().Add(-2 * time.Hour)
+	c.entries["prod\x001"] = old
+	c.mu.Unlock()
+
+	if _, err := c.Mapper(context.Background(), "prod\x002", false, build); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, kept := c.entries["prod\x001"]; kept {
+		t.Error("the expired mapper of a client no longer in use is still held")
+	}
+	if _, ok := c.entries["prod\x002"]; !ok {
+		t.Error("the new mapper was not kept")
+	}
+}
