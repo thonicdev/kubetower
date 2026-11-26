@@ -114,6 +114,7 @@ func (c Consumer) Routes(h extension.Host) []extension.Route {
 		{Method: http.MethodGet, Pattern: "/containers", Handler: c.containers(h)},
 		{Method: http.MethodGet, Pattern: "/window", Handler: c.window(h)},
 		{Method: http.MethodGet, Pattern: "/dns", Handler: c.dns(h)},
+		{Method: http.MethodGet, Pattern: "/volume-fill", Handler: c.volumeFill(h)},
 		{Method: http.MethodGet, Pattern: "/forward", Handler: c.forward(h)},
 		{Method: http.MethodGet, Pattern: "/setting", Handler: c.setting(h)},
 		{Method: http.MethodGet, Pattern: "/console-forward", Handler: c.consoleForward(h)},
@@ -333,6 +334,27 @@ func (c Consumer) dns(h extension.Host) http.Handler {
 			return
 		}
 		fmt.Fprintf(w, "state=%s pods=%d upstreams=%d", got.State, len(got.Pods), len(got.Upstreams))
+	})
+}
+
+// volumeFill proves Host.VolumeFill: the claims are typed refs an extension
+// builds, the state is a value it switches on, and each figure comes back
+// under the claim it was asked for (#91).
+func (c Consumer) volumeFill(h extension.Host) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, err := h.VolumeFill(r, cluster(r), []extension.ClaimRef{{Namespace: "default", Name: "data-db-0"}})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if got.State != extension.WindowRead {
+			fmt.Fprintf(w, "state=%s: %s", got.State, got.Detail)
+			return
+		}
+		for _, f := range got.Claims {
+			fmt.Fprintf(w, "%s/%s used=%d capacity=%d ", f.Namespace, f.Name, f.UsedBytes, f.CapacityBytes)
+		}
+		fmt.Fprintf(w, "engine=%s complete=%v", got.Engine, got.Complete)
 	})
 }
 

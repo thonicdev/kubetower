@@ -106,6 +106,10 @@ func (h *fakeHost) UsageWindow(*http.Request, string, string) (extension.Window,
 func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extension.DNS, error) {
 	return extension.DNS{}, nil
 }
+
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
 func (h *fakeHost) Exec(_ *http.Request, _ string, q extension.ExecQuery) (extension.ExecResult, error) {
 	h.execs = append(h.execs, q)
 	if h.execFn == nil {

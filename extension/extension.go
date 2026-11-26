@@ -410,6 +410,25 @@ type Host interface {
 	// cluster (ErrUnknownCluster), a span that is not one, a refusal.
 	DNSWindow(r *http.Request, cluster string, span DNSSpan) (DNS, error)
 
+	// VolumeFill is each claim's used and capacity bytes from the cluster's
+	// Prometheus - or VictoriaMetrics, which answers the same API (#131) - as
+	// the kubelets last reported them (kubelet_volume_stats_*), for the claims
+	// asked (#91).
+	//
+	// **Narrow and typed, never PromQL**, for the reason UsageWindow gives:
+	// the core runs two fixed queries, selected by the claims' namespaces and
+	// names, and hands back only the claims asked.
+	//
+	// **Reviewed for the person behind r**: `list persistentvolumeclaims` in
+	// each namespace asked, before anything is read. Claims in a namespace
+	// they may not list are left out - Complete false, with a Note - and when
+	// that is every namespace the refusal is ErrDenied or ErrUnreviewable,
+	// wrapped, and nothing is read. Every answer about the backend is a
+	// VolumeFill.State, never an error: no Prometheus, unreadable, empty, or
+	// read. The errors are the request's: an unknown cluster
+	// (ErrUnknownCluster, wrapped), a name that cannot be a claim's, a refusal.
+	VolumeFill(r *http.Request, cluster string, claims []ClaimRef) (VolumeFill, error)
+
 	// ForwardAsConsole opens a tunnel as Forward does, but **dug with the
 	// console's own credentials** rather than the person's. It is for a backend
 	// the console talks to on the person's behalf: argocd-server for Argo CD's

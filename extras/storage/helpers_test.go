@@ -60,11 +60,17 @@ type fakeHost struct {
 	silent map[string]error
 	asked  [][]string
 	listed []extension.ListQuery
+	// fill is the metrics backend's answer to VolumeFill (#91); fillErr its
+	// refusal; filled the claims it was asked.
+	fill    extension.VolumeFill
+	fillErr error
+	filled  [][]extension.ClaimRef
 }
 
 func newHost() *fakeHost {
 	return &fakeHost{registry: fakeRegistry{served: snapshotCRDs}, objects: map[string][]unstructured.Unstructured{},
-		listErr: map[string]error{}, volumes: map[string]map[string]extension.FS{}, silent: map[string]error{}}
+		listErr: map[string]error{}, volumes: map[string]map[string]extension.FS{}, silent: map[string]error{},
+		fill: extension.VolumeFill{State: extension.WindowNoPrometheus, Detail: "no Prometheus"}}
 }
 
 func (h *fakeHost) add(resource string, objs ...unstructured.Unstructured) {
@@ -174,6 +180,12 @@ func (h *fakeHost) UsageWindow(*http.Request, string, string) (extension.Window,
 }
 func (h *fakeHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extension.DNS, error) {
 	return extension.DNS{}, errors.New("not used")
+}
+func (h *fakeHost) VolumeFill(_ *http.Request, _ string, claims []extension.ClaimRef) (extension.VolumeFill, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.filled = append(h.filled, claims)
+	return h.fill, h.fillErr
 }
 func (h *fakeHost) ForwardAsConsole(*http.Request, string, string, string, int) (extension.Tunnel, error) {
 	return extension.Tunnel{}, errors.New("this extra opens no tunnel")

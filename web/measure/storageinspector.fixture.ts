@@ -186,7 +186,10 @@ export const STORAGE_OVERVIEW: Overview = {
   ],
   classesRead: { state: 'read' },
   mountsRead: { state: 'read' },
-  fill: { state: 'partial', asked: 4, answered: 3, message: 'Fill partial · some kubelets did not answer', detail: 'node-c: dial tcp 10.0.3.14:10250: i/o timeout' },
+  fill: {
+    state: 'partial', asked: 4, answered: 3, message: 'Fill partial · some kubelets did not answer',
+    detail: 'node-c: dial tcp 10.0.3.14:10250: i/o timeout', via: ['victoriametrics', 'kubelet'],
+  },
   snapshots: {
     state: 'read',
     total: 12,
