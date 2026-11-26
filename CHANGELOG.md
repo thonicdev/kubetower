@@ -29,6 +29,11 @@ dialog draws it first, as a New extra line.
   application serves prometheus_client's metrics, it adds the version, the
   garbage collector per generation and the process's memory, CPU and open
   files (#144).
+- **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
+  reads every database the cluster's user may open, with a database and
+  schema picker and a table search; a table's rows come 100 at a time,
+  forward and back, by primary key, by ctid or by offset for a view, each
+  value drawn for its type, and a cell opens in full, JSON laid out (#164).
 
 ### Fixed
 
@@ -62,6 +67,10 @@ dialog draws it first, as a New extra line.
   window that failed is closed rather than left blank on screen. The library
   is carried patched in `third_party/go-webview2` until upstream takes the
   change (#84).
+- **macOS: a tool window asks before opening a link in the browser.** A
+  sheet shows the link's host and address, with Open in browser and Cancel:
+  WebKit cannot tell a person's click from a page script's, so a script
+  could otherwise send the browser to an address of its choosing (#84).
 - **Metrics: fewer wrong answers about the source.** A metrics backend behind
   an authenticating front (a 401 or a 5xx under the configured path) is now
   tried through a port-forward instead of being reported as a wrong path; a
