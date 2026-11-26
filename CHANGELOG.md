@@ -44,8 +44,10 @@ dialog draws it first, as a New extra line.
 - **Monitoring in Settings › General.** A badge says what answers on the
   current cluster: Prometheus, VictoriaMetrics, metrics-server or no metrics.
   Where no history source is found, a field takes the Service,
-  `namespace/service:port[/path]`; under the server profile it shows
-  `KT_PROMETHEUS_SERVICE`, read only (#130, #134).
+  `namespace/service:port[/path]`, kept for that cluster whether the API is
+  called with its context's name or its DNS-friendly form; under the server
+  profile it shows `KT_PROMETHEUS_SERVICE`, read only (#130, #134, #135,
+  #140).
 - **A container's image has a line of its own.** On a pod's Containers tab,
   the image moves under the container's name. The image's name stays whole and
   the path before it is cut in its middle when the line is too short, then come
