@@ -128,3 +128,8 @@ require (
 // The module under test is the working copy, never a published version. There
 // is no published version: this repository has never cut a release.
 replace github.com/thonicdev/kubetower => ../
+
+// The core's patched copy (../third_party/go-webview2/KUBETOWER.md): a
+// replace binds only its own module, so this one names it again, or the
+// Windows build resolves upstream and misses the copy's Error method.
+replace github.com/jchv/go-webview2 => ../third_party/go-webview2

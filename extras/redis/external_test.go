@@ -57,6 +57,13 @@ func TestExternalRedis(t *testing.T) {
 			"it points at clustercfg.demo.memorydb.cn-north-1.amazonaws.com.cn"},
 		{"sessions", "pl-12345.c1.eu-west-1.ec2.cloud.redislabs.com", []corev1.ServicePort{{Name: "tcp", Port: 12345}}, 12345,
 			"it points at pl-12345.c1.eu-west-1.ec2.cloud.redislabs.com"},
+		// The review of #75 and #76 (#151): a cache named for the web tier, any
+		// Azure Cache host, and Aiven's PostgreSQL port named rediss.
+		{"sessions", "x.redis-web-cache.example.com", nil, 0, "it points at x.redis-web-cache.example.com"},
+		{"sessions", "x.redis-web.example.com", nil, 0, ""},
+		{"sessions", "myproxy.redis.cache.windows.net", []corev1.ServicePort{{Name: "tls", Port: 6380}}, 6380,
+			"it points at myproxy.redis.cache.windows.net"},
+		{"orders", "pg-demo-project.aivencloud.com", []corev1.ServicePort{{Name: "rediss", Port: 5432}}, 0, ""},
 		// Aiven serves every engine: its host counts only with another signal.
 		{"sessions", "demo-project.aivencloud.com", nil, 0, ""},
 		{"orders", "pg-demo-project.aivencloud.com", []corev1.ServicePort{{Name: "postgres", Port: 5432}}, 0, ""},

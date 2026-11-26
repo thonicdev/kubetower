@@ -38,9 +38,21 @@ dialog draws it first, as a New extra line.
   namespaces already were, the detail naming both; in one namespace,
   Prometheus is still chosen. The source can be set in Settings › General
   (#133).
-
-### Fixed
-
+- **No Redis tile on what is not a Redis.** The Redis viewer no longer marks a
+  web port in front of a pod labelled redis, nor `ghcr.io/redis/nginx`, a web
+  client or a `predis` label, and it finds a Redis behind a second port, beside
+  an exporter, on its `--port`, or started by gosu, su-exec or a shell loop. A
+  pod's tiles come from one read of its namespace, and the labels a pod's tile
+  trusts are the server's (#151).
+- **Windows: a WebView2 failure refuses the window instead of ending
+  KubeTower.** When the WebView2 runtime cannot create its environment or
+  controller (a locked or full data folder, a policy), the library KubeTower
+  draws its windows with called `log.Fatalf` and the whole console exited, its
+  tunnels with it. A tool window is now refused (409) and its tunnel stays
+  open; the console's own window falls back to a browser window, and the
+  window that failed is closed rather than left blank on screen. The library
+  is carried patched in `third_party/go-webview2` until upstream takes the
+  change (#84).
 - **Metrics: fewer wrong answers about the source.** A metrics backend behind
   an authenticating front (a 401 or a 5xx under the configured path) is now
   tried through a port-forward instead of being reported as a wrong path; a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strconv"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -295,7 +297,13 @@ func TestRedisImage(t *testing.T) {
 		"registry.example.com/infra-tools/redis:7":      "redis",
 		"registry.example.com/infra/redis-dashboard:1":  "",
 		"registry.example.com/infra/redisui:1":          "",
-		"redislabs/rebloom:2":                           "",
+		"redislabs/rebloom:2":                           "rebloom",
+		"redislabs/rejson:2.6":                          "rejson",
+		"ghcr.io/redis/nginx:1":                         "",
+		"harbor.example/hub-proxy/redis/nginx:1":        "",
+		"harbor.example/hub-proxy/redis/server:7":       "redis",
+		"registry.example.com/team/redis-webui:1":       "",
+		"registry.example.com/team/webapp-redis:1":      "",
 		"redislabs/redisearch:2":                        "redisearch",
 	} {
 		got, ok := redisImage(image)
@@ -330,22 +338,23 @@ func TestAnExporterImageIsNotARedis(t *testing.T) {
 
 // A label names a server, not a tool beside it, whether the tool is a word of
 // its own or glued to the engine's name.
+// The label rule's table is shared with the UI's (shortcut.ts), which reads
+// the same file.
 func TestLabelSays(t *testing.T) {
-	for value, want := range map[string]bool{
-		"redis":           true,
-		"redis-cluster":   true,
-		"infra-valkey":    true,
-		"redis-build":     true,
-		"redis-dashboard": false,
-		"redis-gui":       false,
-		"redis-web":       false,
-		"redis-stat":      false,
-		"redisclient":     false,
-		"redisui":         false,
-		"redisson-app":    false,
-		"redis-cli":       false,
-		"redis-exporter":  false,
-	} {
+	raw, err := os.ReadFile("testdata/label-rule.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Labels map[string]bool `json:"labels"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	if len(table.Labels) < 20 {
+		t.Fatalf("the table holds %d labels", len(table.Labels))
+	}
+	for value, want := range table.Labels {
 		if got := labelSays(value); got != want {
 			t.Errorf("labelSays(%q) = %v; want %v", value, got, want)
 		}
@@ -384,10 +393,14 @@ func TestAPodLabelCountsForThePortThatReachesThePod(t *testing.T) {
 		[]corev1.ServicePort{{Name: "client", Port: 7000}}, 7000)
 	h.labelledPod(t, "web", map[string]string{"x": "web"}, redis,
 		[]corev1.ServicePort{{Name: "web", Port: 8080}}, 6379)
+	// A pod that declares no port says nothing about which port is its
+	// Redis: its label counts only for a port that looks like one (#151).
 	h.labelledPod(t, "bare", map[string]string{"x": "bare"}, redis,
 		[]corev1.ServicePort{{Name: "client", Port: 7001}})
+	h.labelledPod(t, "bare-redis", map[string]string{"x": "bare-redis"}, redis,
+		[]corev1.ServicePort{{Name: "client", Port: 6380}})
 	want := []string{
-		"rv/bare:7001 it is labeled app.kubernetes.io/name=redis",
+		"rv/bare-redis:6380 it is labeled app.kubernetes.io/name=redis",
 		"rv/kv:7000 it is labeled app.kubernetes.io/name=redis",
 	}
 	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
@@ -427,6 +440,30 @@ func TestServerCommand(t *testing.T) {
 		{[]string{"sh", "-c", "nc -z redis-server 6379"}, nil, ""},
 		{[]string{"echo", "sh", "-c", "redis-server"}, nil, ""},
 		{[]string{"sh"}, []string{"/scripts/start.sh"}, ""},
+		// #72's review: a script named after the server, a version check, a
+		// -c that is the script's, launchers and loops, KeyDB.
+		{[]string{"redis-server.sh"}, nil, ""},
+		{[]string{"/opt/redis-server.sh", "redis-server"}, nil, ""},
+		{[]string{"sh", "-c", "redis-server --version; exec /app"}, nil, ""},
+		{[]string{"sh", "-c", `echo "starting; redis-server"; exec /app`}, nil, ""},
+		{[]string{"sh", "/start.sh", "-c", "redis-server"}, nil, ""},
+		{[]string{"bash", "--login", "-c", "redis-server"}, nil, "redis-server"},
+		{[]string{"bash", "-o", "pipefail", "-c", "redis-server"}, nil, "redis-server"},
+		{[]string{"bash", "-euo", "pipefail", "-c", "redis-server"}, nil, "redis-server"},
+		{[]string{"bash", "+O", "extglob", "--noprofile", "-c", "exec valkey-server"}, nil, "valkey-server"},
+		{[]string{"bash", "--rcfile", "/x/-c", "-c", "redis-server"}, nil, "redis-server"},
+		{[]string{"bash", "-o", "-c", "redis-server"}, nil, ""},
+		{[]string{"bash", "--login", "/start.sh", "-c", "redis-server"}, nil, ""},
+		{[]string{"bash", "--", "-c", "redis-server"}, nil, ""},
+		{[]string{"bash", "-o"}, nil, ""},
+		{[]string{"bash", "--rcfile"}, nil, ""},
+		{[]string{"sh", "-c", "if [ -f /data/x ]; then exec redis-server /etc/r.conf; fi"}, nil, "redis-server"},
+		{[]string{"sh", "-c", "while true; do redis-server; sleep 1; done"}, nil, "redis-server"},
+		{[]string{"tini", "-s", "--", "redis-server"}, nil, "redis-server"},
+		{[]string{"gosu", "redis", "redis-server"}, nil, "redis-server"},
+		{[]string{"su-exec", "redis:redis", "valkey-server", "/etc/valkey.conf"}, nil, "valkey-server"},
+		{[]string{"env", "-i", "A=b", "redis-server"}, nil, "redis-server"},
+		{[]string{"keydb-server", "/etc/keydb/keydb.conf"}, nil, "keydb-server"},
 		{nil, nil, ""},
 	} {
 		got, ok := serverCommand(corev1.Container{Command: c.command, Args: c.args})
@@ -479,4 +516,71 @@ func TestAContainerRunningASentinelIsNotARedis(t *testing.T) {
 	if got := doors(t, h, "rv"); len(got) != 0 {
 		t.Fatalf("doors = %v", got)
 	}
+}
+
+// #151, item 31: a labelled pod that declares no port does not lend its label
+// to a web port.
+func TestAPortlessLabelledPodDoesNotMakeAWebPortARedis(t *testing.T) {
+	h := newHost()
+	h.labelledPod(t, "site", map[string]string{"x": "site"}, map[string]string{"app": "redis"},
+		[]corev1.ServicePort{{Name: "web", Port: 8080}})
+	if got := doors(t, h, "rv"); len(got) != 0 {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// #151, item 32: a Redis that declares no port beside an exporter that
+// declares 9121 still has its port found.
+func TestAPortlessRedisBesideAnExporterIsFound(t *testing.T) {
+	h := newHost()
+	h.labelledPod(t, "cache", map[string]string{"x": "cache"}, map[string]string{"app": "redis"},
+		[]corev1.ServicePort{{Name: "tcp", Port: 7000}, {Name: "metrics", Port: 9121}})
+	h.replaceLastPod(t, func(pod *corev1.Pod) {
+		pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{Name: "exporter", Image: "example/scraper:1",
+			Ports: []corev1.ContainerPort{{ContainerPort: 9121}}})
+	})
+	want := []string{"rv/cache:7000 it is labeled app=redis"}
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// #151, item 33: a Service labelled redis with two ports nothing in their
+// names tells apart is read by the pod it selects.
+func TestALabelledServiceWithTwoPortsIsReadByItsPod(t *testing.T) {
+	h := newHost()
+	h.labelledPod(t, "kv", map[string]string{"app": "redis"}, nil,
+		[]corev1.ServicePort{{Name: "client", Port: 7000}, {Name: "peer", Port: 7100}}, 7100)
+	want := []string{"rv/kv:7100 it is labeled app=redis"}
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// #72's review, item 5: a server that declares no port is found on the port
+// its command names.
+func TestTheCommandsPortChoosesAmongTheServicesPorts(t *testing.T) {
+	h := newHost()
+	h.fronted(t, "rv", "kv", nil, map[string]string{"x": "kv"},
+		[]corev1.ServicePort{{Name: "a", Port: 7000, TargetPort: intstr.FromInt32(6380)}, {Name: "b", Port: 7001}}, "example/cache:1")
+	h.replaceLastPod(t, func(pod *corev1.Pod) {
+		pod.Spec.Containers[0].Command = []string{"redis-server", "--port", "6380"}
+	})
+	want := []string{"rv/kv:7000 its pod runs redis-server"}
+	if got := doors(t, h, "rv"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors = %v", got)
+	}
+}
+
+// replaceLastPod changes the pod added last.
+func (h *fakeHost) replaceLastPod(t *testing.T, change func(*corev1.Pod)) {
+	t.Helper()
+	pods := h.objects["pods"]
+	var pod corev1.Pod
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(pods[len(pods)-1].Object, &pod); err != nil {
+		t.Fatal(err)
+	}
+	change(&pod)
+	h.objects["pods"] = pods[:len(pods)-1]
+	h.add(t, "pods", &pod)
 }
