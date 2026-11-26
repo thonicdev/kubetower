@@ -1,6 +1,6 @@
 import type { ExtensionShortcutTarget, ExtensionTabObject, ExtensionTabProps } from '@kubetower/ui';
 
-import { RedisProblem, getInventory, getService, type Deployment } from './data';
+import { RedisProblem, getService, sharedInventory, type Deployment } from './data';
 import { externalAddress, instanceHref, inventoryHref, serviceHref } from './parts';
 import { UNKNOWN, engineOfDeployment, mainDoor, modeOf, shapeOf } from './tiles';
 
@@ -42,16 +42,46 @@ function notChecked(title: string, error: unknown, to: string): ExtensionShortcu
   return { title, status: { text: 'not checked', tone: 'warn', hint }, to };
 }
 
-/** The words a Redis or Valkey pod's own labels carry. */
-const ENGINE = /redis|valkey/;
-const TOOL = /exporter|commander|insight|sentinel|operator|metrics|admin|browser|proxy/;
+/*
+ * The label rule, word for word the server's (`extras/redis/evidence.go`,
+ * labelSays, isTool, and engineToken in external.go): the engine as a token of
+ * its own, and no tool beside the server. `extras/redis/testdata/label-rule.json`
+ * is the table both are tested on.
+ */
+const ENGINES = ['redis', 'valkey'];
+const TOOLS = ['exporter', 'commander', 'insight', 'sentinel', 'operator', 'metrics', 'admin', 'browser', 'proxy', 'backup',
+  'dump', 'shake', 'tools', 'dashboard', 'redisson'];
+const TOOL_TOKENS = new Set(['ui', 'cli', 'client', 'tool', 'gui', 'web', 'stat', 'stats', 'webui', 'webapp']);
+const GLUED = new Set(['master', 'main', 'primary', 'replica', 'cache']);
+
+function engineToken(value: string): boolean {
+  return value.split(/[.\-_]/).some((token) =>
+    ENGINES.some((engine) => token.startsWith(engine) && (/^[0-9]*$/.test(token.slice(engine.length)) || GLUED.has(token.slice(engine.length)))),
+  );
+}
+
+function isTool(value: string): boolean {
+  if (TOOLS.some((word) => value.includes(word))) return true;
+  return value
+    .split(/[-_.]/)
+    .filter((token) => token !== '')
+    .some((token) => {
+      if (TOOL_TOKENS.has(token)) return true;
+      let rest = token;
+      for (const engine of ENGINES) rest = rest.split(engine).join('');
+      return rest !== token && TOOL_TOKENS.has(rest);
+    });
+}
+
+/** Whether a label value names a Redis or a Valkey server (the server's labelSays). */
+export function labelSays(value: string): boolean {
+  const lower = value.toLowerCase();
+  return engineToken(lower) && !isTool(lower);
+}
 
 /** Whether a pod's labels say it is a Redis or a Valkey server. */
 export function labelledRedis(object: ExtensionTabObject): boolean {
-  return ['app.kubernetes.io/name', 'app'].some((key) => {
-    const value = (object.labels[key] ?? '').toLowerCase();
-    return ENGINE.test(value) && !TOOL.test(value);
-  });
+  return ['app.kubernetes.io/name', 'app'].some((key) => labelSays(object.labels[key] ?? ''));
 }
 
 /** A Service: the deployment its Redis doors belong to. */
@@ -78,13 +108,14 @@ export async function serviceShortcut({ cluster, namespace, name }: ExtensionTab
 /**
  * A Pod: the deployment one of whose Redis members it is behind, from the
  * namespace's inventory - one listing of its Services and EndpointSlices, read
- * for the person, dialling nothing. A pod behind a Sentinel port only is not a
- * Redis to open.
+ * for the person, dialling nothing, and shared with podNotChecked
+ * (sharedInventory): the pod's two tiles come from one read and cannot
+ * disagree. A pod behind a Sentinel port only is not a Redis to open.
  */
 export async function podShortcut({ cluster, namespace, name }: ExtensionTabProps, signal: AbortSignal): Promise<ExtensionShortcutTarget | null> {
   if (namespace === undefined || namespace === '') return null;
   try {
-    const inventory = await getInventory(cluster, namespace, signal);
+    const inventory = await sharedInventory(cluster, namespace, signal);
     for (const group of inventory.namespaces) {
       for (const d of group.deployments) {
         if (d.members.some((m) => m.sentinel !== true && m.pods.includes(name))) return deploymentShortcut(cluster, d);
@@ -107,7 +138,7 @@ export async function podShortcut({ cluster, namespace, name }: ExtensionTabProp
 export async function podNotChecked({ cluster, namespace, name }: ExtensionTabProps, signal: AbortSignal): Promise<ExtensionShortcutTarget | null> {
   if (namespace === undefined || namespace === '') return null;
   try {
-    await getInventory(cluster, namespace, signal);
+    await sharedInventory(cluster, namespace, signal);
     return null;
   } catch (error) {
     if (notRedis(error) || signal.aborted) return null;

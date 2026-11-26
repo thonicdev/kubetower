@@ -3,6 +3,7 @@ package redis
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -36,7 +37,7 @@ var tools = []string{"exporter", "commander", "insight", "sentinel", "operator",
 // `_` or `.` (`ui` is inside `build`, `cli` inside `client`), or glued to an
 // engine word (`redisui`, `redisclient`).
 var toolTokens = map[string]bool{"ui": true, "cli": true, "client": true, "tool": true, "gui": true, "web": true,
-	"stat": true, "stats": true}
+	"stat": true, "stats": true, "webui": true, "webapp": true}
 
 // isTool reports whether a word names a tool beside the server.
 func isTool(word string) bool {
@@ -85,21 +86,26 @@ func notAServerPort(port corev1.ServicePort) bool {
 // path segment that says so. An internal registry renames images, so the word
 // may be inside the image's own name (`infra-valkey`, `infravalkey`,
 // `redis-cluster`). A segment above it counts only when it is exactly `redis`
-// or `valkey` (`team/redis/server`): `team-redis/web-app` or
-// `redislabs/rebloom` say who publishes an image, not what it runs, and so
-// does the first segment on Docker Hub (`redis/nginx`). The registry host is
-// not the path. Neither that segment nor any below it may name a tool beside
-// the server (`redis/exporter/v2`, `redis-cli`); one above it is a team or a
-// project (`infra-tools/redis`).
+// or `valkey` and the image's own name is a role (`team/redis/server`):
+// `team-redis/web-app` says who publishes an image, not what it runs, and so
+// does `redis/nginx`, on Docker Hub, on another registry (`ghcr.io/redis/nginx`)
+// or behind a mirror (`hub-proxy/redis/nginx`). The registry host is not the
+// path. Neither that segment nor any below it may name a tool beside the
+// server (`redis/exporter/v2`, `redis-cli`); one above it is a team or a
+// project (`infra-tools/redis`). Redis's module images run the server with
+// their module loaded (`redislabs/rejson`), whatever their name says.
 func redisImage(image string) (string, bool) {
 	segments, hub := imagePath(image)
 	if len(segments) == 0 {
 		return "", false
 	}
+	if last := segments[len(segments)-1]; moduleImages[last] {
+		return last, true
+	}
 	at := -1
 	if hasAny(segments[len(segments)-1], engines) {
 		at = len(segments) - 1
-	} else {
+	} else if roles[segments[len(segments)-1]] {
 		first := 0
 		if hub {
 			first = 1
@@ -121,6 +127,16 @@ func redisImage(image string) (string, bool) {
 	}
 	return segments[at], true
 }
+
+// moduleImages are Redis's module images, each a redis-server with a module
+// loaded.
+var moduleImages = map[string]bool{"rejson": true, "rebloom": true, "redisgraph": true, "redistimeseries": true,
+	"redisbloom": true, "redisjson": true, "redismod": true}
+
+// roles are the image names that say which part of a Redis an image is, under
+// a parent segment that names the engine (`team/redis/server`).
+var roles = map[string]bool{"server": true, "master": true, "primary": true, "replica": true, "node": true,
+	"cache": true, "db": true, "ha": true, "cluster": true, "standalone": true}
 
 // imagePath is an image reference's repository path, lower-cased, without its
 // registry host, tag or digest, and whether it is on Docker Hub, where the
@@ -191,8 +207,10 @@ func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.P
 		if why, ok := byLabel(service); ok {
 			if port, ok := onePort(candidates); ok {
 				out[key] = chosenPort{Name: port.Name, Port: port.Port, Why: why}
+				continue
 			}
-			continue
+			// Several ports and nothing in their names: the pods it selects
+			// may tell which one reaches their Redis.
 		}
 		if chosen, ok := byPodLabel(service, candidates, pods); ok {
 			out[key] = chosen
@@ -202,11 +220,14 @@ func evidence(services []corev1.Service, taken map[string]bool, pods []*corev1.P
 }
 
 // labelSays reports whether a label value names a Redis or a Valkey server: it
-// contains either word (`redis-cluster`, `infra-valkey`) and names no tool
-// beside the server.
+// carries either word as a token of its own (`redis-cluster`, `infra-valkey`,
+// `redis7`), never inside another word (`predis`, `rediscover`), and names no
+// tool beside the server (`redis-backup`, `redis-cli`). The UI's
+// labelledRedis (web/app/extras/redis/shortcut.ts) is the same rule, and
+// testdata/label-rule.json is the table both are tested on.
 func labelSays(value string) bool {
 	value = strings.ToLower(value)
-	return hasAny(value, engines) && !isTool(value)
+	return engineToken(value) != "" && !isTool(value)
 }
 
 // byLabel is the label saying a Service fronts a Redis, on the Service or in
@@ -231,8 +252,14 @@ func labelled(set map[string]string) (string, bool) {
 
 // byPodLabel is the port of a pod the Service selects and that is labelled a
 // Redis, among the candidates that reach it: a `web` port on 8080 in front
-// of a pod whose Redis listens on 6379 is not that Redis. A pod that declares
-// no container port lends its label to every candidate.
+// of a pod whose Redis listens on 6379 is not that Redis.
+//
+// Where no candidate reaches a declared port, the candidates are those that
+// reach none: beside a sidecar that declares its own (an exporter on 9121),
+// the Redis that declares nothing is behind one of them, chosen as onePort
+// chooses; a pod that declares no port at all says nothing about which, and
+// its label counts only for the one alone whose name or number looks like a
+// Redis's - never for `web:8080`.
 func byPodLabel(service *corev1.Service, candidates []corev1.ServicePort, pods []*corev1.Pod) (chosenPort, bool) {
 	if pods == nil || len(service.Spec.Selector) == 0 {
 		return chosenPort{}, false
@@ -246,41 +273,63 @@ func byPodLabel(service *corev1.Service, candidates []corev1.ServicePort, pods [
 		if !ok {
 			continue
 		}
-		reach := candidates
-		if declaresPorts(pod) {
-			reach = nil
-			for _, port := range candidates {
-				for _, container := range pod.Spec.Containers {
-					if targets(port, container) {
-						reach = append(reach, port)
-						break
-					}
+		var reach, unreached []corev1.ServicePort
+		for _, port := range candidates {
+			hit := false
+			for _, container := range pod.Spec.Containers {
+				if targets(port, container) {
+					hit = true
+					break
 				}
 			}
+			if hit {
+				reach = append(reach, port)
+			} else {
+				unreached = append(unreached, port)
+			}
 		}
-		if port, ok := onePort(reach); ok {
+		if len(reach) > 0 {
+			if port, ok := onePort(reach); ok {
+				return chosenPort{Name: port.Name, Port: port.Port, Why: why}, true
+			}
+			continue
+		}
+		declaring, silent := declarers(pod)
+		var pick func([]corev1.ServicePort) (corev1.ServicePort, bool)
+		switch {
+		case silent == 0:
+			// Every container declares its ports and none is reached.
+			continue
+		case declaring == 0:
+			pick = oneRedisLikePort
+		default:
+			// A sidecar declares its own and none is reached: the Redis is
+			// a container that declares nothing, behind one of the others.
+			pick = onePort
+		}
+		if port, ok := pick(unreached); ok {
 			return chosenPort{Name: port.Name, Port: port.Port, Why: why}, true
 		}
 	}
 	return chosenPort{}, false
 }
 
-func declaresPorts(pod *corev1.Pod) bool {
+// declarers counts a pod's containers that declare ports and those that
+// declare none.
+func declarers(pod *corev1.Pod) (declaring, silent int) {
 	for _, container := range pod.Spec.Containers {
 		if len(container.Ports) > 0 {
-			return true
+			declaring++
+		} else {
+			silent++
 		}
 	}
-	return false
+	return declaring, silent
 }
 
-// onePort is the port a labelled Service's Redis is on: its only candidate,
-// or, among several, the one alone whose name says Redis or Valkey or whose
-// number is near 6379. Two that nothing tells apart are neither.
-func onePort(candidates []corev1.ServicePort) (corev1.ServicePort, bool) {
-	if len(candidates) == 1 {
-		return candidates[0], true
-	}
+// oneRedisLikePort is the one port alone whose name says Redis or Valkey or
+// whose number is in 6379 to 6399.
+func oneRedisLikePort(candidates []corev1.ServicePort) (corev1.ServicePort, bool) {
 	var like []corev1.ServicePort
 	for _, port := range candidates {
 		if hasAny(strings.ToLower(port.Name), engines) || (port.Port >= 6379 && port.Port <= 6399) {
@@ -293,8 +342,20 @@ func onePort(candidates []corev1.ServicePort) (corev1.ServicePort, bool) {
 	return corev1.ServicePort{}, false
 }
 
+// onePort is the port a labelled Service's Redis is on: its only candidate,
+// or, among several, the one alone whose name says Redis or Valkey or whose
+// number is near 6379. Two that nothing tells apart are neither.
+func onePort(candidates []corev1.ServicePort) (corev1.ServicePort, bool) {
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	return oneRedisLikePort(candidates)
+}
+
 // byImage is the candidate port a selected pod's Redis container listens on:
-// a container whose image says Redis or Valkey, or that runs the server.
+// a container whose image says Redis or Valkey, or that runs the server. A
+// container that declares no port is found by the port its command names
+// (`--port 6380`), or as the Service's only candidate.
 func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*corev1.Pod) (chosenPort, bool) {
 	if pods == nil || len(service.Spec.Selector) == 0 {
 		return chosenPort{}, false
@@ -306,8 +367,9 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 		}
 		for _, container := range pod.Spec.Containers {
 			name, ok := redisImage(container.Image)
+			command, listens, runsServer := serverCommandPort(container)
 			if !ok {
-				name, ok = serverCommand(container)
+				name, ok = command, runsServer
 			}
 			if !ok {
 				continue
@@ -322,6 +384,16 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 			if len(hits) == 1 {
 				return chosenPort{Name: hits[0].Name, Port: hits[0].Port, Why: why}, true
 			}
+			if len(hits) == 0 && len(container.Ports) == 0 && listens > 0 {
+				for _, port := range candidates {
+					if targetNumber(port) == int32(listens) {
+						hits = append(hits, port)
+					}
+				}
+				if len(hits) == 1 {
+					return chosenPort{Name: hits[0].Name, Port: hits[0].Port, Why: why}, true
+				}
+			}
 			if len(hits) == 0 && len(container.Ports) == 0 && len(candidates) == 1 {
 				// The container declares nothing: the one port there is.
 				return chosenPort{Name: candidates[0].Name, Port: candidates[0].Port, Why: why}, true
@@ -332,67 +404,177 @@ func byImage(service *corev1.Service, candidates []corev1.ServicePort, pods []*c
 }
 
 // servers are the binaries a container runs when it is the server.
-var servers = []string{"redis-server", "valkey-server"}
+var servers = []string{"redis-server", "valkey-server", "keydb-server"}
 
-// launchers start the next word as the program: skipped before it.
-var launchers = map[string]bool{"exec": true, "tini": true, "dumb-init": true, "--": true}
+// launchers start a later word as the program and are skipped before it.
+// withUser take a user (or user:group) first (`gosu redis redis-server`);
+// flagged skip their own options (`tini -s --`, `env -i A=b`).
+var (
+	launchers = map[string]bool{"exec": true, "tini": true, "dumb-init": true, "--": true, "env": true,
+		"gosu": true, "su-exec": true}
+	withUser = map[string]bool{"gosu": true, "su-exec": true}
+	flagged  = map[string]bool{"tini": true, "dumb-init": true, "env": true}
+)
+
+// keywords open a shell's compound command: the command after them is read
+// (`then exec redis-server`, `do redis-server`).
+var keywords = map[string]bool{"if": true, "then": true, "else": true, "elif": true, "do": true, "while": true,
+	"until": true, "{": true, "!": true}
+
+// notServing are a server's flags that print and exit instead of serving.
+var notServing = map[string]bool{"--version": true, "-v": true, "--help": true, "-h": true,
+	"--test-memory": true, "--check-system": true}
 
 // shells run their `-c` argument as a command line.
 var shells = map[string]bool{"sh": true, "bash": true, "ash": true, "dash": true, "zsh": true}
 
-// serverCommand reports whether a container runs redis-server or
-// valkey-server, and which: as its program, by path or behind a launcher
-// (`tini --`, `exec`), or as the program of a segment of a shell line (`sh -c
-// "exec redis-server /etc/redis.conf"`). Only the program counts, never an
-// argument: an exporter's `--redis.addr` or a `nc -z redis-server 6379` loop
-// names a host. A server started with `--sentinel` is a Sentinel.
+// serverCommand reports whether a container runs redis-server, valkey-server
+// or keydb-server, and which: as its program, by path or behind a launcher
+// (`tini -s --`, `exec`, `gosu redis`, `su-exec redis`, `env A=b`), or as the
+// program of a command of a shell's `-c` line (`sh -c "exec redis-server
+// /etc/redis.conf"`, `while :; do redis-server; done`). Only the program
+// counts, never an argument: an exporter's `--redis.addr` or a `nc -z
+// redis-server 6379` loop names a host, and `redis-server.sh` is a script. A
+// server started with `--sentinel` is a Sentinel; one started with
+// `--version` serves nothing.
 func serverCommand(container corev1.Container) (string, bool) {
+	name, _, ok := serverCommandPort(container)
+	return name, ok
+}
+
+// serverCommandPort is serverCommand, with the port its arguments name
+// (`--port 6380`, `--port=6380`), 0 where they name none.
+func serverCommandPort(container corev1.Container) (string, int, bool) {
 	argv := append(append([]string{}, container.Command...), container.Args...)
 	return runs(argv, true)
 }
 
 // runs reads one command line; nested says a shell's `-c` line may be read.
-func runs(argv []string, nested bool) (string, bool) {
+func runs(argv []string, nested bool) (string, int, bool) {
 	i := 0
-	for i < len(argv) && (launchers[base(argv[i])] || assignment(argv[i])) {
+	for i < len(argv) {
+		word := base(argv[i])
+		if keywords[word] || assignment(argv[i]) {
+			i++
+			continue
+		}
+		if !launchers[word] {
+			break
+		}
 		i++
+		if withUser[word] && i < len(argv) {
+			i++
+		}
+		for flagged[word] && i < len(argv) && strings.HasPrefix(argv[i], "-") && argv[i] != "--" {
+			i++
+		}
 	}
 	if i >= len(argv) {
-		return "", false
+		return "", 0, false
 	}
 	program := base(argv[i])
 	if nested && shells[program] {
-		for j := i + 1; j+1 < len(argv); j++ {
-			if flag := argv[j]; strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "--") && strings.Contains(flag, "c") {
+		// The shell's own options come before its script or its -c line:
+		// `sh /start.sh -c redis-server` runs /start.sh.
+		for j := i + 1; j < len(argv); j++ {
+			flag := argv[j]
+			if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") {
+				return "", 0, false
+			}
+			if strings.Contains(flag, "c") {
+				if j+1 >= len(argv) {
+					return "", 0, false
+				}
 				return shellLine(argv[j+1])
 			}
 		}
-		return "", false
+		return "", 0, false
 	}
 	for _, server := range servers {
 		if program != server {
 			continue
 		}
-		for _, arg := range argv[i+1:] {
-			if arg == "--sentinel" {
-				return "", false
+		port := 0
+		args := argv[i+1:]
+		for k, arg := range args {
+			if arg == "--sentinel" || notServing[arg] {
+				return "", 0, false
+			}
+			if value, ok := strings.CutPrefix(arg, "--port="); ok {
+				port = portNumber(value)
+			} else if arg == "--port" && k+1 < len(args) {
+				port = portNumber(args[k+1])
 			}
 		}
-		return server, true
+		return server, port, true
 	}
-	return "", false
+	return "", 0, false
 }
 
-// shellLine reads each segment of a shell line between `;`, `&&`, `||`, `|`,
-// `&` and new lines, quotes dropped.
-func shellLine(line string) (string, bool) {
-	line = strings.NewReplacer(`"`, " ", "'", " ", "&&", ";", "||", ";", "|", ";", "&", ";", "\n", ";", "\r", ";").Replace(line)
-	for _, segment := range strings.Split(line, ";") {
-		if name, ok := runs(strings.Fields(segment), false); ok {
-			return name, true
+// portNumber is a decimal port, 0 for anything else.
+func portNumber(value string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 1 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+// shellLine reads each command of a shell line, between `;`, `&&`, `||`, `|`,
+// `&` and new lines outside quotes, its words split with their quotes
+// dropped: a separator inside quotes (`echo "a; redis-server"`) splits nothing.
+func shellLine(line string) (string, int, bool) {
+	for _, segment := range shellSegments(line) {
+		if name, port, ok := runs(segment, false); ok {
+			return name, port, true
 		}
 	}
-	return "", false
+	return "", 0, false
+}
+
+// shellSegments splits a shell line into its commands' words.
+func shellSegments(line string) [][]string {
+	var segments [][]string
+	var words []string
+	var word strings.Builder
+	inWord := false
+	var quote rune
+	endWord := func() {
+		if inWord {
+			words = append(words, word.String())
+			word.Reset()
+			inWord = false
+		}
+	}
+	endSegment := func() {
+		endWord()
+		if len(words) > 0 {
+			segments = append(segments, words)
+			words = nil
+		}
+	}
+	for _, r := range line {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				word.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+			inWord = true
+		case r == ';' || r == '&' || r == '|' || r == '\n' || r == '\r':
+			endSegment()
+		case r == ' ' || r == '\t':
+			endWord()
+		default:
+			word.WriteRune(r)
+			inWord = true
+		}
+	}
+	endSegment()
+	return segments
 }
 
 // base is a program's name without its directory, lower-cased.
@@ -423,16 +605,25 @@ func targets(port corev1.ServicePort, container corev1.Container) bool {
 		}
 		return false
 	}
-	number := target.IntVal
-	if number == 0 {
-		number = port.Port
-	}
+	number := targetNumber(port)
 	for _, cp := range container.Ports {
 		if cp.ContainerPort == number {
 			return true
 		}
 	}
 	return false
+}
+
+// targetNumber is the number a Service port forwards to: its numeric
+// targetPort, or the port itself where unset; 0 for a named targetPort.
+func targetNumber(port corev1.ServicePort) int32 {
+	if port.TargetPort.Type == intstr.String && port.TargetPort.StrVal != "" {
+		return 0
+	}
+	if port.TargetPort.IntVal != 0 {
+		return port.TargetPort.IntVal
+	}
+	return port.Port
 }
 
 // withEvidence adds, to what the port guess found, the port each Service's

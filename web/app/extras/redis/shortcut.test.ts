@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Deployment, Member } from './data';
-import { labelledRedis, podNotChecked, podShortcut, serviceShortcut } from './shortcut';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { forgetSharedInventory, type Deployment, type Member } from './data';
+import { labelSays, labelledRedis, podNotChecked, podShortcut, serviceShortcut } from './shortcut';
 
 /**
  * The Redis viewer's tile on a Service's or a Pod's Details: which deployment
@@ -10,6 +13,7 @@ import { labelledRedis, podNotChecked, podShortcut, serviceShortcut } from './sh
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  forgetSharedInventory();
 });
 
 const member = (key: string, service: string, pods: string[], over: Partial<Member> = {}): Member => ({
@@ -136,8 +140,66 @@ describe("the Redis viewer's shortcut", () => {
       status: { text: 'not checked', tone: 'warn', hint: 'The EndpointSlices in cache could not be listed.' },
       to: '/c/kind/x/redis?ns=cache',
     });
+    forgetSharedInventory();
     stub({ '/x/kind/redis/?ns=cache': { body: inventory([]) } });
     expect(await podNotChecked(pod, signal)).toBeNull();
+  });
+
+  // #151, items 25 and 26: a pod's two tiles come from one read.
+  it('reads the namespace once for both of a pod’s tiles, so they cannot disagree', async () => {
+    const pod = { cluster: 'kind', kind: 'pods', namespace: 'cache', name: 'rsent-redis-node-0' };
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        calls++;
+        // A second read would fail: only one may be made.
+        return Promise.resolve(
+          calls === 1
+            ? new Response(JSON.stringify(inventory([sentinel])), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            : new Response(JSON.stringify({ code: 'failed', kind: 'failure', message: 'transient' }), { status: 503, headers: { 'Content-Type': 'application/json' } }),
+        );
+      }),
+    );
+    const [tile, unchecked] = await Promise.all([podShortcut(pod, signal), podNotChecked(pod, signal)]);
+    expect(calls).toBe(1);
+    expect(tile?.title).toBe('rsent-redis');
+    expect(unchecked).toBeNull();
+  });
+
+  // #151, item 28: each of these rules fails a test when removed.
+  it('draws no not-checked tile for a pod whose read was canceled', async () => {
+    const pod = { cluster: 'kind', kind: 'pods', namespace: 'cache', name: 'kv-0' };
+    stub({ '/x/kind/redis/?ns=cache': { status: 403, body: { code: 'forbidden', kind: 'failure', message: 'Refused.' } } });
+    const gone = new AbortController();
+    const asked = podNotChecked(pod, gone.signal);
+    gone.abort();
+    expect(await asked).toBeNull();
+  });
+
+  it('draws no not-checked tile where the route says not Redis, the extra is off or the cluster is unknown', async () => {
+    const pod = { cluster: 'kind', kind: 'pods', namespace: 'cache', name: 'kv-0' };
+    for (const code of ['not_redis', 'gate', 'unknown_cluster']) {
+      forgetSharedInventory();
+      stub({ '/x/kind/redis/?ns=cache': { status: 404, body: { code, kind: 'absent', message: code } } });
+      expect(await podNotChecked(pod, signal)).toBeNull();
+      expect(await podShortcut(pod, signal)).toBeNull();
+    }
+  });
+
+  // #151, item 27: the server's table, read from the same file.
+  it('takes a label for a Redis exactly as the server does', () => {
+    const table = JSON.parse(readFileSync(resolve(process.cwd(), '../extras/redis/testdata/label-rule.json'), 'utf8')) as {
+      labels: Record<string, boolean>;
+    };
+    const entries = Object.entries(table.labels);
+    expect(entries.length).toBeGreaterThan(20);
+    for (const [value, want] of entries) {
+      expect([value, labelSays(value)]).toEqual([value, want]);
+    }
+    expect(labelSays('redis-backup')).toBe(false);
+    expect(labelSays('redis-cli')).toBe(false);
+    expect(labelSays('predis')).toBe(false);
   });
 
   it('takes a pod for a Redis by its labels, not for a tool beside one', () => {
