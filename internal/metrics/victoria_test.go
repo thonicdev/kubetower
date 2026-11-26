@@ -471,3 +471,13 @@ func TestEachHealthAttemptHasItsOwnTimeout(t *testing.T) {
 		t.Fatalf("%q, %v after %d asks", body, err, asked)
 	}
 }
+
+// The refusal names at most three namespaces of each engine, then counts the
+// rest, so the detail stays one line (#133).
+func TestTheCrossEngineRefusalNamesAtMostThreeNamespacesEach(t *testing.T) {
+	prom := map[string]bool{"a": true, "b": true, "c": true, "d": true, "e": true}
+	got := notChosenAcross(prom, map[string]bool{"vm": true})
+	if !strings.Contains(got, "Prometheus (a, b, c and 2 more)") || !strings.Contains(got, "VictoriaMetrics (vm)") {
+		t.Errorf("%q", got)
+	}
+}
