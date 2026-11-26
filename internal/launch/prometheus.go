@@ -9,7 +9,7 @@ import (
 
 // Which Prometheus the server profile queries, and who says so.
 //
-// Under `--incluster`, KT_PROMETHEUS_SERVICE (`namespace/service:port`) is the
+// Under `--incluster`, KT_PROMETHEUS_SERVICE (`namespace/service:port[/path]`) is the
 // only way a Prometheus is chosen; unset, there is none and the charts say why.
 // Discovery guesses from labels anybody creating a Service writes, and a shared
 // console shows what it finds to everybody: a tenant's labeled Service could

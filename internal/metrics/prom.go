@@ -111,24 +111,31 @@ const (
 )
 
 // EnvPrometheusService is where the server profile's Prometheus is, written
-// `namespace/service:port` - the form Address prints, and the Service port,
-// not the pod's. Read at start-up by internal/launch, and only under
-// --incluster: see Options.Configured for why the server profile is told
-// rather than left to look.
+// `namespace/service:port[/path]` - the form Address prints, and the Service
+// port, not the pod's. The path is where the Prometheus API is served under,
+// as vmselect serves it under `/select/<tenant>/prometheus`. Read at start-up
+// by internal/launch, and only under --incluster: see Options.Configured for
+// why the server profile is told rather than left to look.
 const EnvPrometheusService = "KT_PROMETHEUS_SERVICE"
 
+// maxTargetPath bounds the path a target may carry: a URL prefix, not a place
+// to hide a query.
+const maxTargetPath = 128
+
 // ParseTarget reads a target written as Address writes it,
-// `namespace/service:port`.
+// `namespace/service:port`, optionally followed by a path,
+// `namespace/service:port/select/0/prometheus`.
 //
 // Strict, because the value is a deployment's and a typo in it is otherwise a
 // console with no history and a probe failing quietly behind it: the
-// namespace must be a namespace name, the service a Service name, and the port
-// a number a Service port can be.
+// namespace must be a namespace name, the service a Service name, the port
+// a number a Service port can be, and the path plain segments.
 func ParseTarget(raw string) (*PromTarget, error) {
 	namespace, after, slash := strings.Cut(raw, "/")
-	service, port, colon := strings.Cut(after, ":")
+	service, rest, colon := strings.Cut(after, ":")
+	port, path, hasPath := strings.Cut(rest, "/")
 	if !slash || !colon {
-		return nil, fmt.Errorf("%q is not namespace/service:port, e.g. monitoring/kube-prometheus-stack-prometheus:9090", raw)
+		return nil, fmt.Errorf("%q is not namespace/service:port[/path], e.g. monitoring/kube-prometheus-stack-prometheus:9090", raw)
 	}
 	if errs := validation.IsDNS1123Label(namespace); len(errs) > 0 {
 		return nil, fmt.Errorf("%q: %q is not a namespace name: %s", raw, namespace, errs[0])
@@ -137,23 +144,55 @@ func ParseTarget(raw string) (*PromTarget, error) {
 		return nil, fmt.Errorf("%q: %q is not a Service name: %s", raw, service, errs[0])
 	}
 	number, err := strconv.Atoi(port)
-	if err != nil || number < 1 || number > 65535 {
+	if err != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port {
 		return nil, fmt.Errorf("%q: %q is not a port number between 1 and 65535", raw, port)
 	}
-	return &PromTarget{Namespace: namespace, Service: service, Port: number}, nil
+	target := &PromTarget{Namespace: namespace, Service: service, Port: number}
+	if hasPath {
+		target.Path = "/" + path
+		if err := checkTargetPath(target.Path); err != nil {
+			return nil, fmt.Errorf("%q: %w", raw, err)
+		}
+	}
+	return target, nil
 }
 
-// PromTarget is the Service a cluster's Prometheus answers on.
+// checkTargetPath accepts `/a/b/c`: non-empty segments of letters, digits and
+// `-._~`, no `.` or `..` segment, no trailing slash. Nothing that could leave
+// the Service's proxy path or carry a query.
+func checkTargetPath(path string) error {
+	if len(path) > maxTargetPath {
+		return fmt.Errorf("the path is longer than %d characters", maxTargetPath)
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("%q is not a path of plain segments, e.g. /select/0/prometheus", path)
+		}
+		for _, r := range segment {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-._~", r)) {
+				return fmt.Errorf("%q is not a path of plain segments, e.g. /select/0/prometheus", path)
+			}
+		}
+	}
+	return nil
+}
+
+// PromTarget is the Service a cluster's Prometheus API answers on: Prometheus
+// itself, or VictoriaMetrics, which serves the same API.
 type PromTarget struct {
 	Namespace string `json:"namespace"`
 	Service   string `json:"service"`
 	Port      int    `json:"port"`
+	// Path is where the API is served under, empty for the root: vmselect
+	// serves it under `/select/<tenant>/prometheus`. It starts with a slash
+	// and has none at the end.
+	Path string `json:"path,omitempty"`
 }
 
-// Address renders the target as `namespace/service:port`, which is the form the
-// operator can paste into anything else that asks for one.
+// Address renders the target as `namespace/service:port[/path]`, which is the
+// form the operator can paste into anything else that asks for one.
 func (p *PromTarget) Address() string {
-	return fmt.Sprintf("%s/%s:%d", p.Namespace, p.Service, p.Port)
+	return fmt.Sprintf("%s/%s:%d%s", p.Namespace, p.Service, p.Port, p.Path)
 }
 
 // proxyPath addresses Prometheus through the API server's service proxy. Going
@@ -161,8 +200,45 @@ func (p *PromTarget) Address() string {
 // authentication carries the request: no second credential to manage, and it
 // works for a Prometheus with no ingress at all.
 func (p *PromTarget) proxyPath(endpoint string) string {
+	return p.proxyRoot(p.Path + endpoint)
+}
+
+// proxyRoot is proxyPath without the target's path: the Service's root.
+func (p *PromTarget) proxyRoot(endpoint string) string {
 	return fmt.Sprintf("/api/v1/namespaces/%s/services/%s:%d/proxy%s",
 		p.Namespace, p.Service, p.Port, endpoint)
+}
+
+// healthPaths are where the health endpoint is asked, relative to the
+// Service's root, in order. Under the target's path first, as a Prometheus
+// started with --web.route-prefix serves it; then at the root, where every
+// VictoriaMetrics component serves it whatever path its query API is under.
+func (p *PromTarget) healthPaths() []string {
+	if p.Path == "" {
+		return []string{endpointHealth}
+	}
+	return []string{p.Path + endpointHealth, endpointHealth}
+}
+
+// Which engine answers the Prometheus API: Discovery.Engine.
+const (
+	EnginePrometheus      = "prometheus"
+	EngineVictoriaMetrics = "victoriametrics"
+)
+
+// engineOf reads the engine from a health answer: VictoriaMetrics says
+// "VictoriaMetrics is Healthy.", Prometheus "Prometheus Server is Healthy.".
+// fallback is what discovery expected, for an answer that names neither.
+func engineOf(health []byte, fallback string) string {
+	switch {
+	case strings.Contains(string(health), "VictoriaMetrics"):
+		return EngineVictoriaMetrics
+	case strings.Contains(string(health), "Prometheus"):
+		return EnginePrometheus
+	case fallback != "":
+		return fallback
+	}
+	return EnginePrometheus
 }
 
 // probeTransport works out how this cluster lets us reach Prometheus, by trying.
@@ -174,14 +250,21 @@ func (p *PromTarget) proxyPath(endpoint string) string {
 // cluster returns 200. So the proxy is tried, and the port-forward that follows
 // is tried too rather than assumed — an unverified "port-forward" would be a
 // confident wrong answer, like "none" for a cluster that could not be asked.
-func (m *Metrics) probeTransport(ctx context.Context, name string, client *cluster.Client, target *PromTarget) (string, error) {
-	proxyCtx, cancel := context.WithTimeout(ctx, healthTimeout)
-	defer cancel()
-
-	if _, err := m.raw(proxyCtx, client, target.proxyPath(endpointHealth), nil); err == nil {
-		return TransportProxy, nil
-	} else if m.tunnels == nil {
-		return "", fmt.Errorf("the API service proxy refused (%s) and no port-forward is configured", shortError(err))
+func (m *Metrics) probeTransport(ctx context.Context, name string, client *cluster.Client, target *PromTarget) (transport string, health []byte, err error) {
+	viaProxy := func(ctx context.Context, path string, params url.Values) ([]byte, error) {
+		return m.raw(ctx, client, target.proxyRoot(path), params)
+	}
+	body, proxyErr := target.answers(ctx, healthTimeout, viaProxy)
+	var wrongPath *pathRefused
+	switch {
+	case proxyErr == nil:
+		return TransportProxy, body, nil
+	case errors.As(proxyErr, &wrongPath):
+		// The proxy reached the Service; a port-forward would reach the same
+		// Service and be refused the same path.
+		return "", nil, proxyErr
+	case m.tunnels == nil:
+		return "", nil, fmt.Errorf("the API service proxy refused (%s) and no port-forward is configured", shortError(proxyErr))
 	}
 
 	// The console's own tunnel, to its own monitoring backend: reviewed as the
@@ -189,14 +272,67 @@ func (m *Metrics) probeTransport(ctx context.Context, name string, client *clust
 	// for every person (access.AsConsole).
 	tunnel, err := m.tunnels.Open(access.AsConsole(ctx), name, target.Namespace, target.Service, target.Port)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer tunnel.Close()
 
-	if _, err := httpGet(ctx, "http://"+tunnel.Addr()+endpointHealth, nil, healthTimeout); err != nil {
-		return "", err
+	viaForward := func(ctx context.Context, path string, params url.Values) ([]byte, error) {
+		return httpGet(ctx, "http://"+tunnel.Addr()+path, params, healthTimeout)
 	}
-	return TransportForward, nil
+	body, err = target.answers(ctx, healthTimeout, viaForward)
+	if err != nil {
+		return "", nil, err
+	}
+	return TransportForward, body, nil
+}
+
+// pathRefused is a Service that answers at its root and not under the
+// target's path: reached, and still not the Prometheus API that was named.
+type pathRefused struct {
+	path  string
+	cause error
+}
+
+func (p *pathRefused) Error() string {
+	return fmt.Sprintf("the Service answers, but not under %s: %s", p.path, shortError(p.cause))
+}
+
+func (p *pathRefused) Unwrap() error { return p.cause }
+
+// answers asks the health endpoint through get, each place in healthPaths with
+// a timeout of its own, so one that hangs leaves the next its time.
+//
+// Every Prometheus and VictoriaMetrics answers health at the root, whatever
+// the path: so where only the root answered, a query under the path confirms
+// the path, and a path with a typo in it (`/select/O/prometheus`) is reported
+// as one rather than as a Prometheus reached.
+func (p *PromTarget) answers(ctx context.Context, timeout time.Duration, get func(context.Context, string, url.Values) ([]byte, error)) ([]byte, error) {
+	var first error
+	for _, path := range p.healthPaths() {
+		body, err := askWithin(ctx, timeout, func(ctx context.Context) ([]byte, error) { return get(ctx, path, nil) })
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if path == endpointHealth && p.Path != "" {
+			_, err := askWithin(ctx, timeout, func(ctx context.Context) ([]byte, error) {
+				return get(ctx, p.Path+endpointQuery, url.Values{"query": {"1"}})
+			})
+			if err != nil {
+				return nil, &pathRefused{path: p.Path, cause: err}
+			}
+		}
+		return body, nil
+	}
+	return nil, first
+}
+
+func askWithin(ctx context.Context, timeout time.Duration, ask func(context.Context) ([]byte, error)) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return ask(ctx)
 }
 
 // Session is one way in to one cluster's Prometheus, held open across several
@@ -246,7 +382,7 @@ func (m *Metrics) OpenSession(ctx context.Context, name string) (*Session, error
 	if err != nil {
 		return nil, fmt.Errorf("reaching Prometheus on %s: %w", found.Cluster, err)
 	}
-	session.tunnel, session.base = tunnel, "http://"+tunnel.Addr()
+	session.tunnel, session.base = tunnel, "http://"+tunnel.Addr()+found.Prometheus.Path
 	return session, nil
 }
 

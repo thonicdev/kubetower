@@ -92,6 +92,9 @@ type Discovery struct {
 	Prometheus *PromTarget `json:"prometheus,omitempty"`
 	// Transport is one of the Transport* constants, set only for KindPrometheus.
 	Transport string `json:"transport,omitempty"`
+	// Engine is what answers the Prometheus API, one of the Engine* constants,
+	// set only for KindPrometheus: VictoriaMetrics serves the same API.
+	Engine string `json:"engine,omitempty"`
 	// Detail is one line saying which service answered, or what failed.
 	Detail    string    `json:"detail"`
 	CheckedAt time.Time `json:"checkedAt"`
@@ -251,6 +254,36 @@ var promSelectors = []string{
 	"operated-prometheus=true",
 }
 
+// vmSelector is a VictoriaMetrics Service that serves the Prometheus API: the
+// label that finds it, the ports the API may be on, and the path it is under.
+type vmSelector struct {
+	selector string
+	ports    []int
+	path     string
+}
+
+// vmSelectors are tried, in order, only where no Prometheus was found: a
+// cluster running both keeps Prometheus.
+//
+// Single-node first, then vmselect, which serves the API under a tenant's
+// path; tenant 0 is the default one. Each is listed as vm-operator labels its
+// Service (`vmsingle-<name>`, `vmselect-<name>`; the victoria-metrics-k8s-stack
+// chart goes through vm-operator) and as the victoria-metrics-single and
+// victoria-metrics-cluster charts do.
+var vmSelectors = []vmSelector{
+	// vm-operator publishes vmsingle on 8429, with 8428 kept as an alias.
+	{selector: "app.kubernetes.io/name=vmsingle", ports: []int{8428, 8429}},
+	{selector: "app.kubernetes.io/name=victoria-metrics-single", ports: []int{8428}},
+	{selector: "app.kubernetes.io/name=vmselect", ports: []int{8481}, path: vmselectPath},
+	{selector: "app.kubernetes.io/name=victoria-metrics-cluster,app.kubernetes.io/component=vmselect", ports: []int{8481}, path: vmselectPath},
+	// Older victoria-metrics-cluster charts label vmselect under the plain
+	// `app` key only.
+	{selector: "app=vmselect", ports: []int{8481}, path: vmselectPath},
+}
+
+// vmselectPath is where vmselect serves tenant 0's Prometheus API.
+const vmselectPath = "/select/0/prometheus"
+
 // Discover works out what a cluster has, from cache unless force says otherwise.
 // It never returns an error: a failure to reach the cluster is one of the
 // classified answers.
@@ -380,7 +413,15 @@ func (m *Metrics) probe(ctx context.Context, name string) *Discovery {
 	target, selector, refused := look.target, look.via, look.refused
 	switch {
 	case target != nil:
-		transport, err := m.probeTransport(ctx, name, client, target)
+		transport, health, err := m.probeTransport(ctx, name, client, target)
+		var wrongPath *pathRefused
+		if errors.As(err, &wrongPath) {
+			return &Discovery{
+				Kind:       KindUnreachable,
+				Prometheus: target,
+				Detail:     fmt.Sprintf("service %s found via %s: %s", target.Address(), selector, shortError(err)),
+			}
+		}
 		if err != nil {
 			// Found but unreachable is not an absence. The line names the
 			// transports tried, so the operator knows where to look.
@@ -391,12 +432,17 @@ func (m *Metrics) probe(ctx context.Context, name string) *Discovery {
 					target.Address(), selector, shortError(err)),
 			}
 		}
+		engine := engineOf(health, look.engine)
+		detail := fmt.Sprintf("service %s found via %s, reached by %s", target.Address(), selector, transport)
+		if engine == EngineVictoriaMetrics {
+			detail += ", answered by VictoriaMetrics"
+		}
 		return &Discovery{
 			Kind:       KindPrometheus,
 			Prometheus: target,
 			Transport:  transport,
-			Detail: fmt.Sprintf("service %s found via %s, reached by %s",
-				target.Address(), selector, transport),
+			Engine:     engine,
+			Detail:     detail,
 		}
 
 	case refused != nil && refused.total:
@@ -455,9 +501,10 @@ func (m *Metrics) probe(ctx context.Context, name string) *Discovery {
 // the covering.
 var promQueries = []string{
 	"headlamp-prometheus=true",
-	// Covers both `app.kubernetes.io/name=prometheus` selectors.
-	"app.kubernetes.io/name=prometheus",
-	"app in (prometheus,kube-prometheus-stack-prometheus)",
+	// Covers both `app.kubernetes.io/name=prometheus` selectors, and every
+	// VictoriaMetrics one: one list rather than one more per probe.
+	"app.kubernetes.io/name in (prometheus,vmsingle,vmselect,victoria-metrics-single,victoria-metrics-cluster)",
+	"app in (prometheus,kube-prometheus-stack-prometheus,vmselect)",
 	"operated-prometheus=true",
 }
 
@@ -474,6 +521,9 @@ type lookup struct {
 	// unchosen is a sentence saying why no Prometheus was chosen on a cluster
 	// that may run one. See Discovery.unchosen.
 	unchosen string
+	// engine is what the chosen Service is expected to be, one of the Engine*
+	// constants; the health answer has the last word (engineOf).
+	engine string
 }
 
 // lookForPrometheus is configuration under the server profile and discovery
@@ -524,13 +574,52 @@ func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lo
 		candidates = append(candidates, list.Items...)
 	}
 
-	// A Service matching two selectors is reported under the first. Every
-	// candidate is walked, because the refusal reads all their namespaces; one
-	// with no port worth querying (an exporter on 8080) does not count.
-	var chosen lookup
-	namespaces := map[string]bool{}
+	// Prometheus first; VictoriaMetrics only where no Prometheus Service is
+	// there, so a VictoriaMetrics Service never makes a cluster with one
+	// Prometheus ambiguous.
+	if chosen, found := choose(candidates, promChoices()); found {
+		return chosen
+	}
+	chosen, _ := choose(candidates, vmChoices())
+	return chosen
+}
+
+func promChoices() []choice {
+	out := make([]choice, 0, len(promSelectors))
 	for _, selector := range promSelectors {
-		parsed, err := labels.Parse(selector)
+		out = append(out, choice{selector: selector, port: prometheusPort, engine: EnginePrometheus})
+	}
+	return out
+}
+
+func vmChoices() []choice {
+	out := make([]choice, 0, len(vmSelectors))
+	for _, s := range vmSelectors {
+		out = append(out, choice{selector: s.selector, port: portFor(s.ports...), path: s.path, engine: EngineVictoriaMetrics})
+	}
+	return out
+}
+
+// choice is one selector findPrometheus tries: the label, which port of a
+// matching Service is the API's, and the path it is under.
+type choice struct {
+	selector string
+	port     func(*corev1.Service) int
+	path     string
+	engine   string
+}
+
+// choose applies choices in order to candidates. found says some candidate
+// matched with a usable port, whether or not one was chosen: candidates in
+// several namespaces are refused (notChosen).
+//
+// A Service matching two selectors is reported under the first. Every
+// candidate is walked, because the refusal reads all their namespaces; one
+// with no port worth querying (an exporter on 8080) does not count.
+func choose(candidates []corev1.Service, choices []choice) (chosen lookup, found bool) {
+	namespaces := map[string]bool{}
+	for _, c := range choices {
+		parsed, err := labels.Parse(c.selector)
 		if err != nil {
 			// Pinned parseable by a test; skipping keeps one typo from hiding the
 			// rest.
@@ -541,7 +630,7 @@ func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lo
 			if !parsed.Matches(labels.Set(svc.Labels)) {
 				continue
 			}
-			port := prometheusPort(svc)
+			port := c.port(svc)
 			if port == 0 {
 				continue
 			}
@@ -551,14 +640,31 @@ func (m *Metrics) findPrometheus(ctx context.Context, client *cluster.Client) lo
 					Namespace: svc.Namespace,
 					Service:   svc.Name,
 					Port:      port,
-				}, via: selector}
+					Path:      c.path,
+				}, via: c.selector, engine: c.engine}
 			}
 		}
 	}
 	if len(namespaces) > 1 {
-		return lookup{unchosen: notChosen(namespaces)}
+		return lookup{unchosen: notChosen(namespaces)}, true
 	}
-	return chosen
+	return chosen, len(namespaces) > 0
+}
+
+// portFor finds the first Service port that is one of want, or forwards to
+// one.
+func portFor(want ...int) func(*corev1.Service) int {
+	return func(svc *corev1.Service) int {
+		for _, port := range svc.Spec.Ports {
+			for _, w := range want {
+				if int(port.Port) == w ||
+					port.TargetPort.Type == intstr.Int && int(port.TargetPort.IntVal) == w {
+					return int(port.Port)
+				}
+			}
+		}
+		return 0
+	}
 }
 
 // prometheusPort is the first port of svc worth querying, or 0.

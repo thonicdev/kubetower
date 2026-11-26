@@ -381,7 +381,7 @@ verb and the same held answers:
   would be drawn from their pod - which could hide saturation or an attack in
   progress - and every query, naming the pods and nodes people were looking at,
   would go to it. So under `--incluster` the target is `KT_PROMETHEUS_SERVICE`
-  (`namespace/service:port`), set by whoever installs the console, and
+  (`namespace/service:port[/path]`), set by whoever installs the console, and
   **nothing is discovered**: unset is no Prometheus, never a fall back to
   labels, and a configured target that does not answer is reported unreachable
   under its own name rather than replaced (`internal/launch/prometheus.go`,

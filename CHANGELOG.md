@@ -21,6 +21,13 @@ dialog draws it first, as a New extra line.
   nothing open is interrupted, or, set to At once, as soon as no terminal and
   no port-forward is open. A .deb or .rpm, which asks for a password, stops at
   Ready with Install. Off, Download and Install stay by hand (#122).
+- **VictoriaMetrics as a metrics source.** Discovery finds vmsingle and
+  vmselect where no Prometheus runs, as vm-operator, the
+  victoria-metrics-k8s-stack chart and the victoria-metrics-single and
+  victoria-metrics-cluster charts install them, and `KT_PROMETHEUS_SERVICE`
+  takes a path, `vm/vmselect-main:8481/select/0/prometheus`. VictoriaMetrics
+  answers every console query; rate and increase can differ slightly at
+  window edges (#129).
 
 ### Changed
 
