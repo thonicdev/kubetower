@@ -11,6 +11,8 @@ Changed: no failure of the WebView2 runtime ends the process any more.
   instead of `log.Fatal`.
 - `webview.go`: a settings read or write that fails destroys the window and
   `NewWithOptions` returns nil, as for a failed `Embed`.
-- `cmd/` (the demo) and `.github/` (upstream's own CI) are left out.
+- `cmd/` (the demo) and `.github/` (upstream's own CI) are left out, and every
+  file is gofmt'd (old `// +build` lines gain `//go:build`), as KubeTower's CI
+  asks of the whole tree.
 
 The same change is offered upstream; this copy goes once a release carries it.
