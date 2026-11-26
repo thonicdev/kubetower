@@ -28,7 +28,7 @@ import {
 } from './TileParts';
 import { envFoldKey, useEnvFold } from './envFolds';
 import { TABLE } from '../../components/tableLook';
-import { ImageRef } from '../../components/ImageRef';
+import { ImageLine } from '../../components/ImageRef';
 
 /**
  * What a pod is made of.
@@ -270,14 +270,17 @@ function One({
     >
       {/* One line where it fits. Where it does not, the pill goes to a line of
           its own rather than past the panel's edge: it holds the restarts, and
-          no width of name, image or font may cut them or widen the drawer. The
-          image keeps eight rem before it does, cut, whole in its title. */}
+          no width of name or font may cut them or widen the drawer. The image
+          has the line under it (#136), so its repository is never squeezed
+          out by the name and the pill. */}
       <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         {name}
-        <ImageRef image={container.image} className="flex-1 basis-32" />
-        {pull}
-        <StatusPill status={container.status} />
+        <span className="ml-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {pull}
+          <StatusPill status={container.status} />
+        </span>
       </header>
+      <ImageLine image={container.image} />
       <StatusLines status={container.status} />
 
       <Section
