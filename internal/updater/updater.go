@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,10 @@ var (
 	ErrUnsupported = errors.New("this installation cannot be updated from the console")
 	// ErrBusy: a download or an install is already running.
 	ErrBusy = errors.New("an update is already in progress")
+	// ErrHelperAlive: a helper that could not be stopped may still install when
+	// KubeTower exits; no download or install starts beside it, for a new one
+	// would remove the files it is to move into place (#154).
+	ErrHelperAlive = errors.New("an earlier update's helper is still waiting; quit KubeTower and start it again first")
 	// ErrWhen: when an automatic update installs is neither on quit nor now.
 	ErrWhen = errors.New(`when must be "quit" or "now"`)
 	// ErrNotReady: Install was asked before a verified download.
@@ -125,15 +130,50 @@ var installers = map[Kind]Installer{}
 // start. Filled by the platform files.
 var sweepers = map[Kind]func(path string){}
 
-// sweepBeside removes the entries beside path that match the patterns: the
-// temporary names an install writes before its rename.
+// sweepAge is how old a leftover must be before the start-up sweep removes
+// it: younger, it may be the copy another instance's install is writing now
+// (#154), and an install never takes this long.
+var sweepAge = time.Hour
+
+// sweepBeside removes the entries beside path that match the patterns and are
+// older than sweepAge: the temporary names an install writes before its
+// rename, left by one cut short.
 func sweepBeside(path string, patterns ...string) {
 	for _, pattern := range patterns {
+		prefix, _, _ := strings.Cut(pattern, "*")
 		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
 		for _, one := range found {
-			_ = os.RemoveAll(one)
+			if old, ok := oldEnough(one, prefix); ok && old {
+				_ = os.RemoveAll(one)
+			}
 		}
 	}
+}
+
+// stampedTemp makes a folder like os.MkdirTemp, its creation time in its
+// name after prefix (`<prefix><unix seconds>-<random>`). On macOS a folder's
+// own mtime is not when it was made: a mount point shows the mounted volume's
+// root, as old as the release, and ditto keeps the source's times (#154).
+func stampedTemp(dir, prefix string) (string, error) {
+	return os.MkdirTemp(dir, prefix+strconv.FormatInt(time.Now().Unix(), 10)+"-")
+}
+
+// oldEnough says whether path, a leftover named after prefix, is at least
+// sweepAge old: by the time stampedTemp wrote in its name, or by its mtime
+// for a name with none (a file, or a folder an older release made). ok is
+// false when the age cannot be read.
+func oldEnough(path, prefix string) (old, ok bool) {
+	rest := strings.TrimPrefix(filepath.Base(path), prefix)
+	if stamp, _, found := strings.Cut(rest, "-"); found {
+		if secs, err := strconv.ParseInt(stamp, 10, 64); err == nil && secs > 0 {
+			return time.Since(time.Unix(secs, 0)) >= sweepAge, true
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, false
+	}
+	return time.Since(info.ModTime()) >= sweepAge, true
 }
 
 // installable says whether a kind's installer can run on this machine, for
@@ -362,6 +402,10 @@ func (u *Updater) Download() (Status, error) {
 		return u.status, ErrUnsupported
 	case u.status.Phase == Downloading || u.status.Phase == Verifying || u.status.Phase == Installing:
 		return u.status, ErrBusy
+	case u.status.Phase == Failed && u.status.Reason == errHelperAlive.Error():
+		// forget would remove update/install-*, which that helper may still
+		// move into place when KubeTower exits (#154).
+		return u.status, ErrHelperAlive
 	}
 	u.forget()
 	u.status.Phase = Downloading

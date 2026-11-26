@@ -544,16 +544,16 @@ func EnabledFromEnv() bool {
 	return true
 }
 
-// newer reports whether `latest` is a later release than `running`.
-//
-// Its own parser rather than statefile's: GitHub may still name an early
-// `v`-prefixed tag, while a state stamp never has one. The shared rule is that
-// anything that is not three numbers compares as no opinion.
 // IsNewer says whether the release latest is newer than the running version,
 // as the check decides it: false for any pair that cannot be ordered, such as
 // a development build. internal/updater asks it again before installing.
 func IsNewer(latest, running string) bool { return newer(latest, running) }
 
+// newer reports whether `latest` is a later release than `running`.
+//
+// Its own parser rather than statefile's: GitHub may still name an early
+// `v`-prefixed tag, while a state stamp never has one. The shared rule is that
+// anything that is not three numbers compares as no opinion.
 func newer(latest, running string) bool {
 	left, ok := triple(latest)
 	if !ok {

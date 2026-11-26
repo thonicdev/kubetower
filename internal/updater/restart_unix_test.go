@@ -8,8 +8,8 @@ import (
 )
 
 func TestTheUnixRestartStopsThroughTheConsolesOwnShutdown(t *testing.T) {
-	was := stopper
-	t.Cleanup(func() { stopper = was })
+	was := stopper.Load()
+	t.Cleanup(func() { stopper.Store(was) })
 	stopped := 0
 	SetStop(func() { stopped++ })
 	// With a stop set, no SIGTERM: this test process would end on one.

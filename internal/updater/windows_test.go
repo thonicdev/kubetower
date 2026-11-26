@@ -152,11 +152,11 @@ func TestNoHelperStartsWithoutAWayToStop(t *testing.T) {
 }
 
 func TestSetStopIsTheWayTheHelperStops(t *testing.T) {
-	was := stopper
-	t.Cleanup(func() { stopper = was })
+	was := stopper.Load()
+	t.Cleanup(func() { stopper.Store(was) })
 	called := false
 	SetStop(func() { called = true })
-	stopper()
+	stopFunc()()
 	if !called {
 		t.Fatal("SetStop did not set the stop")
 	}

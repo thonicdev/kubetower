@@ -38,6 +38,15 @@ dialog draws it first, as a New extra line.
   namespaces already were, the detail naming both; in one namespace,
   Prometheus is still chosen. The source can be set in Settings › General
   (#133).
+- **Updates: no install races left with automatic updates on.** A second
+  KubeTower started during an install no longer removes the copy the first
+  one is writing: the start-up sweep keeps a leftover younger than an hour.
+  What a quit-time install cut short is swept on Linux too. No download
+  removes the files of an earlier helper still waiting to install. A
+  read-only filesystem says Not writable instead of failing, a locked rpm
+  database no longer holds the start (nor lets a package be replaced as a
+  tar.gz), and an update can no longer be asked
+  to stop KubeTower before the stop is wired (#154).
 
 ### Fixed
 
