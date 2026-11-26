@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Failure, Pill, btnSecondary } from '@kubetower/ui';
+import { Failure, NoMetrics, Pill, btnSecondary } from '@kubetower/ui';
 
-import { ORPHAN_HINTS, ORPHAN_WORDS, StorageProblem, bytes, type Fill, type FillSource, type Orphan, type Section, type SnapshotSection } from './data';
+import { ORPHAN_HINTS, ORPHAN_WORDS, StorageProblem, VIA_WORDS, bytes, type Fill, type FillSource, type Orphan, type Section, type SnapshotSection } from './data';
 
 /** A level's fill, written out whole so Tailwind finds each class. */
 export const LEVEL_FILL = { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad' } as const;
@@ -21,9 +21,11 @@ export function FillBar({ fill, wide = false }: { fill: Fill; wide?: boolean }):
         </span>
       );
     case 'unread':
+      // Mounted, and neither the metrics backend nor its kubelet gave a
+      // figure: the console's quiet No metrics available (#91), never a 0.
       return (
-        <span data-fill="unread" className="text-xs text-warn" title="Its kubelet gave no figure">
-          Unread
+        <span data-fill="unread">
+          <NoMetrics variant="badge" detail="Neither the metrics backend nor the kubelet gave a figure for this claim" />
         </span>
       );
     case 'shared':
@@ -67,11 +69,36 @@ export function OrphanPill({ orphan }: { orphan: Orphan | undefined }): ReactNod
   );
 }
 
-/** Where the fill figures come from, when they are not all there: one line. */
+/** What gave the fill figures, as one badge: the metrics backend, the
+ *  kubelets, or both (#91). Nothing when nothing gave one. */
+export function FillVia({ fill }: { fill: FillSource }): ReactNode {
+  const via = fill.via ?? [];
+  if (via.length === 0) return null;
+  const words = via.map((one) => VIA_WORDS[one] ?? one);
+  return (
+    <span data-fill-via={via.join(',')}>
+      <Pill neutral="muted" title={`Fill read from ${words.join(' and ')}`}>
+        {words.join(' + ')}
+      </Pill>
+    </span>
+  );
+}
+
+/** Where the fill figures come from, when they are not all there: one line.
+ *  None at all reads as the console's quiet No metrics available, the reason
+ *  and what grants it on hover. */
 export function SourceLine({ fill }: { fill: FillSource }): ReactNode {
   if (fill.state === 'read' || fill.state === 'none' || fill.message === undefined) return null;
+  if (fill.state === 'unreadable') {
+    const detail = [fill.message, fill.detail].filter((part) => part !== undefined && part !== '').join('\n');
+    return (
+      <span data-source="unreadable">
+        <NoMetrics detail={detail} />
+      </span>
+    );
+  }
   return (
-    <p role="status" data-source={fill.state} className={`text-xs ${fill.state === 'unreadable' ? 'text-bad' : 'text-warn'}`} title={fill.detail}>
+    <p role="status" data-source={fill.state} className="text-xs text-warn" title={fill.detail}>
       {fill.message}
     </p>
   );

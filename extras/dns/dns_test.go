@@ -52,6 +52,10 @@ func (h *fakeHost) DNSWindow(_ *http.Request, _ string, span extension.DNSSpan) 
 	return h.answer, h.err
 }
 
+func (h *fakeHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 func get(t *testing.T, h extension.Host, query string) (*httptest.ResponseRecorder, View) {
 	t.Helper()
 	mux := http.NewServeMux()
