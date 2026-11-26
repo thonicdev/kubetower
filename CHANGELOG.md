@@ -23,6 +23,12 @@ dialog draws it first, as a New extra line.
   names what gave the figures, and a page where nothing could be read says No
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
+- **Python in the Runtime Inspector.** A Python pod's tab lists its Python
+  processes, read out of /proc with nothing installed in the pod: the
+  interpreter's version, memory and peak, threads and start time. Where the
+  application serves prometheus_client's metrics, it adds the version, the
+  garbage collector per generation and the process's memory, CPU and open
+  files (#144).
 
 ### Fixed
 
