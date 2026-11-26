@@ -174,9 +174,11 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  * never wholly denied: a deny on it is one member's. An "others" holding an
  * end (a CIDR, world), or whose ends were not counted, is never isolated.
  *
- * A namespace to itself is inside when its own rules pass each isolated side:
- * an ingress rule between its pods does not let them out of a namespace
- * isolated on egress.
+ * A namespace to itself is read from its own rules as the engine reads them
+ * (`self`): a deny wins, a baseline's deny where nothing isolates that side,
+ * and its pods reach each other when each isolated side has an allow of its
+ * own. An ingress rule between its pods does not let them out of a namespace
+ * isolated on egress, and a baseline's allow never lets past a NetworkPolicy.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   const mixed = from.kind === 'others' || to.kind === 'others';
@@ -186,10 +188,13 @@ function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut
   // drops a merged edge from "others" to itself): nothing to conclude.
   if (from.kind === 'others' && to.kind === 'others') return 'folded';
   if (!mixed && from.id === to.id && to.internal > 0) {
-    if (to.internalIn === undefined || to.internalOut === undefined) return 'inside';
-    const selfIn = !isolatedIn(to) || to.internalIn > 0 || cell?.allowIn === true;
-    const selfOut = !isolatedOut(from) || to.internalOut > 0 || cell?.allowOut === true;
-    if (selfIn && selfOut) return 'inside';
+    const own = to.self;
+    if (own === undefined) return 'inside';
+    if (own.deny > 0 || (own.baselineDenyIn > 0 && !isolatedIn(to)) || (own.baselineDenyOut > 0 && !isolatedOut(to))) return 'denied';
+    const selfIn = !isolatedIn(to) || own.allowIn > 0 || cell?.allowIn === true;
+    const selfOut = !isolatedOut(from) || own.allowOut > 0 || cell?.allowOut === true;
+    if (selfIn && selfOut) return own.allowIn + own.allowOut > 0 || cell?.allow.length ? 'inside' : 'open';
+    if (own.unevaluated > 0) return 'unevaluated';
     return selfIn ? 'refusedOut' : 'refused';
   }
   const inOK = !isolatedIn(to) || cell?.allowIn === true;

@@ -98,7 +98,7 @@ func TestTheGraphDrawsTheRules(t *testing.T) {
 		t.Fatalf("cluster edges: %+v", cluster.Edges)
 	}
 	for _, n := range cluster.Nodes {
-		if n.ID == "ns:shop" && (n.Internal != 1 || n.InternalIn != 1 || n.InternalOut != 0) {
+		if n.ID == "ns:shop" && (n.Internal != 1 || n.Self == nil || *n.Self != (SelfRules{AllowIn: 1})) {
 			t.Errorf("shop's rule between its own pods is drawn on its node, got %+v", n)
 		}
 	}

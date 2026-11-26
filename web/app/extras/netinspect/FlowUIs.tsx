@@ -60,17 +60,19 @@ function useFocusOnce(
   list: readonly Forward[] | undefined,
   reading: boolean,
   link: { current: HTMLAnchorElement | null },
-  done: () => void,
+  settle: (wanted: null) => void,
 ): void {
+  // `settle` is a state setter, the same on every render, so the effect runs
+  // on what it watches only.
   useEffect(() => {
     if (wanted === null) return;
     if (drawn === wanted && link.current !== null) {
       link.current.focus();
-      done();
+      settle(null);
     } else if (!reading && list !== undefined) {
-      done();
+      settle(null);
     }
-  }, [wanted, drawn, list, reading, link, done]);
+  }, [wanted, drawn, list, reading, link, settle]);
 }
 
 function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' | 'whisker'; label: string; ui: FlowUI; cluster: string; namespace: string }): ReactNode {
@@ -89,7 +91,7 @@ function FlowUIButton({ kind, label, ui, cluster, namespace }: { kind: 'hubble' 
     tunnel === undefined
       ? undefined
       : live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
-  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, () => setFocusFor(null));
+  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, setFocusFor);
   const href = ui.url === undefined ? undefined : externalHref(configuredHref(kind, ui.url, namespace));
   if (ui.url !== undefined) {
     if (href === undefined) return null;
@@ -186,7 +188,7 @@ function FlowUIWindowButton({ kind, label, tunnel, cluster, namespace }: { kind:
   const link = useRef<HTMLAnchorElement>(null);
   const live = useQuery(forwardsQuery(true));
   const forward = live.data?.find((f) => f.cluster === cluster && f.namespace === tunnel.namespace && f.service === tunnel.service && f.remotePort === tunnel.port);
-  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, () => setFocusFor(null));
+  useFocusOnce(focusFor, forward?.id, live.data, live.isFetching, link, setFocusFor);
   const suffix = tunnelSuffix(kind, namespace);
 
   /** The live forward, or one opened now (`opened`). */

@@ -1,6 +1,7 @@
 package netinspect
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -239,5 +240,33 @@ func TestTheGraphMarksTheBaselinesRules(t *testing.T) {
 	}
 	if baseline != 1 || plain != 1 {
 		t.Errorf("ops to shop: %d baseline edges, %d others", baseline, plain)
+	}
+}
+
+// A namespace's rules between its own pods are sorted as the engine reads
+// them: a baseline's allow under a NetworkPolicy's default deny lets nothing
+// in, and an AdminNetworkPolicy's deny wins.
+func TestSelfRulesAreSortedAsTheEngineReadsThem(t *testing.T) {
+	shopOf := func(h *fakeHost) *Node {
+		for _, n := range overviewOf(t, h, "").Graph.Nodes {
+			if n.ID == "ns:shop" {
+				return &n
+			}
+		}
+		return nil
+	}
+	selfIngress := "ingress:\n  - name: own\n    action: %s\n    from:\n      - namespaces: {matchLabels: {team: shop}}\n"
+	h := adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Allow")))
+	h.policy(t, defaultDenyIngress("shop"))
+	if n := shopOf(h); n == nil || n.Self == nil || *n.Self != (SelfRules{}) {
+		t.Errorf("a baseline allow under a default deny: %+v", n)
+	}
+	h = adminShop(t, anp("no-self", 10, "subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Deny")))
+	if n := shopOf(h); n == nil || n.Self == nil || n.Self.Deny != 1 || n.Self.AllowIn != 0 {
+		t.Errorf("an admin deny of shop to shop: %+v", n)
+	}
+	h = adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Deny")))
+	if n := shopOf(h); n == nil || n.Self == nil || n.Self.BaselineDenyIn != 1 || n.Self.Deny != 0 {
+		t.Errorf("a baseline deny of shop to shop: %+v", n)
 	}
 }

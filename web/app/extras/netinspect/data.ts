@@ -110,6 +110,18 @@ export interface CiliumRead {
   notEvaluated: string[];
 }
 
+/** A node's rules between its own pods, by what they do (`view.go`, SelfRules).
+ *  A baseline's deny applies only on a side no NetworkPolicy isolates; a
+ *  baseline's allow is not counted, as it never lets past one. */
+export interface SelfRules {
+  allowIn: number;
+  allowOut: number;
+  deny: number;
+  baselineDenyIn: number;
+  baselineDenyOut: number;
+  unevaluated: number;
+}
+
 export interface GraphNode {
   id: string;
   label: string;
@@ -119,9 +131,8 @@ export interface GraphNode {
   isolatedIn: number;
   isolatedOut: number;
   internal: number;
-  /** internal split by the side whose policy says it (absent from an older server). */
-  internalIn?: number;
-  internalOut?: number;
+  /** internal sorted as the policy engine reads it (absent from an older server). */
+  self?: SelfRules;
   /** On "others": how many of the nodes it holds are not namespaces. */
   ends?: number;
 }
