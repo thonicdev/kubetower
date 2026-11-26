@@ -782,7 +782,7 @@ export const CNPG_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
     replicas: [{ name: 'orders-2', state: 'streaming' }, { name: 'orders-3', state: 'streaming' }],
   },
   [`${base('cnpg')}clusters/shop/orders/tables`]: {
-    database: 'app', verified: true, schemas: ['billing', 'public'], complete: true,
+    database: 'app', databases: ['app', 'reporting'], verified: true, schemas: ['billing', 'public'], complete: true,
     tables: [
       { schema: 'billing', name: 'invoices', kind: 'table', rows: 1_840_220, bytes: 1_073_741_824 },
       { schema: 'billing', name: 'monthly_totals', kind: 'materialized', rows: 36, bytes: 16_384 },
@@ -793,15 +793,20 @@ export const CNPG_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
     ],
   },
   [`${base('cnpg')}clusters/shop/orders/tables/public/orders`]: {
-    schema: 'public', table: 'orders', verified: true, columnsTotal: 6, more: true,
+    schema: 'public', table: 'orders', verified: true, columnsTotal: 8, more: true, key: 'primary', next: 'opaque-cursor-1', start: 0,
     columns: [
-      { name: 'id', type: 'bigint' }, { name: 'customer_id', type: 'bigint' }, { name: 'status', type: 'text' },
-      { name: 'total', type: 'numeric(12,2)' }, { name: 'placed_at', type: 'timestamp with time zone' }, { name: 'notes', type: 'jsonb' },
+      { name: 'id', type: 'bigint', primary: true }, { name: 'customer_id', type: 'bigint' }, { name: 'status', type: 'text' },
+      { name: 'paid', type: 'boolean' }, { name: 'total', type: 'numeric(12,2)' }, { name: 'placed_at', type: 'timestamp with time zone' },
+      { name: 'details', type: 'jsonb' }, { name: 'receipt', type: 'bytea' },
     ],
-    rows: Array.from({ length: 12 }, (_, i) => [
-      { text: String(2_402_118 - i) }, { text: String(48_000 + ((i * 37) % 310)) }, { text: ['paid', 'shipped', 'pending', 'paid'][i % 4] },
-      { text: (19.9 + i * 13.37).toFixed(2) }, { text: `2026-11-11 ${String(9 + (i % 10)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00+00` },
-      i % 3 === 0 ? { null: true } : { text: `{"gift": ${String(i % 2 === 0)}, "channel": "web"}` },
+    rows: Array.from({ length: 14 }, (_, i) => [
+      { text: String(2_402_118 - i) }, { text: String(48_000 + ((i * 37) % 310)) }, { text: ['paid', 'shipped', 'pending', 'paid', 'refunded'][i % 5] },
+      { text: i % 5 === 2 ? 'f' : 't' }, { text: (19.9 + i * 13.37).toFixed(2) },
+      { text: `2026-11-11 ${String(9 + (i % 10)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00+00` },
+      i % 3 === 0
+        ? { null: true }
+        : { text: `{"gift": ${String(i % 2 === 0)}, "channel": "web", "lines": [{"sku": "SKU-${String(1000 + i)}", "qty": ${String(1 + (i % 3))}}]}` },
+      i % 4 === 1 ? { null: true } : { bytes: 18_432 + i * 211, hex: '255044462d312e370a25e2e3cfd30a31' },
     ]),
   },
 };

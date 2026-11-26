@@ -1,0 +1,263 @@
+package cnpg
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// A table's pages: by its primary key, by ctid, or by offset; the cursor
+// that asks the next one; the database a request names.
+
+type answers = map[string]func([]string, func([]column, [][]byte) error) error
+
+// numbered is n rows of one column, 1 to n, and the key's text after it.
+func numbered(n int) [][]string {
+	rows := make([][]string, n)
+	for i := range rows {
+		v := strconv.Itoa(i + 1)
+		rows[i] = []string{v, v}
+	}
+	return rows
+}
+
+func pageOf(t *testing.T, db *fakeDB, path, body string) Rows {
+	t.Helper()
+	rec := servePage(t, withDB(db, nil), sqlHost(), path, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d: %s", rec.Code, rec.Body.String())
+	}
+	return decode[Rows](t, rec)
+}
+
+func lastAsked(db *fakeDB) string { return db.asked[len(db.asked)-1] }
+
+func TestPagesFollowThePrimaryKey(t *testing.T) {
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf([]string{"region", "text"}, []string{"id", "bigint"}),
+		sqlColumns:    rowsOf([]string{"id", "bigint", "false"}, []string{"note", "text", "false"}, []string{"region", "text", "false"}),
+		sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
+			for i := 1; i <= MaxRows+1; i++ {
+				v := strconv.Itoa(i)
+				if err := each(nil, [][]byte{[]byte(v), []byte("n"), []byte("eu"), []byte("eu"), []byte(v)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}}
+	first := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/orders", `{}`)
+	if first.Key != keyPrimary || !first.More || first.Next == "" || first.Start != 0 || len(first.Rows) != MaxRows {
+		t.Fatalf("first page: key %q more %v next %q start %d rows %d", first.Key, first.More, first.Next, first.Start, len(first.Rows))
+	}
+	if !first.Columns[0].Primary || first.Columns[1].Primary || !first.Columns[2].Primary {
+		t.Errorf("key columns %+v", first.Columns)
+	}
+	if len(first.Rows[0]) != 3 {
+		t.Errorf("the key's own text is a cell: %+v", first.Rows[0])
+	}
+	want := `SELECT left(("id")::text, 513), left(("note")::text, 513), left(("region")::text, 513), ("region")::text, ("id")::text FROM "public"."orders" ORDER BY "public"."orders"."region", "public"."orders"."id" LIMIT 101 `
+	if lastAsked(db) != want {
+		t.Errorf("statement\n%s\nwant\n%s", lastAsked(db), want)
+	}
+
+	second := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/orders", `{"cursor":"`+first.Next+`"}`)
+	want = `SELECT left(("id")::text, 513), left(("note")::text, 513), left(("region")::text, 513), ("region")::text, ("id")::text FROM "public"."orders" WHERE ("public"."orders"."region", "public"."orders"."id") > ($1::text, $2::bigint) ORDER BY "public"."orders"."region", "public"."orders"."id" LIMIT 101 eu,100`
+	if lastAsked(db) != want {
+		t.Errorf("statement\n%s\nwant\n%s", lastAsked(db), want)
+	}
+	if second.Start != MaxRows {
+		t.Errorf("second page starts at %d", second.Start)
+	}
+}
+
+func TestATableWithoutAKeyPagesByCtid(t *testing.T) {
+	for _, relkind := range []string{"r", "m"} {
+		db := &fakeDB{answers: answers{
+			sqlTableOID:   rowsOf([]string{"16384", relkind}),
+			sqlPrimaryKey: rowsOf(),
+			sqlColumns:    rowsOf([]string{"n", "integer", "false"}),
+			sqlRowsPrefix: rowsOf(append(numbered(MaxRows), []string{"0", "(9,9)"})...),
+		}}
+		first := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/log", "")
+		if first.Key != keyCtid || first.Next == "" {
+			t.Fatalf("%s: key %q next %q", relkind, first.Key, first.Next)
+		}
+		if !strings.HasSuffix(strings.TrimSpace(lastAsked(db)), `, ctid::text FROM "public"."log" ORDER BY "public"."log".ctid LIMIT 101`) {
+			t.Errorf("%s: %s", relkind, lastAsked(db))
+		}
+		pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/log", `{"cursor":"`+first.Next+`"}`)
+		if !strings.HasSuffix(lastAsked(db), ` WHERE "public"."log".ctid > $1::tid ORDER BY "public"."log".ctid LIMIT 101 100`) {
+			t.Errorf("%s: %s", relkind, lastAsked(db))
+		}
+	}
+}
+
+func TestAViewPagesByOffsetUpToItsCeiling(t *testing.T) {
+	for _, relkind := range []string{"v", "f", "p"} {
+		db := &fakeDB{answers: answers{
+			sqlTableOID:   rowsOf([]string{"16384", relkind}),
+			sqlPrimaryKey: rowsOf(),
+			sqlColumns:    rowsOf([]string{"n", "integer", "false"}),
+			sqlRowsPrefix: rowsOf(append(numbered(MaxRows), []string{"0"})...),
+		}}
+		first := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/v", "")
+		if first.Key != keyOffset || first.Next == "" || strings.Contains(lastAsked(db), "OFFSET") || strings.Contains(lastAsked(db), "ORDER BY") {
+			t.Fatalf("%s: key %q next %q, %s", relkind, first.Key, first.Next, lastAsked(db))
+		}
+		second := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/v", `{"cursor":"`+first.Next+`"}`)
+		if !strings.HasSuffix(strings.TrimSpace(lastAsked(db)), " LIMIT 101 OFFSET 100") || second.Start != 100 {
+			t.Errorf("%s: %s start %d", relkind, lastAsked(db), second.Start)
+		}
+	}
+	// The page that reaches the ceiling has no next.
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "v"}),
+		sqlColumns:    rowsOf([]string{"n", "integer", "false"}),
+		sqlPrimaryKey: rowsOf(),
+		sqlRowsPrefix: rowsOf(append(numbered(MaxRows), []string{"0"})...),
+	}}
+	last := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/v", `{"cursor":"`+encodeCursor(pageCursor{Key: keyOffset, Start: maxOffset - MaxRows})+`"}`)
+	if !last.More || last.Next != "" {
+		t.Errorf("at the ceiling: more %v next %q", last.More, last.Next)
+	}
+}
+
+func TestTheLastPageHasNoNext(t *testing.T) {
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf([]string{"n", "integer"}),
+		sqlColumns:    rowsOf([]string{"n", "integer", "false"}),
+		sqlRowsPrefix: rowsOf(numbered(MaxRows)...),
+	}}
+	got := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/t", "")
+	if got.More || got.Next != "" || len(got.Rows) != MaxRows {
+		t.Errorf("more %v next %q rows %d", got.More, got.Next, len(got.Rows))
+	}
+}
+
+// A key too long to send back ends the paging rather than growing a request.
+func TestAKeyTooLongForACursorEndsThePaging(t *testing.T) {
+	long := strings.Repeat("k", maxCursor)
+	db := &fakeDB{answers: answers{
+		sqlTableOID:   rowsOf([]string{"16384", "r"}),
+		sqlPrimaryKey: rowsOf([]string{"k", "text"}),
+		sqlColumns:    rowsOf([]string{"k", "text", "false"}),
+		sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
+			for i := 0; i <= MaxRows; i++ {
+				if err := each(nil, [][]byte{[]byte("k"), []byte(long)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}}
+	got := pageOf(t, db, "/x/kind/cnpg/clusters/db/pg/tables/public/t", "")
+	if !got.More || got.Next != "" {
+		t.Errorf("more %v, next of %d bytes", got.More, len(got.Next))
+	}
+}
+
+func TestACursorForAnotherReadingIsRefused(t *testing.T) {
+	db := func() *fakeDB {
+		return &fakeDB{answers: answers{
+			sqlTableOID:   rowsOf([]string{"16384", "r"}),
+			sqlPrimaryKey: rowsOf([]string{"a", "integer"}, []string{"b", "integer"}),
+			sqlColumns:    rowsOf([]string{"a", "integer", "false"}),
+		}}
+	}
+	for name, cursor := range map[string]string{
+		"not base64":     "%%%",
+		"not json":       "bm90IGpzb24",
+		"another key":    encodeCursor(pageCursor{Key: keyCtid, Start: 100, Values: []string{"(0,1)"}}),
+		"one value":      encodeCursor(pageCursor{Key: keyPrimary, Start: 100, Values: []string{"1"}}),
+		"three values":   encodeCursor(pageCursor{Key: keyPrimary, Start: 100, Values: []string{"1", "2", "3"}}),
+		"before the top": encodeCursor(pageCursor{Key: keyPrimary, Start: -1, Values: []string{"1", "2"}}),
+	} {
+		d := db()
+		body, _ := json.Marshal(map[string]string{"cursor": cursor})
+		rec := servePage(t, withDB(d, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t", string(body))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), CodeBadRequest) {
+			t.Errorf("%s: answered %d %s", name, rec.Code, rec.Body.String())
+		}
+		for _, q := range d.asked {
+			if strings.Contains(q, `FROM "public"."t"`) {
+				t.Errorf("%s: read %s", name, q)
+			}
+		}
+	}
+	// An offset past the ceiling.
+	d := &fakeDB{answers: answers{sqlTableOID: rowsOf([]string{"16384", "v"}), sqlPrimaryKey: rowsOf(), sqlColumns: rowsOf([]string{"a", "integer", "false"})}}
+	body, _ := json.Marshal(map[string]string{"cursor": encodeCursor(pageCursor{Key: keyOffset, Start: maxOffset + 1})})
+	if rec := servePage(t, withDB(d, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/v", string(body)); rec.Code != http.StatusBadRequest {
+		t.Errorf("past the ceiling: answered %d", rec.Code)
+	}
+}
+
+// The rows are a POST: the cursor never rides in an address.
+func TestRowsAreNotReadFromAnAddress(t *testing.T) {
+	db := &fakeDB{answers: answers{}}
+	rec := serveWith(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t?cursor=x")
+	if rec.Code != http.StatusMethodNotAllowed || len(db.asked) != 0 {
+		t.Errorf("answered %d after %d statements", rec.Code, len(db.asked))
+	}
+}
+
+func TestTheDatabaseIsTheOneAsked(t *testing.T) {
+	db := &fakeDB{answers: answers{sqlDatabases: rowsOf([]string{"shop", "1"}, []string{"reporting", "1"})}}
+	var seen credential
+	rec := serveWith(t, withDB(db, &seen), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables?db=reporting")
+	got := decode[Tables](t, rec)
+	if rec.Code != http.StatusOK || seen.database != "reporting" || got.Database != "reporting" || strings.Join(got.Databases, ",") != "shop,reporting" {
+		t.Fatalf("answered %d, opened %q, %+v", rec.Code, seen.database, got)
+	}
+	rec = serveWith(t, withDB(db, &seen), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables")
+	if rec.Code != http.StatusOK || seen.database != "shop" {
+		t.Errorf("no db: answered %d, opened %q", rec.Code, seen.database)
+	}
+	pageDB := &fakeDB{answers: answers{sqlTableOID: rowsOf([]string{"1", "r"}), sqlPrimaryKey: rowsOf(), sqlColumns: rowsOf([]string{"a", "integer", "false"})}}
+	if rec := servePage(t, withDB(pageDB, &seen), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t", `{"database":"reporting"}`); rec.Code != http.StatusOK || seen.database != "reporting" {
+		t.Errorf("a page: answered %d, opened %q", rec.Code, seen.database)
+	}
+	for _, bad := range []string{strings.Repeat("d", maxIdentifier+1), "a%00b", "%ff"} {
+		seen = credential{}
+		rec := serveWith(t, withDB(db, &seen), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables?db="+bad)
+		if rec.Code != http.StatusBadRequest || seen.user != "" {
+			t.Errorf("%q: answered %d, dialled %v", bad, rec.Code, seen.user != "")
+		}
+	}
+	for name, body := range map[string]string{"not json": "{", "too long": `{"cursor":"` + strings.Repeat("c", maxAsk) + `"}`} {
+		rec := servePage(t, withDB(pageDB, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/t", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: answered %d", name, rec.Code)
+		}
+	}
+}
+
+func TestADatabaseTheUserMayNotOpenIsNamed(t *testing.T) {
+	for code, want := range map[string]struct {
+		status int
+		code   string
+	}{
+		"3D000": {http.StatusNotFound, CodeNoSuchDatabase},
+		"42501": {http.StatusForbidden, CodeDatabaseDenied},
+		"28P01": {http.StatusBadGateway, CodeUnreachable},
+	} {
+		x := testExtra()
+		x.dial = func(context.Context, string, credential, *tls.Config) (querier, error) {
+			return nil, fmt.Errorf("connect: %w", &pgconn.PgError{Code: code})
+		}
+		rec := serveWith(t, x, sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables?db=other")
+		if rec.Code != want.status || !strings.Contains(rec.Body.String(), `"`+want.code+`"`) {
+			t.Errorf("%s: answered %d %s", code, rec.Code, rec.Body.String())
+		}
+	}
+}

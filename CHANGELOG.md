@@ -23,6 +23,11 @@ dialog draws it first, as a New extra line.
   names what gave the figures, and a page where nothing could be read says No
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
+- **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
+  reads every database the cluster's user may open, with a database and
+  schema picker and a table search; a table's rows come 100 at a time,
+  forward and back, by primary key, by ctid or by offset for a view, each
+  value drawn for its type, and a cell opens in full, JSON laid out (#164).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

@@ -60,6 +60,10 @@ const (
 	CodeUnreachable   = "unreachable"
 	CodeSQLFailed     = "sql_failed"
 	CodeNoSuchTable   = "no_such_table"
+	// CodeNoSuchDatabase and CodeDatabaseDenied answer a database picked
+	// from the list: gone since, or one the cluster's user may not open.
+	CodeNoSuchDatabase = "no_such_database"
+	CodeDatabaseDenied = "database_denied"
 )
 
 // querier runs one statement and hands each row over as text, its columns'
@@ -104,7 +108,11 @@ type credential struct {
 
 // openSQL opens the door to one cluster for the request, or answers the
 // request itself and returns false.
-func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, cluster, namespace, name string) (*sqlSession, bool) {
+//
+// database is the database to open, or "" for the Secret's own. It only ever
+// reaches the connection's startup message, never a statement, and Postgres
+// itself checks the user may connect to it.
+func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, cluster, namespace, name, database string) (*sqlSession, bool) {
 	_, crd, ok := resolveClusters(w, r, h, cluster)
 	if !ok {
 		return nil, false
@@ -120,6 +128,9 @@ func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, 
 	cred, ok := readCredential(w, r, h, cluster, namespace, secret)
 	if !ok {
 		return nil, false
+	}
+	if database != "" {
+		cred.database = database
 	}
 
 	tunnel, err := h.Forward(r.Context(), cluster, namespace, name+"-rw", postgresPort)
@@ -165,7 +176,15 @@ func (x CNPG) openSQL(w http.ResponseWriter, r *http.Request, h extension.Host, 
 	q, err := open(r.Context(), tunnel.Addr, cred, tlsConfig)
 	if err != nil {
 		s.close()
-		writeProblem(w, http.StatusBadGateway, CodeUnreachable, "Postgres in "+namespace+"/"+name+" did not answer.", err)
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.Code == "3D000":
+			writeProblem(w, http.StatusNotFound, CodeNoSuchDatabase, "There is no database "+cred.database+" in "+namespace+"/"+name+".", err)
+		case errors.As(err, &pgErr) && pgErr.Code == "42501":
+			writeProblem(w, http.StatusForbidden, CodeDatabaseDenied, "The cluster's user may not open the database "+cred.database+".", err)
+		default:
+			writeProblem(w, http.StatusBadGateway, CodeUnreachable, "Postgres in "+namespace+"/"+name+" did not answer.", err)
+		}
 		return nil, false
 	}
 	s.q = q

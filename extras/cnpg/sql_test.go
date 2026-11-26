@@ -96,6 +96,19 @@ func serveWith(t *testing.T, x CNPG, h extension.Host, path string) *httptest.Re
 	return rec
 }
 
+// servePage asks a table's rows as the page does: a POST, the database and
+// the cursor in its body.
+func servePage(t *testing.T, x CNPG, h extension.Host, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	mux := http.NewServeMux()
+	for _, rt := range x.Routes(h) {
+		mux.Handle(rt.Method+" /x/{cluster}/cnpg"+rt.Pattern, rt.Handler)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+	return rec
+}
+
 func TestStatsAreReadThroughTheClustersOwnSecretAndATunnel(t *testing.T) {
 	h := sqlHost()
 	db := &fakeDB{answers: map[string]func([]string, func([]column, [][]byte) error) error{
@@ -201,19 +214,20 @@ func TestATablesRowsAreReadQuotedCappedAndCut(t *testing.T) {
 	long := strings.Repeat("é", MaxCell+1)
 	var rows [][]string
 	for i := 0; i < MaxRows+1; i++ {
-		rows = append(rows, []string{"1", long, "\x00null", "2048"})
+		rows = append(rows, []string{"1", long, "\x00null", "2048:25504446"})
 	}
 	db := &fakeDB{answers: map[string]func([]string, func([]column, [][]byte) error) error{
 		sqlTableOID: func(args []string, each func([]column, [][]byte) error) error {
 			if strings.Join(args, "|") != `we"ird;|t"bl` {
 				return nil
 			}
-			return each(nil, [][]byte{[]byte("16384")})
+			return each(nil, [][]byte{[]byte("16384"), []byte("v")})
 		},
+		sqlPrimaryKey: rowsOf(),
 		sqlColumns:    rowsOf([]string{"id", "integer", "false"}, []string{"note", "text", "false"}, []string{"gone", "text", "false"}, []string{"blob", "bytea", "true"}),
 		sqlRowsPrefix: rowsOf(rows...),
 	}}
-	rec := serveWith(t, withDB(db, nil), sqlHost(), `/x/kind/cnpg/clusters/db/pg/tables/we%22ird%3B/t%22bl`)
+	rec := servePage(t, withDB(db, nil), sqlHost(), `/x/kind/cnpg/clusters/db/pg/tables/we%22ird%3B/t%22bl`, `{}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -222,11 +236,11 @@ func TestATablesRowsAreReadQuotedCappedAndCut(t *testing.T) {
 		t.Fatalf("%d rows, more %v, %d columns", len(got.Rows), got.More, len(got.Columns))
 	}
 	first := got.Rows[0]
-	if !first[1].Cut || len([]rune(first[1].Text)) != MaxCell || !first[2].Null || first[3].Bytes == nil || *first[3].Bytes != 2048 {
+	if !first[1].Cut || len([]rune(first[1].Text)) != MaxCell || !first[2].Null || first[3].Bytes == nil || *first[3].Bytes != 2048 || first[3].Hex != "25504446" {
 		t.Errorf("cells %+v", first)
 	}
 	statement := db.asked[len(db.asked)-1]
-	want := `SELECT left(("id")::text, 513), left(("note")::text, 513), left(("gone")::text, 513), octet_length("blob")::text FROM "we""ird;"."t""bl" LIMIT 101`
+	want := `SELECT left(("id")::text, 513), left(("note")::text, 513), left(("gone")::text, 513), octet_length("blob")::text || ':' || encode(substring("blob" from 1 for 16), 'hex') FROM "we""ird;"."t""bl" LIMIT 101`
 	if strings.TrimSpace(statement) != want {
 		t.Errorf("statement\n%s\nwant\n%s", statement, want)
 	}
@@ -234,7 +248,7 @@ func TestATablesRowsAreReadQuotedCappedAndCut(t *testing.T) {
 
 func TestATableTheCatalogueDoesNotNameIsNotRead(t *testing.T) {
 	db := &fakeDB{answers: map[string]func([]string, func([]column, [][]byte) error) error{}}
-	rec := serveWith(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/secret_stuff")
+	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/secret_stuff", "")
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), CodeNoSuchTable) {
 		t.Fatalf("answered %d %s", rec.Code, rec.Body.String())
 	}
@@ -261,7 +275,8 @@ func TestAWideTableIsBounded(t *testing.T) {
 		rows = append(rows, row)
 	}
 	db := &fakeDB{answers: map[string]func([]string, func([]column, [][]byte) error) error{
-		sqlTableOID:   rowsOf([]string{"1"}),
+		sqlTableOID:   rowsOf([]string{"1", "v"}),
+		sqlPrimaryKey: rowsOf(),
 		sqlColumns:    rowsOf(cols...),
 		sqlRowsPrefix: rowsOf(rows...),
 	}}
@@ -269,7 +284,7 @@ func TestAWideTableIsBounded(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	start := time.Now()
-	rec := serveWith(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide")
+	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide", "")
 	took := time.Since(start)
 	runtime.ReadMemStats(&after)
 	got := decode[Rows](t, rec)

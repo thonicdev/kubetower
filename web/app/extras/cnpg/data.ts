@@ -225,8 +225,8 @@ export interface PodAnswer {
 export type ProblemKind = 'absent' | 'refusal' | 'failure';
 
 const ABSENT = new Set(['kind_unknown', 'kind_not_served', 'unknown_cluster', 'not_found', 'not_instance', 'gate']);
-const REFUSED = new Set(['list_forbidden', 'list_unreviewed', 'secret_denied', 'secret_unreviewed', 'tunnel_refused', 'pod_unknown', 'exec_forbidden', 'exec_unreviewed', 'read_only']);
-const ABSENT_SQL = new Set(['no_credential', 'no_such_table']);
+const REFUSED = new Set(['list_forbidden', 'list_unreviewed', 'secret_denied', 'secret_unreviewed', 'tunnel_refused', 'pod_unknown', 'exec_forbidden', 'exec_unreviewed', 'read_only', 'database_denied']);
+const ABSENT_SQL = new Set(['no_credential', 'no_such_table', 'no_such_database']);
 
 export class CnpgProblem extends Error {
   readonly status: number;
@@ -281,10 +281,10 @@ export const podPath = (cluster: string, namespace: string, name: string) =>
 export const clusterHref = (cluster: string, namespace: string, name: string) =>
   `/c/${encodeURIComponent(cluster)}/${PAGE_PATH}/clusters/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`;
 
-async function read<T>(path: string, signal: AbortSignal | undefined, check: (body: T) => boolean, what: string): Promise<T> {
+async function read<T>(path: string, signal: AbortSignal | undefined, check: (body: T) => boolean, what: string, post?: unknown): Promise<T> {
   let body: T;
   try {
-    body = await request<T>(path, signal === undefined ? {} : { signal });
+    body = await request<T>(path, { ...(signal === undefined ? {} : { signal }), ...(post === undefined ? {} : { method: 'POST', body: post }) });
   } catch (error) {
     throw said(error);
   }
@@ -362,6 +362,8 @@ export interface TableRow {
 
 export interface Tables {
   database: string;
+  /** The databases the application user may connect to, `database` among them. */
+  databases?: string[];
   verified: boolean;
   schemas: string[];
   tables: TableRow[];
@@ -372,17 +374,29 @@ export interface Cell {
   null?: boolean;
   text?: string;
   cut?: boolean;
+  /** A bytea: its length, and its first bytes in hex. */
   bytes?: number;
+  hex?: string;
 }
+
+/** How a table's pages follow each other: by its primary key, by ctid for a
+ *  table without one, by offset for a view (capped). */
+export type PageKey = 'primary' | 'ctid' | 'offset';
 
 export interface Rows {
   schema: string;
   table: string;
-  columns: { name: string; type: string }[];
+  columns: { name: string; type: string; primary?: boolean }[];
   rows: Cell[][];
   verified: boolean;
   columnsTotal: number;
   more: boolean;
+  /** How the next page is asked for, and the cursor that asks it (opaque,
+   *  sent back in a request's body, never in an address). */
+  key?: PageKey;
+  next?: string;
+  /** The first row's position, from 0. */
+  start?: number;
 }
 
 const sqlBase = (cluster: string, namespace: string, name: string) => `${clusterPath(cluster, namespace, name)}`;
@@ -391,13 +405,23 @@ export function getStats(cluster: string, namespace: string, name: string, signa
   return read<Stats>(`${sqlBase(cluster, namespace, name)}/stats`, signal, (b) => Array.isArray(b.databases), 'its statistics');
 }
 
-export function getTables(cluster: string, namespace: string, name: string, signal?: AbortSignal): Promise<Tables> {
-  return read<Tables>(`${sqlBase(cluster, namespace, name)}/tables`, signal, (b) => Array.isArray(b.tables), 'its tables');
+export function getTables(cluster: string, namespace: string, name: string, database: string, signal?: AbortSignal): Promise<Tables> {
+  const query = database === '' ? '' : `?db=${encodeURIComponent(database)}`;
+  return read<Tables>(`${sqlBase(cluster, namespace, name)}/tables${query}`, signal, (b) => Array.isArray(b.tables), 'its tables');
 }
 
-export function getRows(cluster: string, namespace: string, name: string, schema: string, table: string, signal?: AbortSignal): Promise<Rows> {
-  const path = `${sqlBase(cluster, namespace, name)}/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`;
-  return read<Rows>(path, signal, (b) => Array.isArray(b.rows) && Array.isArray(b.columns), 'a table');
+/** One page of a table. The cursor is the previous page's `next`, sent in the
+ *  body: it may hold a primary key's values, which have no place in an
+ *  address. */
+export function getRows(
+  cluster: string,
+  namespace: string,
+  name: string,
+  page: { database: string; schema: string; table: string; cursor: string },
+  signal?: AbortSignal,
+): Promise<Rows> {
+  const path = `${sqlBase(cluster, namespace, name)}/tables/${encodeURIComponent(page.schema)}/${encodeURIComponent(page.table)}`;
+  return read<Rows>(path, signal, (b) => Array.isArray(b.rows) && Array.isArray(b.columns), 'a table', { database: page.database, cursor: page.cursor });
 }
 
 // --- replication lag (`extras/cnpg/lag.go`) -----------------------------------------
@@ -432,14 +456,18 @@ export function statsQuery(cluster: string, namespace: string, name: string) {
   return queryOptions({ queryKey: [KEY, 'stats', cluster, namespace, name] as const, queryFn: ({ signal }) => getStats(cluster, namespace, name, signal), ...ONCE });
 }
 
-export function tablesQuery(cluster: string, namespace: string, name: string) {
-  return queryOptions({ queryKey: [KEY, 'tables', cluster, namespace, name] as const, queryFn: ({ signal }) => getTables(cluster, namespace, name, signal), ...ONCE });
+export function tablesQuery(cluster: string, namespace: string, name: string, database = '') {
+  return queryOptions({
+    queryKey: [KEY, 'tables', cluster, namespace, name, database] as const,
+    queryFn: ({ signal }) => getTables(cluster, namespace, name, database, signal),
+    ...ONCE,
+  });
 }
 
-export function rowsQuery(cluster: string, namespace: string, name: string, schema: string, table: string) {
+export function rowsQuery(cluster: string, namespace: string, name: string, page: { database: string; schema: string; table: string; cursor: string }) {
   return queryOptions({
-    queryKey: [KEY, 'rows', cluster, namespace, name, schema, table] as const,
-    queryFn: ({ signal }) => getRows(cluster, namespace, name, schema, table, signal),
+    queryKey: [KEY, 'rows', cluster, namespace, name, page.database, page.schema, page.table, page.cursor] as const,
+    queryFn: ({ signal }) => getRows(cluster, namespace, name, page, signal),
     ...ONCE,
     gcTime: 60_000,
   });
