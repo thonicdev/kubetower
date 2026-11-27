@@ -239,7 +239,10 @@ func (t *Terminal) serveDebug(w http.ResponseWriter, r *http.Request, speaks wir
 		namespace: target.namespace,
 		pod:       target.pod,
 		container: container,
-		command:   defaultExecCommand,
+		// The container's own command, never /bin/sh: an image whose sh is on
+		// its PATH elsewhere (a distroless :debug, under /busybox) starts the
+		// container, and a second lookup would leave it there with no shell.
+		command: debugContainerCommand,
 	}, open)
 	if !opened {
 		t.logf("%s", identity.Line(shellCtx, "debug shell refused on %q %s/%s: %v", name, target.namespace, target.pod, err))

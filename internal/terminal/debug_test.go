@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -259,8 +260,10 @@ func TestTheDebugPatchAddsOneContainerThatStaysUp(t *testing.T) {
 	}
 }
 
-// The shell opens in the container that was added, with /bin/sh, through the
-// exec path.
+// The shell opens in the container that was added, through the exec path,
+// with the very command that container runs: a shell found on the PATH by the
+// container and looked up again as /bin/sh would answer no_shell in a pod that
+// keeps the container (#188).
 func TestTheDebugShellOpensInTheAddedContainer(t *testing.T) {
 	api := &debugAPI{state: running}
 	rig := newDebugRig(t, api, nil, false)
@@ -278,8 +281,20 @@ func TestTheDebugShellOpensInTheAddedContainer(t *testing.T) {
 		if q.Get("container") != added || added == "" {
 			t.Errorf("the exec opened in container %q, want the added %q", q.Get("container"), added)
 		}
-		if q.Get("command") != "/bin/sh" {
-			t.Errorf("the exec runs %q, want /bin/sh", q["command"])
+		api.mu.Lock()
+		body := api.body
+		api.mu.Unlock()
+		var patch struct {
+			Spec struct {
+				EphemeralContainers []corev1.EphemeralContainer `json:"ephemeralContainers"`
+			} `json:"spec"`
+		}
+		if err := json.Unmarshal(body, &patch); err != nil || len(patch.Spec.EphemeralContainers) != 1 {
+			t.Fatalf("the PATCH body: %v (%s)", err, body)
+		}
+		runs := patch.Spec.EphemeralContainers[0].Command
+		if !slices.Equal(q["command"], runs) || len(runs) == 0 {
+			t.Errorf("the exec runs %q, the container runs %q: they must be the same", q["command"], runs)
 		}
 	default:
 		t.Fatal("no exec was opened")
@@ -614,17 +629,20 @@ func TestAShellNotInTheImageAnswersNoShell(t *testing.T) {
 	}
 }
 
-// A debug container whose own image has no /bin/sh answers no_shell too: the
+// A debug container whose own image has no sh answers no_shell too: the
 // session's exec is the exec path's.
 func TestADebugShellNotInTheImageAnswersNoShell(t *testing.T) {
 	api := &debugAPI{state: running}
 	rig := newDebugRig(t, api, nil, false)
 	rig.term.openExec = func(*rest.Config, *url.URL) (remotecommand.Executor, error) {
-		return exitingExecutor{err: fmt.Errorf(`exec: "/bin/sh": stat /bin/sh: no such file or directory`)}, nil
+		return exitingExecutor{err: fmt.Errorf(`exec: "sh": executable file not found in $PATH`)}, nil
 	}
 	frame := refusal(t, rig.open(t, debugQuery))
 	if frame.Reason.Code != codeNoShell {
 		t.Errorf("refused as %+v, want no_shell", frame)
+	}
+	if !strings.Contains(frame.Reason.Message, "sh") || strings.Contains(frame.Reason.Message, "/bin/sh") {
+		t.Errorf("the refusal names %q, want the container's own sh", frame.Reason.Message)
 	}
 }
 
