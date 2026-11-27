@@ -54,12 +54,12 @@ dialog draws it first, as a New extra line.
 
 ### Changed
 
-- **VictoriaMetrics' answers are checked against Prometheus' on the same
-  samples, rates included.** The value comparison the project runs on a
-  cluster holding both now holds a rate to the same series, in the same
-  order, within ×10 of each other, and drops each `by` label in turn to show
-  the bound sees it. It also checks a wrong path reached through a
-  port-forward (#176).
+- **An integration test compares VictoriaMetrics' answers with
+  Prometheus', rates included.** It is part of the project's test suite, not
+  a feature of KubeTower: run against a cluster holding both, on the same
+  samples, it now holds a rate to the same series, in the same order, within
+  ×10 of each other, and drops each `by` label in turn to show the bound sees
+  it. It also checks a wrong path reached through a port-forward (#176).
 
 ### Fixed
 
@@ -129,7 +129,7 @@ dialog draws it first, as a New extra line.
   good; a file renamed away for a moment by an editor keeps its clusters and
   their connections; a Retry and the watcher no longer apply an older read
   after a newer one; and a context pointed at another server discovers its
-  kinds there rather than reusing the old server's (#153).
+  kinds there rather than reusing the old server's (#173).
 - **Runtime Inspector: the program left running names the runtime.** In a
   shell chain the program exec'd decides unless it is plumbing itself, or
   else the last one that is not plumbing (`cd`, `wait`, `sleep`, `tail`,
