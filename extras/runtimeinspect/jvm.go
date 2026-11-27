@@ -134,5 +134,7 @@ func (x JVM) Routes(h extension.Host) []extension.Route {
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node", Handler: x.nodeState(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/inspector", Handler: x.nodeOpen(h)},
 		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/node/{read}", Handler: x.nodeRead(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/python", Handler: x.pythonProcesses(h)},
+		{Method: http.MethodPost, Pattern: "/pod/{namespace}/{name}/{container}/python/metrics", Handler: x.pythonMetrics(h)},
 	}
 }

@@ -110,6 +110,13 @@ export interface CiliumRead {
   notEvaluated: string[];
 }
 
+/** The policy engine's answer for flows between a namespace's own pods
+ *  (`diagonal.go`), drawn as the matrix's diagonal. */
+export type Diagonal = 'inside' | 'open' | 'mixed' | 'denied' | 'refused' | 'refusedOut' | 'unevaluated' | 'partial';
+
+/** Every diagonal this page draws: another value is read as no answer. */
+export const DIAGONALS: ReadonlySet<string> = new Set<Diagonal>(['inside', 'open', 'mixed', 'denied', 'refused', 'refusedOut', 'unevaluated', 'partial']);
+
 export interface GraphNode {
   id: string;
   label: string;
@@ -119,6 +126,8 @@ export interface GraphNode {
   isolatedIn: number;
   isolatedOut: number;
   internal: number;
+  /** The engine's answer for the namespace to itself (absent from an older server). */
+  diagonal?: Diagonal;
   /** On "others": how many of the nodes it holds are not namespaces. */
   ends?: number;
 }
@@ -131,6 +140,8 @@ export interface GraphEdge {
   ports: string[];
   policies: string[];
   rules: number;
+  /** A BaselineAdminNetworkPolicy's rule: it applies only where no NetworkPolicy selects that side. */
+  baseline?: boolean;
 }
 
 export interface Graph {

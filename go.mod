@@ -178,3 +178,10 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+// go-webview2 with its fatal exits turned into errors (#84): a WebView2
+// environment or controller that cannot be created made the library call
+// log.Fatalf and end the whole console. The copy in third_party/go-webview2
+// returns false from Embed instead; the same change is offered upstream. Drop
+// this replace once a release of jchv/go-webview2 carries it.
+replace github.com/jchv/go-webview2 => ./third_party/go-webview2

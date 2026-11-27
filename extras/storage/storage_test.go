@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -558,5 +559,127 @@ func TestARefusedCatalogRefusesTheSnapshots(t *testing.T) {
 	h.defErr = errors.New("the server is currently unable to handle the request")
 	if s := overview(t, h, "").Snapshots; s.State != StateFailed {
 		t.Errorf("snapshots = %+v, want failed", s)
+	}
+}
+
+// fromBackend is a VolumeFill that read the claims given, at used of capacity.
+func fromBackend(engine string, complete bool, claims ...extension.ClaimFill) extension.VolumeFill {
+	return extension.VolumeFill{State: extension.WindowRead, Engine: engine, Complete: complete, Claims: claims,
+		Note: map[bool]string{false: "You may not list claims in every namespace asked."}[complete]}
+}
+
+func claimFill(ns, name string, used, capacity int64) extension.ClaimFill {
+	return extension.ClaimFill{ClaimRef: extension.ClaimRef{Namespace: ns, Name: name}, UsedBytes: used, CapacityBytes: capacity}
+}
+
+// The metrics backend first (#91): where it holds every mounted claim, no
+// kubelet is asked, and the source names the engine that answered.
+func TestTheMetricsBackendMeasuresTheClaimsItHolds(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.fill = fromBackend(extension.EngineVictoriaMetrics, true,
+		claimFill("shop", "data-db-0", 10*gi, 20*gi), claimFill("shop", "cache", 2*gi, 10*gi))
+	a := overview(t, h, "")
+	if a.Fill.State != SourceRead || strings.Join(a.Fill.Via, ",") != extension.EngineVictoriaMetrics || len(h.asked) != 0 {
+		t.Fatalf("fill = %+v after asking kubelets %v", a.Fill, h.asked)
+	}
+	if f := claimNamed(t, a, "shop", "data-db-0").Fill; f.State != FillMeasured || f.Percent != 50 || f.Level != LevelOK {
+		t.Errorf("data-db-0 = %+v, want 50 %% from the backend", f)
+	}
+	// Asked for the mounted claims only, never an unmounted one.
+	if len(h.filled) != 1 || len(h.filled[0]) != 2 {
+		t.Fatalf("VolumeFill asked %v", h.filled)
+	}
+	for _, c := range h.filled[0] {
+		if c.Name != "data-db-0" && c.Name != "cache" {
+			t.Errorf("asked an unmounted claim: %+v", c)
+		}
+	}
+}
+
+// What the backend does not hold is the kubelets', for those claims' nodes only.
+func TestTheKubeletsMeasureWhatTheBackendDoesNotHold(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.fill = fromBackend(extension.EnginePrometheus, true, claimFill("shop", "data-db-0", 10*gi, 20*gi))
+	a := overview(t, h, "")
+	if a.Fill.State != SourceRead || strings.Join(a.Fill.Via, ",") != "prometheus,kubelet" {
+		t.Fatalf("fill = %+v", a.Fill)
+	}
+	if len(h.asked) != 1 || strings.Join(h.asked[0], ",") != "node-b" {
+		t.Errorf("kubelets asked %v, want node-b only", h.asked)
+	}
+	if f := claimNamed(t, a, "shop", "data-db-0").Fill; f.Percent != 50 {
+		t.Errorf("data-db-0 = %+v, want the backend's 50 %%", f)
+	}
+	if f := claimNamed(t, a, "shop", "cache").Fill; f.State != FillMeasured || math.Round(f.Percent) != 85 {
+		t.Errorf("cache = %+v, want the kubelet's 85 %%", f)
+	}
+}
+
+// No backend, an unreadable one, an empty one and a refusal all leave the
+// kubelets to answer, as before #91.
+func TestWithoutTheBackendTheKubeletsAnswer(t *testing.T) {
+	for name, set := range map[string]func(*fakeHost){
+		"no prometheus": func(h *fakeHost) {},
+		"unreadable":    func(h *fakeHost) { h.fill = extension.VolumeFill{State: extension.WindowUnreadable, Detail: "timeout"} },
+		"empty":         func(h *fakeHost) { h.fill = extension.VolumeFill{State: extension.WindowEmpty} },
+		"refused":       func(h *fakeHost) { h.fillErr = fmt.Errorf("%w: list persistentvolumeclaims", extension.ErrDenied) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			at(t)
+			h := shop(t)
+			set(h)
+			a := overview(t, h, "")
+			if a.Fill.State != SourceRead || strings.Join(a.Fill.Via, ",") != ViaKubelet || len(h.asked) != 1 {
+				t.Fatalf("fill = %+v, kubelets asked %v", a.Fill, h.asked)
+			}
+			if f := claimNamed(t, a, "shop", "data-db-0").Fill; math.Round(f.Percent) != 92 {
+				t.Errorf("data-db-0 = %+v, want the kubelet's 92 %%", f)
+			}
+		})
+	}
+}
+
+// The backend measured some claims and the kubelets none of the rest: partial,
+// never the whole source unreadable, and the rest said unread.
+func TestTheBackendsFiguresStandWhenTheKubeletsFail(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.fill = fromBackend(extension.EnginePrometheus, true, claimFill("shop", "data-db-0", 10*gi, 20*gi))
+	h.usageErr = errors.New("context deadline exceeded")
+	a := overview(t, h, "")
+	if a.Fill.State != SourcePartial || strings.Join(a.Fill.Via, ",") != extension.EnginePrometheus || a.Fill.Message != kubeletsFailed {
+		t.Fatalf("fill = %+v", a.Fill)
+	}
+	if f := claimNamed(t, a, "shop", "cache").Fill; f.State != FillUnread {
+		t.Errorf("cache = %+v, want unread", f)
+	}
+	if f := claimNamed(t, a, "shop", "data-db-0").Fill; f.Percent != 50 {
+		t.Errorf("data-db-0 = %+v", f)
+	}
+}
+
+// A narrowed backend read says so in the page's notes.
+func TestANarrowedBackendReadIsSaid(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.fill = fromBackend(extension.EnginePrometheus, false,
+		claimFill("shop", "data-db-0", 10*gi, 20*gi), claimFill("shop", "cache", 2*gi, 10*gi))
+	a := overview(t, h, "")
+	if a.Complete || len(a.Notes) == 0 || !strings.Contains(strings.Join(a.Notes, " "), "Fill") {
+		t.Errorf("complete %v, notes %q", a.Complete, a.Notes)
+	}
+}
+
+// A claim that backs two volumes of one pod is one row on the pod's tab, and
+// the pod one consumer of it (#182).
+func TestAClaimInTwoVolumesIsListedOnce(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.add("pods", pod(t, "shop", "twice-0", "node-a", "", "data-db-0", "data-db-0"))
+	got := decode[PodAnswer](t, serve(t, h, "/x/prod/storage/pod/shop/twice-0"))
+	if len(got.Claims) != 1 || got.Claims[0].Name != "data-db-0" {
+		t.Errorf("pod tab = %+v, want data-db-0 once", got.Claims)
 	}
 }

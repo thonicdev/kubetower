@@ -15,9 +15,10 @@ import (
 // instance routes look among discovery's Instances only, so nothing dials it.
 
 // managedSuffixes are the domains of a managed Redis whose hosts need not
-// name the engine: Azure Cache for Redis Enterprise and Redis Cloud (its
-// private-link hosts included, `pl-….redislabs.com`).
-var managedSuffixes = []string{".redisenterprise.cache.azure.net", ".redislabs.com"}
+// name the engine, and whose first label is the customer's own name: Azure
+// Cache for Redis (`myproxy.redis.cache.windows.net`) and Redis Enterprise,
+// and Redis Cloud (its private-link hosts included, `pl-….redislabs.com`).
+var managedSuffixes = []string{".redis.cache.windows.net", ".redisenterprise.cache.azure.net", ".redislabs.com"}
 
 // aivenSuffix is Aiven's domain, which also serves its PostgreSQL, Kafka and
 // every other service: a host there counts only with a port that looks like
@@ -127,8 +128,8 @@ func externalRedis(service *corev1.Service) (externalDoor, bool) {
 		if len(ports) == 1 {
 			out.Port, out.PortName = int(ports[0].Port), ports[0].Name
 		}
-	case strings.HasSuffix(host, aivenSuffix) && redisPortIn(ports) != nil:
-		port := redisPortIn(ports)
+	case strings.HasSuffix(host, aivenSuffix) && aivenRedisPort(ports) != nil:
+		port := aivenRedisPort(ports)
 		out.Why = "it points at " + host
 		out.Port, out.PortName = int(port.Port), port.Name
 	case engineToken(name) != "":
@@ -157,16 +158,42 @@ func redisLikePort(port corev1.ServicePort) bool {
 // `valkey-proxy.example.com`). Never in the other labels (`redis.backups`,
 // `redis.prod.web.corp`), nor in the client's part of a managed host, whose
 // names are the customer's (`master.web-sessions.….cache.amazonaws.com`).
+//
+// A label that names a cache besides the engine is a cache's name, not a
+// tool's: `redis-web-cache` is the web tier's cache, `redis-web` a web client.
 func hostTool(host string) bool {
 	if managedHost(host) {
 		return false
 	}
 	for i, label := range strings.Split(host, ".") {
-		if (i == 0 || engineToken(label) != "") && isTool(label) {
+		if (i == 0 || engineToken(label) != "") && isTool(label) && !namesACache(label) {
 			return true
 		}
 	}
 	return false
+}
+
+// namesACache is a label whose last token is `cache` beside an engine word,
+// and that names no long tool word (an exporter's or an operator's).
+func namesACache(label string) bool {
+	tokens := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '_' })
+	return len(tokens) > 1 && tokens[len(tokens)-1] == "cache" && engineToken(label) != "" && !hasAny(label, tools)
+}
+
+// otherEnginePorts are the ports of the other engines Aiven serves:
+// PostgreSQL and PgBouncer, MySQL, Kafka, OpenSearch, Cassandra. A port on
+// one is that engine's, whatever its name (`rediss` on `pg-….:5432`).
+var otherEnginePorts = map[int32]bool{5432: true, 6432: true, 3306: true, 9092: true, 9200: true, 9300: true, 9042: true}
+
+// aivenRedisPort is redisPortIn on an Aiven host, never on another engine's
+// port.
+func aivenRedisPort(ports []corev1.ServicePort) *corev1.ServicePort {
+	for i := range ports {
+		if redisLikePort(ports[i]) && !otherEnginePorts[ports[i].Port] {
+			return &ports[i]
+		}
+	}
+	return nil
 }
 
 // redisPortIn is the first port that looks like a Redis's, or nil.

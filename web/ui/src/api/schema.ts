@@ -2457,6 +2457,8 @@ export interface components {
             reason?: string;
             /** @description The folder that holds the verified file, in the manual phase. */
             folder?: string;
+            /** @description In `failed`: an earlier update's helper could not be stopped and may still install when KubeTower exits. Download is refused (409) until KubeTower restarts, so no Retry is offered. */
+            helperAlive?: boolean;
             /** @description What the restart closes for good. */
             ends: {
                 terminals: number;

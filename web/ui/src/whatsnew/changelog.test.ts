@@ -88,6 +88,27 @@ describe('the changelog', () => {
     ]);
   });
 
+  it('never promotes a Fixed entry marked as an extra and a highlight, nor lets it push an Added extra out (#182)', () => {
+    const added = ['One', 'Two', 'Three', 'Four'].map((word) => `- **${word}.**`).join('\n');
+    const [one] = parseChangelog(
+      `## 1.0.0\n\n### Added\n\n${added}\n- **Storage Inspector** <!-- extra: storage -->\n\n` +
+        '### Fixed\n\n- **Redis tile fixed** <!-- extra: redis --> <!-- highlight -->\n',
+    );
+    expect(one?.highlights.map((highlight) => [highlight.title, highlight.kind, highlight.extra])).toEqual([
+      ['Storage Inspector', 'added', 'storage'],
+      ['One', 'added', undefined],
+      ['Two', 'added', undefined],
+      ['Three', 'added', undefined],
+      ['Four', 'added', undefined],
+    ]);
+    // With room, the fix is drawn as a fix, in its place.
+    const [few] = parseChangelog('## 1.0.0\n\n### Added\n\n- **One.**\n\n### Fixed\n\n- **Redis tile fixed** <!-- extra: redis --> <!-- highlight -->\n');
+    expect(few?.highlights).toEqual([
+      { title: 'One', kind: 'added' },
+      { title: 'Redis tile fixed', kind: 'fixed' },
+    ]);
+  });
+
   it('reads an extra key in lower case, with _ as - (#125)', () => {
     const [one] = parseChangelog('## 1.0.0\n\n### Added\n\n- **Saved views** <!--extra:Saved_Views-->\n');
     expect(one?.highlights).toEqual([{ title: 'Saved views', kind: 'added', extra: 'saved-views' }]);

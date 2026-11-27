@@ -782,7 +782,7 @@ export const CNPG_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
     replicas: [{ name: 'orders-2', state: 'streaming' }, { name: 'orders-3', state: 'streaming' }],
   },
   [`${base('cnpg')}clusters/shop/orders/tables`]: {
-    database: 'app', verified: true, schemas: ['billing', 'public'], complete: true,
+    database: 'app', databases: ['app', 'reporting'], verified: true, schemas: ['billing', 'public'], complete: true,
     tables: [
       { schema: 'billing', name: 'invoices', kind: 'table', rows: 1_840_220, bytes: 1_073_741_824 },
       { schema: 'billing', name: 'monthly_totals', kind: 'materialized', rows: 36, bytes: 16_384 },
@@ -793,15 +793,20 @@ export const CNPG_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
     ],
   },
   [`${base('cnpg')}clusters/shop/orders/tables/public/orders`]: {
-    schema: 'public', table: 'orders', verified: true, columnsTotal: 6, more: true,
+    schema: 'public', table: 'orders', verified: true, columnsTotal: 8, more: true, key: 'primary', next: 'opaque-cursor-1', start: 0,
     columns: [
-      { name: 'id', type: 'bigint' }, { name: 'customer_id', type: 'bigint' }, { name: 'status', type: 'text' },
-      { name: 'total', type: 'numeric(12,2)' }, { name: 'placed_at', type: 'timestamp with time zone' }, { name: 'notes', type: 'jsonb' },
+      { name: 'id', type: 'bigint', primary: true }, { name: 'customer_id', type: 'bigint' }, { name: 'status', type: 'text' },
+      { name: 'paid', type: 'boolean' }, { name: 'total', type: 'numeric(12,2)' }, { name: 'placed_at', type: 'timestamp with time zone' },
+      { name: 'details', type: 'jsonb' }, { name: 'receipt', type: 'bytea' },
     ],
-    rows: Array.from({ length: 12 }, (_, i) => [
-      { text: String(2_402_118 - i) }, { text: String(48_000 + ((i * 37) % 310)) }, { text: ['paid', 'shipped', 'pending', 'paid'][i % 4] },
-      { text: (19.9 + i * 13.37).toFixed(2) }, { text: `2026-11-11 ${String(9 + (i % 10)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00+00` },
-      i % 3 === 0 ? { null: true } : { text: `{"gift": ${String(i % 2 === 0)}, "channel": "web"}` },
+    rows: Array.from({ length: 14 }, (_, i) => [
+      { text: String(2_402_118 - i) }, { text: String(48_000 + ((i * 37) % 310)) }, { text: ['paid', 'shipped', 'pending', 'paid', 'refunded'][i % 5] },
+      { text: i % 5 === 2 ? 'f' : 't' }, { text: (19.9 + i * 13.37).toFixed(2) },
+      { text: `2026-11-11 ${String(9 + (i % 10)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}:00+00` },
+      i % 3 === 0
+        ? { null: true }
+        : { text: `{"gift": ${String(i % 2 === 0)}, "channel": "web", "lines": [{"sku": "SKU-${String(1000 + i)}", "qty": ${String(1 + (i % 3))}}]}` },
+      i % 4 === 1 ? { null: true } : { bytes: 18_432 + i * 211, hex: '255044462d312e370a25e2e3cfd30a31' },
     ]),
   },
 };
@@ -1062,6 +1067,81 @@ export const JVM_TAB_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
   [`${JVM_POD_PATH}/history`]: jvmMemoryHistory(EXTRA_CLUSTER),
 };
 
+const PY_POD_PATH = `/x/${EXTRA_CLUSTER}/runtime/pod/shop/catalog-5d8f6b-q7zt`;
+
+/** A Python pod: gunicorn serving the application, prometheus_client on :8000. */
+const PY_POD = {
+  cluster: EXTRA_CLUSTER,
+  namespace: 'shop',
+  name: 'catalog-5d8f6b-q7zt',
+  phase: 'Running',
+  java: false,
+  runtimes: ['python'],
+  containers: [
+    {
+      name: 'app',
+      image: 'registry.example.com/shop/catalog:2.4.1',
+      runtime: 'python',
+      java: false,
+      hints: [{ source: 'command', reason: 'the command runs “gunicorn”, which runs a Python application' }],
+      request: null,
+      limit: null,
+      heap: null,
+      risk: null,
+      notes: [],
+      workingSet: null,
+    },
+  ],
+  owner: { kind: 'Deployment', name: 'catalog' },
+};
+
+const PY_PROCESSES = {
+  reader: 'sh',
+  others: 0,
+  truncated: false,
+  processes: [
+    { pid: 1, ppid: 0, comm: 'gunicorn', executable: '/usr/local/bin/python3.12', version: '3.12', rss: 41 * MIB, peak: 44 * MIB,
+      threads: 1, threadNames: ['gunicorn'], started: '2026-03-09T06:12:44Z' },
+    { pid: 8, ppid: 1, comm: 'gunicorn', executable: '/usr/local/bin/python3.12', version: '3.12', rss: 186 * MIB, peak: 231 * MIB,
+      threads: 4, threadNames: ['gunicorn', 'gunicorn', 'gunicorn', 'gunicorn'], started: '2026-03-09T06:12:45Z' },
+    { pid: 9, ppid: 1, comm: 'gunicorn', executable: '/usr/local/bin/python3.12', version: '3.12', rss: 172 * MIB, peak: 219 * MIB,
+      threads: 4, threadNames: ['gunicorn', 'gunicorn', 'gunicorn', 'gunicorn'], started: '2026-03-09T06:12:45Z' },
+  ],
+};
+
+const PY_METRICS = {
+  port: 8000,
+  source: 'port',
+  reachable: true,
+  metrics: {
+    version: '3.12.16',
+    implementation: 'CPython',
+    gc: [
+      { generation: '0', collections: 48211, collected: 1904512, uncollectable: 0 },
+      { generation: '1', collections: 4382, collected: 210448, uncollectable: 0 },
+      { generation: '2', collections: 391, collected: 52019, uncollectable: 12 },
+    ],
+    rss: 186 * MIB,
+    virtual: 612 * MIB,
+    cpuSeconds: 8412.7,
+    openFds: 23,
+    maxFds: 1048576,
+    startTime: Date.parse('2026-03-09T06:12:45Z') / 1000,
+  },
+};
+
+export const PY_TAB_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
+  [PY_POD_PATH]: PY_POD as never,
+  [`${PY_POD_PATH}/app/python`]: PY_PROCESSES as never,
+  [`${PY_POD_PATH}/app/python/metrics`]: PY_METRICS as never,
+};
+
+/** The same pod, its application serving no /metrics. */
+export const PY_TAB_NO_METRICS_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
+  ...PY_TAB_ANSWERS,
+  [`${PY_POD_PATH}/app/python/metrics`]: { port: 8000, source: 'default', reachable: false, detail: 'dial tcp 10.244.0.41:8000: connect: connection refused', metrics: null } as never,
+};
+
 /** The pod's tile on its Details: the spec route, and the console's menu
  *  saying the extra is on. */
 export const JVM_TILE_ANSWERS: Readonly<Record<string, ExtraAnswer>> = {
@@ -1244,6 +1324,17 @@ export const EXTRA_SCENES = {
     tab: { key: 'jvm', kind: 'pods', namespace: 'shop', name: 'billing-7c9f4d-x2kq' },
   },
   // The same tab, for its thread dump: the deadlock of the Go tests' JDK 21 dump.
+  // A Python pod's tab: its processes out of /proc and prometheus_client's series.
+  'extra-runtime-python': {
+    key: 'runtime',
+    answers: PY_TAB_ANSWERS,
+    tab: { key: 'python', kind: 'pods', namespace: 'shop', name: 'catalog-5d8f6b-q7zt' },
+  },
+  'extra-runtime-python-nometrics': {
+    key: 'runtime',
+    answers: PY_TAB_NO_METRICS_ANSWERS,
+    tab: { key: 'python', kind: 'pods', namespace: 'shop', name: 'catalog-5d8f6b-q7zt' },
+  },
   'extra-runtime-threads': {
     key: 'runtime',
     answers: JVM_TAB_ANSWERS,

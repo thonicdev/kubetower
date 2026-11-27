@@ -434,16 +434,18 @@ function unusedCount(
 }
 
 /**
- * Show unused kinds, under the jump box.
+ * Show or Hide unused kinds, under the jump box.
  *
  * At the top of the column, where the operator asked for it, and in the jump
  * box's strip rather than a band of its own: the two are the column's two
- * ways of deciding what it lists. A toggle with `aria-pressed`, whose label
- * says what a press does: "Show unused kinds" while they are hidden, "Hide
- * unused kinds" while they are listed (#60), so the state reads without the
- * background; the count is how many kinds it adds or hides, drawn on the
- * right in the counter's size. Drawn only once the occupancy has answered and the choice has been
- * read: before that nothing is hidden, so there is nothing to show.
+ * ways of deciding what it lists. Its label says what a press does, "Show
+ * unused kinds" while they are hidden and "Hide unused kinds" while they are
+ * listed (#60), so the state reads without the background. That label is the
+ * state, so it has no `aria-pressed` as well: a toggle whose label changes
+ * would say its state twice. The count is how many kinds it adds or hides,
+ * drawn on the right in the counter's size. Drawn only once the occupancy has
+ * answered and the choice has been read: before that nothing is hidden, so
+ * there is nothing to show.
  */
 function UnusedToggle({
   shown,
@@ -462,8 +464,8 @@ function UnusedToggle({
   return (
     <button
       type="button"
-      aria-pressed={shown}
       data-unused-toggle=""
+      data-shown={shown}
       title={
         shown
           ? `${many} nothing you can see, and ${count === 1 ? 'it is' : 'they are'} listed. Press to hide them.`

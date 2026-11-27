@@ -5,19 +5,35 @@ import { Failure, ImageRef, Pending, Pill, type ExtensionTabProps } from '@kubet
 import { RUNTIME_LABEL, podQuery, type Container, type Runtime } from './data';
 import { GoPprof } from './GoPprof';
 import { NodeInspector } from './NodeInspector';
+import { PythonPanel } from './PythonPanel';
 
 /**
  * The tab of a runtime other than Java on a pod: which containers the spec
  * says run it, and what that rests on. It reads the spec alone (the same route
  * as the page) and runs nothing in a container. Go adds pprof (GoPprof),
- * Node.js its inspector (NodeInspector).
+ * Node.js its inspector (NodeInspector), Python its processes and
+ * prometheus_client series (PythonPanel).
  */
-function RuntimeTab({ runtime, cluster, namespace, name }: ExtensionTabProps & { runtime: Runtime }): ReactNode {
+function RuntimeTab({ runtime, cluster, namespace, name, readOnly }: ExtensionTabProps & { runtime: Runtime }): ReactNode {
   if (namespace === undefined || namespace === '') return null;
-  return <OnPod runtime={runtime} cluster={cluster} namespace={namespace} name={name} />;
+  // The probes the panels run on their own ask nothing on a read-only
+  // cluster (#157). The console renders a tab only once it knows.
+  return <OnPod runtime={runtime} cluster={cluster} namespace={namespace} name={name} readOnly={readOnly === true} />;
 }
 
-function OnPod({ runtime, cluster, namespace, name }: { runtime: Runtime; cluster: string; namespace: string; name: string }): ReactNode {
+function OnPod({
+  runtime,
+  cluster,
+  namespace,
+  name,
+  readOnly,
+}: {
+  runtime: Runtime;
+  cluster: string;
+  namespace: string;
+  name: string;
+  readOnly: boolean;
+}): ReactNode {
   const pod = useQuery(podQuery(cluster, namespace, name));
   const [picked, setPicked] = useState<string | undefined>(undefined);
   if (pod.data === undefined) {
@@ -48,10 +64,13 @@ function OnPod({ runtime, cluster, namespace, name }: { runtime: Runtime; cluste
       ) : null}
       <ContainerFacts runtime={runtime} container={container} />
       {runtime === 'node' ? (
-        <NodeInspector key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} />
+        <NodeInspector key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} readOnly={readOnly} />
       ) : null}
       {runtime === 'go' ? (
-        <GoPprof key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} />
+        <GoPprof key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} readOnly={readOnly} />
+      ) : null}
+      {runtime === 'python' ? (
+        <PythonPanel key={container.name} cluster={cluster} namespace={namespace} name={name} container={container.name} readOnly={readOnly} />
       ) : null}
     </div>
   );
@@ -63,7 +82,7 @@ function ContainerFacts({ runtime, container }: { runtime: Runtime; container: C
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone="info">{RUNTIME_LABEL[runtime]}</Pill>
         <span className="font-medium">{container.name}</span>
-        <ImageRef image={container.image} className="max-w-full" />
+        <ImageRef image={container.image} of={container.name} className="max-w-full" />
       </div>
       <div className="flex flex-wrap gap-1" data-runtime-hints="">
         {container.hints.map((hint) => (

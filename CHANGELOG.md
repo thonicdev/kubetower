@@ -13,6 +13,119 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+### Added
+
+- **Storage Inspector reads fill from Prometheus or VictoriaMetrics.** How
+  full each mounted claim is comes from the kubelets' own
+  `kubelet_volume_stats_*` series where the cluster's metrics backend holds
+  them, read for the claims the person may list; the kubelets, through
+  `nodes/proxy`, measure the claims it does not hold. A badge beside Mounts
+  names what gave the figures, and a page where nothing could be read says No
+  metrics available, with what grants the read on hover. Extras reach it
+  through a new Host door, `VolumeFill` (#91).
+- **Python in the Runtime Inspector.** A Python pod's tab lists its Python
+  processes, read out of /proc with nothing installed in the pod: the
+  interpreter's version, memory and peak, threads and start time. Where the
+  application serves prometheus_client's metrics, it adds the version, the
+  garbage collector per generation and the process's memory, CPU and open
+  files (#144).
+- **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
+  reads every database the cluster's user may open, with a database and
+  schema picker and a table search; a table's rows come 100 at a time,
+  forward and back, by primary key, by ctid or by offset for a view, each
+  value drawn for its type, and a cell opens in full, JSON laid out (#164).
+
+### Fixed
+
+- **Settings and the shell, within a keyboard's reach.** A card's switch
+  keeps the focus while its write is pending and says its new state, a
+  refusal on one cluster no longer follows the card to another, and an
+  extra naming an icon the console lacks draws the extra glyph. Back from
+  Settings puts the page's last scroll back, after Back, Forward and Back
+  again. The unused kinds toggle says its state once. The reason for No
+  metrics and an image's tag with its digest open on a press, the image's
+  copy names its container, and the account's hover says an update (#155).
+- **Network Inspector cells say what the policy engine would.** A
+  BaselineAdminNetworkPolicy rule no longer colours a cell where a
+  NetworkPolicy isolates that side, and a namespace's own cell is the
+  engine's answer for every pair of its pods on every port that can differ:
+  mixed where some flows pass and others are refused, partial where it is
+  too large to ask in full. One deny among the namespaces in others reads
+  partly denied, and an others whose ends were not counted is never taken as
+  isolated. A host-network pod shows its flows, the enlarged graph keeps its
+  size below 320 px, a flow UI link no longer takes the focus it was not
+  asked for, and a namespace the person may not list is not asked of the
+  flow source (#152).
+- **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
+  desktop, Services claiming to be Prometheus in one namespace and
+  VictoriaMetrics in another are now refused as two Prometheus Services in two
+  namespaces already were, the detail naming both; in one namespace,
+  Prometheus is still chosen. The source can be set in Settings › General
+  (#133).
+- **Updates: no install races left with automatic updates on.** A second
+  KubeTower started during an install no longer removes the copy the first
+  one is writing: the start-up sweep keeps a leftover younger than an hour.
+  What a quit-time install cut short is swept on Linux too. No download
+  removes the files of an earlier helper still waiting to install. A
+  read-only filesystem says Not writable instead of failing, a locked rpm
+  database no longer holds the start (nor lets a package be replaced as a
+  tar.gz), and an update can no longer be asked
+  to stop KubeTower before the stop is wired (#154).
+- **No Redis tile on what is not a Redis.** The Redis viewer no longer marks a
+  web port in front of a pod labelled redis, nor `ghcr.io/redis/nginx`, a web
+  client or a `predis` label, and it finds a Redis behind a second port, beside
+  an exporter, on its `--port`, or started by gosu, su-exec or a shell loop. A
+  pod's tiles come from one read of its namespace, and the labels a pod's tile
+  trusts are the server's (#151).
+- **Windows: a WebView2 failure refuses the window instead of ending
+  KubeTower.** When the WebView2 runtime cannot create its environment or
+  controller (a locked or full data folder, a policy), the library KubeTower
+  draws its windows with called `log.Fatalf` and the whole console exited, its
+  tunnels with it. A tool window is now refused (409) and its tunnel stays
+  open; the console's own window falls back to a browser window, and the
+  window that failed is closed rather than left blank on screen. The library
+  is carried patched in `third_party/go-webview2` until upstream takes the
+  change (#84).
+- **macOS: a tool window asks before opening a link in the browser.** A
+  sheet shows the link's host and address, with Open in browser and Cancel:
+  WebKit cannot tell a person's click from a page script's, so a script
+  could otherwise send the browser to an address of its choosing (#84).
+- **Metrics: fewer wrong answers about the source.** A metrics backend behind
+  an authenticating front (a 401 or a 5xx under the configured path) is now
+  tried through a port-forward instead of being reported as a wrong path; a
+  saved source never comes back with a probe of the one it replaced; the
+  Metrics tab says when the person may not read the object rather than "No
+  metrics available"; the Monitoring tile says why a failed read failed, on
+  hover (#156).
+- **A kubeconfig edited while KubeTower runs is read whole.** A file
+  truncated while the merge was being read no longer drops its contexts for
+  good; a file renamed away for a moment by an editor keeps its clusters and
+  their connections; a Retry and the watcher no longer apply an older read
+  after a newer one; and a context pointed at another server discovers its
+  kinds there rather than reusing the old server's (#153).
+- **Runtime Inspector: the program left running names the runtime.** In a
+  shell chain the program exec'd decides unless it is plumbing itself, or
+  else the last one that is not plumbing (`cd`, `wait`, `sleep`, `tail`,
+  `echo`, `tee`, `cat`…) nor a fallback after `||`: `npx wait-on … &&
+  /app/bin/start` with JAVA_HOME is Java, `python app.py & wait`, `cat x |
+  node` and `node server.js & exec tail -f /dev/null` are read, and `bash
+  -ceo pipefail` is read. Opening the JVM, Go, Node.js or Python tab, on a
+  pod's page or in the Runtime Inspector, on a read-only cluster runs
+  nothing and records no refusal; a switch is
+  reviewed once, an old `jvm` grant that could not be reviewed answers 503
+  and grants nothing, and a refusal is drawn on one line (#157).
+- **Updates: no program found through PATH, and a way out of Not
+  writable.** The updater starts powershell, explorer, xdg-open, open,
+  pkexec and the package tools from the system's own folders. The Windows
+  zip's swap retries the move while the old executable is still held. Not
+  writable has Retry, and is kept across a restart rather than downloaded
+  again at every start, until a newer release comes; a failure that only a
+  restart clears offers no Retry (#178).
+- **Storage and What's new polish.** A cluster with no claim no longer
+  shows a "fill unread" badge, a claim that backs two volumes of a pod is
+  listed once, and a Fixed entry is never shown ahead of a new extra in
+  What's new (#182).
+
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
 ### Added

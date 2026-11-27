@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,9 @@ type Status struct {
 	Reason string `json:"reason,omitempty"`
 	// Folder holds the verified file, in the manual phase.
 	Folder string `json:"folder,omitempty"`
+	// HelperAlive: failed with an earlier helper still alive (errHelperAlive),
+	// which Download refuses until KubeTower restarts: nothing to retry.
+	HelperAlive bool `json:"helperAlive,omitempty"`
 }
 
 // Plan is what an installer is handed: a verified file and what it replaces.
@@ -102,6 +106,10 @@ var (
 	ErrUnsupported = errors.New("this installation cannot be updated from the console")
 	// ErrBusy: a download or an install is already running.
 	ErrBusy = errors.New("an update is already in progress")
+	// ErrHelperAlive: a helper that could not be stopped may still install when
+	// KubeTower exits; no download or install starts beside it, for a new one
+	// would remove the files it is to move into place (#154).
+	ErrHelperAlive = errors.New("an earlier update's helper is still waiting; quit KubeTower and start it again first")
 	// ErrWhen: when an automatic update installs is neither on quit nor now.
 	ErrWhen = errors.New(`when must be "quit" or "now"`)
 	// ErrNotReady: Install was asked before a verified download.
@@ -125,15 +133,50 @@ var installers = map[Kind]Installer{}
 // start. Filled by the platform files.
 var sweepers = map[Kind]func(path string){}
 
-// sweepBeside removes the entries beside path that match the patterns: the
-// temporary names an install writes before its rename.
+// sweepAge is how old a leftover must be before the start-up sweep removes
+// it: younger, it may be the copy another instance's install is writing now
+// (#154), and an install never takes this long.
+var sweepAge = time.Hour
+
+// sweepBeside removes the entries beside path that match the patterns and are
+// older than sweepAge: the temporary names an install writes before its
+// rename, left by one cut short.
 func sweepBeside(path string, patterns ...string) {
 	for _, pattern := range patterns {
+		prefix, _, _ := strings.Cut(pattern, "*")
 		found, _ := filepath.Glob(filepath.Join(filepath.Dir(path), pattern))
 		for _, one := range found {
-			_ = os.RemoveAll(one)
+			if old, ok := oldEnough(one, prefix); ok && old {
+				_ = os.RemoveAll(one)
+			}
 		}
 	}
+}
+
+// stampedTemp makes a folder like os.MkdirTemp, its creation time in its
+// name after prefix (`<prefix><unix seconds>-<random>`). On macOS a folder's
+// own mtime is not when it was made: a mount point shows the mounted volume's
+// root, as old as the release, and ditto keeps the source's times (#154).
+func stampedTemp(dir, prefix string) (string, error) {
+	return os.MkdirTemp(dir, prefix+strconv.FormatInt(time.Now().Unix(), 10)+"-")
+}
+
+// oldEnough says whether path, a leftover named after prefix, is at least
+// sweepAge old: by the time stampedTemp wrote in its name, or by its mtime
+// for a name with none (a file, or a folder an older release made). ok is
+// false when the age cannot be read.
+func oldEnough(path, prefix string) (old, ok bool) {
+	rest := strings.TrimPrefix(filepath.Base(path), prefix)
+	if stamp, _, found := strings.Cut(rest, "-"); found {
+		if secs, err := strconv.ParseInt(stamp, 10, 64); err == nil && secs > 0 {
+			return time.Since(time.Unix(secs, 0)) >= sweepAge, true
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, false
+	}
+	return time.Since(info.ModTime()) >= sweepAge, true
 }
 
 // installable says whether a kind's installer can run on this machine, for
@@ -291,6 +334,12 @@ func New(o Options) *Updater {
 		u.status.Phase = Failed
 		u.status.Version = held.FailedOnQuit
 		u.status.Reason = held.FailedReason
+	} else if held.ManualVersion != "" && update.IsNewer(held.ManualVersion, o.Version) && isDir(held.ManualFolder) {
+		// Found not writable before: said again, with its folder, and not
+		// downloaded again until a person asks.
+		u.status.Phase = Manual
+		u.status.Version = held.ManualVersion
+		u.status.Folder = held.ManualFolder
 	}
 	if sweep := sweepers[o.Installation.Kind]; sweep != nil && o.Install == nil && o.Installation.Path != "" {
 		path := o.Installation.Path
@@ -303,7 +352,9 @@ func New(o Options) *Updater {
 func (u *Updater) Status() Status {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.status
+	s := u.status
+	s.HelperAlive = s.Phase == Failed && s.Reason == errHelperAlive.Error()
+	return s
 }
 
 // Set writes the "Install updates automatically" setting and, when it is not
@@ -362,12 +413,17 @@ func (u *Updater) Download() (Status, error) {
 		return u.status, ErrUnsupported
 	case u.status.Phase == Downloading || u.status.Phase == Verifying || u.status.Phase == Installing:
 		return u.status, ErrBusy
+	case u.status.Phase == Failed && u.status.Reason == errHelperAlive.Error():
+		// forget would remove update/install-*, which that helper may still
+		// move into place when KubeTower exits (#154).
+		return u.status, ErrHelperAlive
 	}
 	u.forget()
 	u.status.Phase = Downloading
 	// InstalledOnQuit needs nothing here: New settles it at every start.
-	if u.held.FailedOnQuit != "" {
+	if u.held.FailedOnQuit != "" || u.held.ManualVersion != "" {
 		u.held.FailedOnQuit, u.held.FailedReason = "", ""
+		u.held.ManualVersion, u.held.ManualFolder = "", ""
 		safego.Go("update settings", u.saveSettings, nil)
 	}
 	safego.Go("update download", func() error { u.download(); return nil }, func(err error) {
@@ -591,7 +647,6 @@ func (u *Updater) canInstall() bool {
 // where it is, and Open folder shows it.
 func (u *Updater) manual(file string, err error) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	if u.o.Logf != nil {
 		u.o.Logf("update: %s", textutil.FirstLine(err.Error()))
 	}
@@ -599,6 +654,27 @@ func (u *Updater) manual(file string, err error) {
 	u.status.Phase = Manual
 	u.status.Folder = filepath.Dir(file)
 	u.status.Reason = ""
+	keep := u.status.Version != "" && (u.held.ManualVersion != u.status.Version || u.held.ManualFolder != u.status.Folder)
+	if keep {
+		u.held.ManualVersion, u.held.ManualFolder = u.status.Version, u.status.Folder
+	}
+	u.mu.Unlock()
+	// Written before manual returns, off the lock saveSettings takes: never a
+	// write left running past the update's own work.
+	if keep {
+		if err := u.saveSettings(); err != nil {
+			u.logf("update: the manual phase could not be kept: %s", textutil.FirstLine(err.Error()))
+		}
+	}
+}
+
+// isDir says path is an existing folder.
+func isDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // OpenFolder shows the folder that holds the verified file, in the manual
@@ -935,6 +1011,12 @@ type settings struct {
 	// helper runs the setup after the exit, out of sight: the next start
 	// running an older build is that install having failed.
 	InstalledOnQuit string `json:"installedOnQuit,omitempty"`
+	// ManualVersion is the release found with a folder that cannot be
+	// written, and ManualFolder where its verified file waits: kept so the
+	// next start says so again rather than downloading it once more at every
+	// start (#178, C37.5), until a person downloads again.
+	ManualVersion string `json:"manualVersion,omitempty"`
+	ManualFolder  string `json:"manualFolder,omitempty"`
 }
 
 // on is the automatic setting: on unless turned off.

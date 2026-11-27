@@ -102,15 +102,44 @@ describe('the Storage Inspector page', () => {
       expect(el.textContent).not.toMatch(/\b0%/);
     }
     expect(row('billing/reports').querySelector('[data-fill]')?.getAttribute('data-fill')).toBe('unread');
+    // A mounted claim with no figure is the shared No metrics available, not
+    // an ad-hoc word (#91).
+    const none = row('billing/reports').querySelector('[data-fill="unread"] [data-no-metrics]');
+    expect(none?.textContent).toBe('No metrics available');
+    expect(none?.querySelector('[title]')?.getAttribute('title')).toContain('metrics backend nor the kubelet');
     expect(row('shop/legacy-uploads').querySelector('[data-fill]')?.getAttribute('data-fill')).toBe('unmounted');
   });
 
-  it('says in one line what grants the fill when no kubelet could be read', async () => {
+  it('names what gave the fill figures as one badge (#91)', async () => {
+    stub({ [ROUTE]: { body: STORAGE_OVERVIEW } });
+    mount();
+    await screen.findByRole('table');
+    const via = document.querySelector('[data-glance="fill"] [data-fill-via]');
+    expect(via?.getAttribute('data-fill-via')).toBe('victoriametrics,kubelet');
+    expect(via?.textContent).toBe('VictoriaMetrics + kubelet');
+    expect(via?.querySelector('[title]')?.getAttribute('title')).toBe('Fill read from VictoriaMetrics and kubelet');
+    cleanup();
+    // Nothing gave a figure: no badge.
     stub({ [ROUTE]: { body: STORAGE_BARE } });
     mount();
-    const line = await screen.findByText('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)');
-    expect(line.getAttribute('data-source')).toBe('unreadable');
-    expect(line.getAttribute('title')).toContain('nodes/proxy');
+    await waitFor(() => {
+      expect(document.querySelector('[data-source="unreadable"] [data-no-metrics]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-glance="fill"]')).toBeNull();
+  });
+
+  it('says No metrics available when no fill could be read, what grants it on hover', async () => {
+    stub({ [ROUTE]: { body: STORAGE_BARE } });
+    mount();
+    const line = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-source="unreadable"] [data-no-metrics]');
+      expect(found?.textContent).toBe('No metrics available');
+      return found as HTMLElement;
+    });
+    expect(line.closest('[data-source]')?.getAttribute('data-source')).toBe('unreadable');
+    expect(line.getAttribute('title')).toContain('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)');
+    // Never the red sentence of before #91.
+    expect(screen.queryByText('Fill unreadable · needs nodes/proxy (chart: rbac.nodeProxy)')).toBeNull();
     // How many are full is unknown, never 0.
     expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
     expect(document.querySelector('[data-filter="full"]')?.textContent).toContain('–');
@@ -263,6 +292,25 @@ describe('the Overview tile', () => {
     mount();
     await screen.findByRole('table');
     expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
+  });
+
+  it('draws no fill badge on a cluster with no claim at all (#182)', async () => {
+    const counts = {
+      ...STORAGE_BARE.counts,
+      claims: 0,
+      volumes: 0,
+      orphans: 0,
+      orphanClaims: 0,
+      orphanVolumes: 0,
+      orphanClasses: 0,
+      measured: 0,
+      shared: 0,
+      unread: 0,
+    };
+    stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts, claims: [] } } });
+    const tile = await storageTile('prod', new AbortController().signal);
+    expect(tile.title).toBe('0 claims');
+    expect(tile.badges).not.toContain('fill unread');
   });
 
   it('carries no grade, never a green OK, when no kubelet was read and nothing is orphaned', async () => {

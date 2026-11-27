@@ -40,14 +40,22 @@ func (u *Updater) autoStep(ctx context.Context, latest func() string, open func(
 		return
 	}
 	switch s.Phase {
-	case Idle, Failed:
+	case Idle, Failed, Manual:
 		// A helper that could not be stopped keeps its file (#106): a new
 		// download would remove it from under it.
 		if s.Phase == Failed && s.Reason == errHelperAlive.Error() {
 			return
 		}
 		next := latest()
-		if next == "" || !update.IsNewer(next, u.o.Version) || next == u.failedAtQuit() || !u.once(&u.autoDownloaded, next) {
+		if next == "" || !update.IsNewer(next, u.o.Version) || next == u.failedAtQuit() {
+			return
+		}
+		// A release found not writable stays said until a person asks; a
+		// newer one is downloaded as from Idle (#178).
+		if s.Phase == Manual && !update.IsNewer(next, s.Version) {
+			return
+		}
+		if !u.once(&u.autoDownloaded, next) {
 			return
 		}
 		if _, err := u.Download(); err != nil {

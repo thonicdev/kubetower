@@ -393,7 +393,14 @@ verb and the same held answers:
   Configuration is what closes it; RBAC alone does not. The desktop is one
   person's console over their own kubeconfig, and keeps looking: there it
   refuses to choose when Services in more than one namespace claim to be
-  Prometheus, and says which. An answer larger than 16 MiB is refused on both
+  Prometheus, and says which - and the same across engines (#133): Services
+  claiming to be Prometheus in one namespace and VictoriaMetrics in another are
+  refused alike, since a Service labelled `app=prometheus` in a tenant's
+  namespace beside a real vmsingle elsewhere is the same decoy; the two in one
+  namespace keep Prometheus. A source set by hand in Settings › Monitoring
+  replaces discovery on that cluster, as the server profile's configuration
+  does, and is kept in the desktop's state directory under the resolved
+  context's name. An answer larger than 16 MiB is refused on both
   transports.
 - **A tunnel is reviewed as the request it is**: `terminal.Forwarder.Forward`
   reads the Service and its pods for whoever the context carries and digs the
@@ -501,10 +508,11 @@ verb and the same held answers:
   through `Host.List`, reviewed for the person as the console's own lists are
   (narrowed to the namespaces they may list, a read by name reviewed with the
   name), and `Host.Usage`, `Host.ContainerUsage`, `Host.UsageWindow`,
-  `Host.Reveal`, `Host.Exec`, `Host.Forward` and `Host.MayReadLogs` are
-  reviewed for the person too - the two usage doors as `list pods`, because
-  neither metrics-server read with these credentials nor Prometheus, which has
-  no RBAC, knows who is asking. **Two doors are not reviewed for the person, by
+  `Host.VolumeFill`, `Host.Reveal`, `Host.Exec`, `Host.Forward` and
+  `Host.MayReadLogs` are reviewed for the person too - the two usage doors as
+  `list pods` and the volume-fill door as `list persistentvolumeclaims`,
+  because neither metrics-server read with these credentials nor Prometheus,
+  which has no RBAC, knows who is asking. **Two doors are not reviewed for the person, by
   design**: `Host.ConfiguredSecret` and `Host.ConfiguredService` read, as the
   console (`AsConsole`, the ServiceAccount here), one Secret's key or one
   Service that the extension's `extension.Configured` names **from the

@@ -165,8 +165,8 @@ var notAPersonsRead = map[string]string{
 	// the process-wide hold. A person is shown a figure beside a row their own
 	// list returned, or on the page of an object their own `get` allowed - the
 	// review is on the way out.
-	"internal/metrics/metrics.go Metrics.findPrometheus": "the console finding its own monitoring backend",
-	"internal/metrics/metrics.go restRaw":                "the console's monitoring backend, into a hold reviewed on the way out",
+	"internal/metrics/metrics.go listCandidates": "the console finding its own monitoring backend (findPrometheus, and the integration tests' VictoriaMetricsAlone)",
+	"internal/metrics/metrics.go restRaw":        "the console's monitoring backend, into a hold reviewed on the way out",
 	// The kubelet's stats, read per node into the usage hold behind the node
 	// and claim tables, and for an extension's Host.Usage - which is reviewed
 	// in internal/web before it reads.

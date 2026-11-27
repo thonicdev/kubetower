@@ -38,7 +38,7 @@ func installApp(ctx context.Context, plan Plan) error {
 		}
 		return fmt.Errorf("%w: %w", ErrNotWritable, ErrNotInPlace)
 	}
-	mount, err := os.MkdirTemp("", mountPrefix)
+	mount, err := stampedTemp("", mountPrefix)
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func copyApp(ctx context.Context, source, bundle string) (string, error) {
 	if _, err := os.Stat(source); err != nil {
 		return "", fmt.Errorf("the disk image holds no KubeTower.app")
 	}
-	next, err := os.MkdirTemp(filepath.Dir(bundle), ".KubeTower-update-")
+	next, err := stampedTemp(filepath.Dir(bundle), ".KubeTower-update-")
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +102,8 @@ func sweepMacApp(bundle string) {
 	sweepBeside(bundle, ".KubeTower-update-*", ".KubeTower-probe-*")
 	mounts, _ := filepath.Glob(filepath.Join(os.TempDir(), mountPrefix+"*"))
 	for _, mount := range mounts {
-		if info, err := os.Stat(mount); err == nil && info.IsDir() {
+		// Its age from its name: a mounted folder's mtime is the volume's.
+		if old, ok := oldEnough(mount, mountPrefix); ok && old {
 			detach(mount)
 		}
 	}

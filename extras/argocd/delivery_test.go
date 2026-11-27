@@ -509,6 +509,10 @@ func (h *stubHost) DNSWindow(*http.Request, string, extension.DNSSpan) (extensio
 	return extension.DNS{}, nil
 }
 
+func (h *stubHost) VolumeFill(*http.Request, string, []extension.ClaimRef) (extension.VolumeFill, error) {
+	return extension.VolumeFill{State: extension.WindowNoPrometheus}, nil
+}
+
 func (h *stubHost) Forward(context.Context, string, string, string, int) (extension.Tunnel, error) {
 	return extension.Tunnel{Stop: func() {}}, nil
 }

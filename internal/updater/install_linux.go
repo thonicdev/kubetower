@@ -4,14 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
 func init() {
 	installers[LinuxAppImage] = installAppImage
 	installers[LinuxTar] = installTar
+	// What a replace cut short leaves beside the file (replaceWith), as at a
+	// quit past QuitWait (#154).
+	for _, kind := range []Kind{LinuxAppImage, LinuxTar} {
+		sweepers[kind] = func(path string) { sweepBeside(path, ".kubetower-update-*") }
+	}
 	installers[LinuxDeb] = installPackage
 	installers[LinuxRPM] = installPackage
 	for _, kind := range []Kind{LinuxDeb, LinuxRPM} {
@@ -24,7 +31,7 @@ func init() {
 
 // lookPath and runPrivileged are exec's, held in variables for the tests.
 var (
-	lookPath      = exec.LookPath
+	lookPath      = systemTool
 	runPrivileged = func(ctx context.Context, argv []string) ([]byte, error) {
 		return exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
 	}
@@ -80,10 +87,12 @@ func installPackage(ctx context.Context, plan Plan) error {
 }
 
 // killedAtTheBound says the process was stopped at the context's deadline:
-// exec returns the context's error then, and a wrapped "canceling Cmd" error
-// when the kill itself failed.
+// exec returns the context's error then. A kill the process refused carries
+// that refusal (EPERM: pkexec runs the manager as root), however exec words
+// its error, so it is decided by the cause and not by the sentence (#178,
+// C33.2).
 func killedAtTheBound(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "canceling Cmd")
+	return errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, syscall.EPERM) && !errors.Is(err, os.ErrPermission)
 }
 
 // pkexecFailure says why pkexec or the package manager refused, in one line.

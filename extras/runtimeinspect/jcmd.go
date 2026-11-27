@@ -99,7 +99,7 @@ var withoutOptions = []string{"env", "-u", "JAVA_TOOL_OPTIONS", "-u", "JDK_JAVA_
 func jcmdArgv(plain bool, pid int, name string) ([]string, error) {
 	d, ok := diagnostics[name]
 	if !ok {
-		return nil, fmt.Errorf("%q is not a command the JVM Inspector sends", name)
+		return nil, fmt.Errorf("%q is not a command the Runtime Inspector sends", name)
 	}
 	if pid <= 0 {
 		return nil, fmt.Errorf("a JVM's process id is a positive number, not %d", pid)

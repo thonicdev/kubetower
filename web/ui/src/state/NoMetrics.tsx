@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { Reason, ReasonOnlyState } from '../api';
 import { btnGhost } from '../components/buttons';
+import { DetailTip } from '../components/DetailTip';
 import { Icon } from '../components/Icon';
 import { Pill } from '../components/Pill';
 
@@ -59,6 +60,9 @@ export function NoMetrics({ state, reason, detail, onRetry, variant = 'line' }: 
       title={title}
     >
       {NO_METRICS}
+      {/* The reason within a keyboard's and a touch screen's reach, not the
+          hover alone. */}
+      {title === undefined ? null : <DetailTip text={title} label="Why no metrics" />}
       {retry === undefined ? null : (
         <button type="button" onClick={retry} aria-label="Try again" title="Try again" className={`${btnGhost} px-1`}>
           <Icon name="refresh" />

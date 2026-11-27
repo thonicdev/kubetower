@@ -45,14 +45,15 @@ func (h *readOnlyHost) ForwardPod(*http.Request, string, string, string, int) (e
 
 // Every route that runs a command in a container or opens a tunnel to it -
 // the jcmd tools, the JVM inspection and dumps, pprof, the Node inspector and
-// its snapshot - answers a read-only cluster with read_only in one line, opens
+// its snapshot, the Python processes and metrics - answers a read-only cluster with read_only in one line, opens
 // no tunnel, reaches no pprof, and leaves a refusal as the only trace.
 func TestAReadOnlyClusterRefusesEveryDiagnostic(t *testing.T) {
 	srv, asked := pprofServer(t, true)
 	p := pod("shop", "mix-0",
 		corev1.Container{Name: "jvm", Image: "eclipse-temurin:21-jdk"},
 		corev1.Container{Name: "go", Image: "registry.example.com/api:1", Env: envNamed("GOMEMLIMIT")},
-		corev1.Container{Name: "web", Image: "node:22", Command: []string{"node", "server.js"}})
+		corev1.Container{Name: "web", Image: "node:22", Command: []string{"node", "server.js"}},
+		corev1.Container{Name: "py", Image: "python:3.12-slim", Command: []string{"python", "app.py"}})
 	h := &readOnlyHost{podHost: newPodHost(t, srv, p)}
 	n := 0
 	for _, r := range New().Routes(h) {
@@ -66,6 +67,8 @@ func TestAReadOnlyClusterRefusesEveryDiagnostic(t *testing.T) {
 			container = "go"
 		case strings.Contains(r.Pattern, "/node"):
 			container = "web"
+		case strings.Contains(r.Pattern, "/python"):
+			container = "py"
 		}
 		fill := strings.NewReplacer("{namespace}", "shop", "{name}", "mix-0", "{container}", container,
 			"{profile}", "heap", "{read}", "heapsnapshot")
@@ -93,8 +96,8 @@ func TestAReadOnlyClusterRefusesEveryDiagnostic(t *testing.T) {
 			}
 		})
 	}
-	if n != 13 {
-		t.Errorf("%d routes under a container, want 13", n)
+	if n != 15 {
+		t.Errorf("%d routes under a container, want 15", n)
 	}
 	if len(h.opened) != 0 || len(h.ran) != 0 || len(*asked) != 0 {
 		t.Errorf("a read-only cluster opened %v, ran %v, asked pprof %v", h.opened, h.ran, *asked)

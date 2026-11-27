@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,7 +74,15 @@ type FillSource struct {
 	Message string `json:"message,omitempty"`
 	// Detail is the error behind it, for a hover.
 	Detail string `json:"detail,omitempty"`
+	// Via names what gave the figures, in the order asked:
+	// extension.EnginePrometheus or extension.EngineVictoriaMetrics for the
+	// cluster's metrics backend (#91), then ViaKubelet for the claims it did
+	// not cover. Empty when nothing gave one.
+	Via []string `json:"via,omitempty"`
 }
+
+// ViaKubelet: figures read from the kubelets, through nodes/proxy.
+const ViaKubelet = "kubelet"
 
 // Counts are the tiles.
 type Counts struct {
@@ -450,7 +459,10 @@ func readPods(r *http.Request, h extension.Host, cluster, ns string, a *Answer, 
 		for _, v := range p.Spec.Volumes {
 			switch {
 			case v.PersistentVolumeClaim != nil:
-				info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+				// One claim may back two volumes of a pod: listed once (#182).
+				if !slices.Contains(info.claims, v.PersistentVolumeClaim.ClaimName) {
+					info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+				}
 			case v.Ephemeral != nil:
 				if info.ephemeral == nil {
 					info.ephemeral = map[string]bool{}

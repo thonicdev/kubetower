@@ -3,6 +3,7 @@ package updater
 import (
 	"archive/zip"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -152,11 +153,11 @@ func TestNoHelperStartsWithoutAWayToStop(t *testing.T) {
 }
 
 func TestSetStopIsTheWayTheHelperStops(t *testing.T) {
-	was := stopper
-	t.Cleanup(func() { stopper = was })
+	was := stopper.Load()
+	t.Cleanup(func() { stopper.Store(was) })
 	called := false
 	SetStop(func() { called = true })
-	stopper()
+	stopFunc()()
 	if !called {
 		t.Fatal("SetStop did not set the stop")
 	}
@@ -239,5 +240,24 @@ func TestTheWindowsHelperFollowsTheMoment(t *testing.T) {
 	}
 	if err := handOver(plan, "s", stopping, quitting); err != nil || len(stopped) != 1 || len(quit) != 1 {
 		t.Fatalf("restart: %v %v %v", err, quit, stopped)
+	}
+}
+
+// The move is retried (#178, C14.4): just after KubeTower exits, an antivirus
+// or the indexer may still hold the old executable for a moment. The loop
+// stops at the first success, and the start follows it.
+func TestTheZipSwapRetriesTheMove(t *testing.T) {
+	got := swapScript(7, `D:\tools\.kubetower-update-1.exe`, `D:\tools\kubetower.exe`, nil, `D:\s\update-install.log`, true)
+	loop := fmt.Sprintf("for ($try = 1; $try -le %d -and -not $moved; $try++)", moveAttempts)
+	for _, want := range []string{"$moved = $false;", loop, "$moved = $true;", "Start-Sleep -Milliseconds 500"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the script lacks %q:\n%s", want, got)
+		}
+	}
+	if moveAttempts < 2 {
+		t.Errorf("moveAttempts is %d: no retry", moveAttempts)
+	}
+	if strings.Index(got, loop) > strings.Index(got, "Move-Item") || strings.Index(got, "Move-Item") > strings.Index(got, "Start-Process") {
+		t.Error("the move is not inside the loop, or the start comes before it")
 	}
 }

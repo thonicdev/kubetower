@@ -309,6 +309,12 @@ func (rd *read) observe(r *http.Request, h extension.Host, cluster, namespace st
 		out.State, out.Narrowed = flowsEmpty, !rd.complete
 		return out
 	}
+	if namespace != "" && !allowed[namespace] {
+		// A namespace the person may not list, asked by name: the source is
+		// not asked for it, so not even how much it carried is read.
+		out.State, out.Narrowed = flowsEmpty, true
+		return out
+	}
 	// What the read needs from the person is read before the tunnel: a
 	// refusal costs no tunnel.
 	fetch, state, detail := fd.prepare(r, h, cluster, allowed)

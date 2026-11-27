@@ -16,7 +16,7 @@ import (
 )
 
 // The extension as the console knows it: its key, its label, off by default
-// like every extra (nothing here says otherwise), four GETs and thirteen POSTs.
+// like every extra (nothing here says otherwise), four GETs and fifteen POSTs.
 func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 	x := New()
 	if x.Key() != "runtime" || x.Label() != "Runtime Inspector" || !slices.Equal(x.Legacy(), []string{"jvm"}) {
@@ -26,8 +26,8 @@ func TestTheExtensionIsTheRuntimeInspector(t *testing.T) {
 		t.Error("the catalog entry is empty")
 	}
 	routes := x.Routes(newHost(t))
-	if len(routes) != 17 {
-		t.Fatalf("%d routes, want the inventory, the column, one pod, inspect, reveal, threads, history, histogram, the heap dump, the recording, the jcmd probe, the three pprof routes and the three Node.js routes", len(routes))
+	if len(routes) != 19 {
+		t.Fatalf("%d routes, want the inventory, the column, one pod, inspect, reveal, threads, history, histogram, the heap dump, the recording, the jcmd probe, the three pprof routes, the three Node.js routes and the two Python routes", len(routes))
 	}
 	// The reads of the spec and of metrics are GETs. Every route under a
 	// container runs jcmd, opens a tunnel or both: a POST, so the console's
@@ -231,8 +231,8 @@ func TestACrossSiteGetOpensNothing(t *testing.T) {
 			t.Errorf("GET %s answered %d, want 405", path, rec.Code)
 		}
 	}
-	if n != 13 {
-		t.Errorf("%d routes under a container, want 13", n)
+	if n != 15 {
+		t.Errorf("%d routes under a container, want 15", n)
 	}
 	if len(h.opened) != 0 || len(h.ran) != 0 || len(*asked) != 0 {
 		t.Errorf("a GET opened %v, ran %v, asked pprof %v", h.opened, h.ran, *asked)

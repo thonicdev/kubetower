@@ -308,7 +308,14 @@ func FailureWord(err error) string {
 // could not be written down is applied, and the record says so.
 func (g *Gate) Administer(ctx context.Context, cluster string, attrs Attributes, change string,
 	do func() (applied bool, err error)) (Answer, error) {
-	answer := g.Review(ctx, cluster, attrs)
+	return g.AdministerAnswered(ctx, cluster, attrs, g.Review(ctx, cluster, attrs), change, do)
+}
+
+// AdministerAnswered is Administer for a caller that has already reviewed
+// attrs and holds the answer: the write is recorded and done on it, with no
+// second review (#157).
+func (g *Gate) AdministerAnswered(ctx context.Context, cluster string, attrs Attributes, answer Answer, change string,
+	do func() (applied bool, err error)) (Answer, error) {
 	r := g.Record(ctx, audit.Extension, cluster, attrs, answer.Decision)
 	r.Change = change
 	pending, unrecorded := g.Begin(ctx, r)

@@ -185,7 +185,9 @@ export function SessionInline(): ReactNode {
       {unrecorded(signOut.error) ? <NotSignedOut className="min-w-0 max-w-96 truncate" /> : null}
       <OverflowMenu
         label={name}
-        title={data === undefined ? 'Account' : `Signed in as ${data.identity}`}
+        // The update behind the menu says itself on hover too, as the dot does
+        // to a screen reader: the account's line, then the update's.
+        title={[data === undefined ? 'Account' : `Signed in as ${data.identity}`, ...(badge.shown ? [badge.title] : [])].join('\n')}
         // An update behind the menu is its dot, described to a screen reader;
         // the trigger's name stays the account. Settings inside carries the "1".
         {...(badge.shown ? { flagged: true, flaggedText: 'Update available' } : {})}

@@ -37,6 +37,9 @@ node_modules/
 dist/
 *.exe
 *.dll
+# Not built here: Microsoft's WebView2 loader, which the patched go-webview2
+# copy embeds with go:embed (#84). Without them its Windows build fails.
+!third_party/go-webview2/webviewloader/sdk/*/WebView2Loader.dll
 *.so
 *.dylib
 /kubetower

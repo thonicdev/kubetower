@@ -1,0 +1,10 @@
+P 1
+comm python3
+exe /usr/bin/python3.11
+PPid: 0
+VmHWM: 8416
+VmRSS: 5656
+Threads: 1
+start 45586205
+thread python3
+btime 1795258953

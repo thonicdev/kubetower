@@ -93,8 +93,8 @@ export type IconName =
   // as text (U+22EF), drawn as a shape on a row because a row's text is what
   // the operator reads, selects and copies, and the glyph is not part of it.
   | 'more'
-  // The menu's Extra heading and every extra under it. One shape for
-  // all of them, because the extension contract carries no icon of its own.
+  // The menu's Extra heading, and an extra that names no icon of its own
+  // (`Extension.icon`) or one the sheet does not define.
   | 'extra'
   // Log out, in the account menu and at the rail's foot.
   | 'logout'
@@ -689,14 +689,101 @@ export function IconSprite(): ReactNode {
  * differently without losing the stroke rules - and cannot accidentally drop
  * them by passing a class of their own.
  */
+/** The names the sheet defines, as its `<symbol>`s do (`Icon.test.tsx` holds
+ *  the two together). */
+const DEFINED: ReadonlySet<string> = new Set([
+  'terminal',
+  'settings',
+  'logs',
+  'close',
+  'forward',
+  'stop',
+  'copy',
+  'external',
+  'claude',
+  'resource',
+  'volume',
+  'secret',
+  'config',
+  'node',
+  'refresh',
+  'edit',
+  'trash',
+  'evict',
+  'cordon',
+  'uncordon',
+  'drain',
+  'pause',
+  'play',
+  'trigger',
+  'scale',
+  'cpu',
+  'memory',
+  'network',
+  'disk',
+  'chevron',
+  'back',
+  'pod',
+  'deployment',
+  'replicaset',
+  'statefulset',
+  'daemonset',
+  'job',
+  'cronjob',
+  'service',
+  'ingress',
+  'endpoint',
+  'class',
+  'policy',
+  'access',
+  'quota',
+  'lease',
+  'webhook',
+  'account',
+  'role',
+  'binding',
+  'namespace',
+  'event',
+  'workloads',
+  'cluster',
+  'overview',
+  'search',
+  'filter',
+  'more',
+  'extra',
+  'logout',
+  'lock',
+  'star',
+  'starred',
+  'warning',
+  'certificate',
+  'delivery',
+  'database',
+  'globe',
+  'pulse',
+  'coffee',
+  'sliders',
+  'clock',
+  'topology',
+  'hourglass',
+  'layers',
+  'shield',
+  'info',
+  'plus',
+  'check',
+])
+
 export function Icon({ name, className = '' }: { name: IconName; className?: string }): ReactNode {
+  // A name the sheet lacks (a plain-JS extension, a cast past IconName) draws
+  // the generic extra glyph rather than an empty box.
+  const drawn = DEFINED.has(name) ? name : 'extra';
   return (
     <svg
       className={`size-[var(--icon)] shrink-0 fill-none stroke-current align-[-2px] [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:2] ${className}`} // style-allow: a 2px baseline nudge, no step on the scale
       aria-hidden="true"
       focusable="false"
     >
-      <use href={`#i-${name}`} />
+      <use href={`#i-${drawn}`} />
     </svg>
   );
 }

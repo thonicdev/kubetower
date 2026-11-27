@@ -178,7 +178,7 @@ export function PodGraph({
       viewBox={`0 0 ${String(W)} ${String(H)}`}
       role="group"
       aria-label="Whom the rules let this pod talk to"
-      className={`w-full rounded-lg border border-line bg-panel ${large ? '' : 'max-w-2xl'} ${onEnlarge === undefined ? '' : 'cursor-zoom-in'}`}
+      className={`w-full rounded-lg border border-line bg-panel ${large ? 'min-w-80' : 'max-w-2xl'} ${onEnlarge === undefined ? '' : 'cursor-zoom-in'}`}
       data-mini-graph={large ? undefined : ''}
       data-large-graph={large ? '' : undefined}
       onClick={onEnlarge}
@@ -218,7 +218,7 @@ export function PodGraph({
   );
   if (large) {
     return (
-      <div ref={box} className="w-full min-w-0" data-large-graph-box="">
+      <div ref={box} className="w-full min-w-0 overflow-x-auto" data-large-graph-box="">
         {svg}
       </div>
     );

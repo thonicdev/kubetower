@@ -273,6 +273,21 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 	handler, hostWhy := frontHandler(ui.Bundle(), outer, listen, inCluster, cluster.InContainer())
 	log.Printf("[kubetower] %s", hostWhy)
 
+	// The way to stop, before anything can ask for it: an install started by
+	// the first request the server answers stops the console through it, so it
+	// is set before the server serves (#154).
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+	// An installed update ends this process the same way, once its helper
+	// waits to start the new version (internal/updater, #49 to #51).
+	updater.SetStop(func() {
+		select {
+		case stop <- os.Interrupt:
+		default:
+		}
+	})
+
 	// A server that stops serving on its own ends the run with its error,
 	// rather than the process: see serve.
 	served := make(chan error, 1)
@@ -308,18 +323,6 @@ func Run(ctx context.Context, args []string, bundle fs.FS) error {
 			return nil
 		}, nil)
 	}
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(stop)
-	// An installed update ends this process the same way, once its helper
-	// waits to start the new version (internal/updater, #49 to #51).
-	updater.SetStop(func() {
-		select {
-		case stop <- os.Interrupt:
-		default:
-		}
-	})
 
 	if window {
 		// The window is opened onto a server that answers: openWindow dials
@@ -1317,11 +1320,8 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 		Metrics:  measure,
 		// Settings › General's metrics source: editable where the settings
 		// writes are (api.Deps' `kept`).
-		MetricsSources: metricsSources{
-			measure: measure, store: p.sources, configured: p.promTarget,
-			editable: p.sources != nil && p.statePersistent && !p.replicas.Several,
-			resolve:  clusters.Resolve,
-		},
+		MetricsSources: newMetricsSources(measure, p.sources, p.promTarget,
+			p.sources != nil && p.statePersistent && !p.replicas.Several, clusters),
 		Hotbars:    p.bars,
 		Columns:    p.cols,
 		Nameplates: p.plates,

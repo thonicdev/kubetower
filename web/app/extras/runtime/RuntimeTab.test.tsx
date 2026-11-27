@@ -102,6 +102,39 @@ describe('the runtime tabs', () => {
     expect(asked.every((a) => a.startsWith('GET ') || /^POST \S+\/node$/.test(a))).toBe(true);
   });
 
+  const withPython: PodAnswer = {
+    ...answer,
+    runtimes: ['node', 'go', 'python'],
+    containers: [...answer.containers, container('py', 'python', [{ source: 'command', reason: 'the command line starts “python”' }])],
+  };
+
+  it.each([
+    ['node', /\/web\/node$/],
+    ['go', /\/sidecar\/pprof$/],
+    ['python', /\/py\/python(\/metrics)?$/],
+  ] as const)('%s: on a read-only cluster, asks nothing on its own when it opens, so no refusal is audited (#157)', async (runtime, probe) => {
+    const asked = stub(withPython);
+    const Tab = tabFor(runtime);
+    mount(<Tab cluster="kind" kind="pods" namespace="shop" name="web-0" readOnly />);
+    expect((await screen.findAllByText(/kind is read-only/)).length).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked.filter((a) => !a.startsWith('GET '))).toEqual([]);
+    expect(asked.some((a) => probe.test(a))).toBe(false);
+  });
+
+  it.each([
+    ['node', /^POST \S+\/web\/node$/],
+    ['go', /^POST \S+\/sidecar\/pprof$/],
+    ['python', /^POST \S+\/py\/python$/],
+  ] as const)('%s: on a writable cluster, still probes when it opens', async (runtime, probe) => {
+    const asked = stub(withPython);
+    const Tab = tabFor(runtime);
+    mount(<Tab cluster="kind" kind="pods" namespace="shop" name="web-0" readOnly={false} />);
+    await waitFor(() => {
+      expect(asked.some((a) => probe.test(a))).toBe(true);
+    });
+  });
+
   it('draws no picker for a single container', async () => {
     stub(answer);
     const Go = tabFor('go');

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/dynamic"
@@ -51,6 +52,19 @@ type Manager struct {
 	// now is the clock ReloadIfChanged times a held-back read with; nil is
 	// time.Now. A field so a test can move it.
 	now func() time.Time
+
+	// reloading makes ReloadIfChanged one at a time (reload.go).
+	reloading sync.Mutex
+	// generation numbers every client built, so a cache keyed by a client
+	// (MapperKey) misses once a context is re-pointed and its client rebuilt.
+	generation atomic.Uint64
+	// betweenReads, beforeApply and building are test hooks: inside read,
+	// after the files are read and before they are merged; in
+	// ReloadIfChanged, just before a read is applied; and in client, once the
+	// client is built and before it is cached. Nil outside tests.
+	betweenReads func()
+	beforeApply  func()
+	building     func()
 
 	mu  sync.RWMutex
 	raw *clientcmdapi.Config
@@ -120,6 +134,17 @@ type Client struct {
 	// EKS is set when this context's token is signed in this process, and nil
 	// otherwise, including for an EKS context that fell back to the CLI.
 	EKS *EKSSigning
+
+	// generation is this client's number among those the manager built.
+	generation uint64
+}
+
+// MapperKey is what a cache of this cluster's API discovery is filed under:
+// the context and this client's generation. A context re-pointed at another
+// server gets a new client (Manager.apply drops it), so its kinds are
+// discovered again rather than served from the old server's (#153).
+func (c *Client) MapperKey() string {
+	return fmt.Sprintf("%s\x00%d", c.Context, c.generation)
 }
 
 // NewManager builds the manager over the files that make up the operator's
@@ -499,7 +524,10 @@ func (m *Manager) client(context string, streaming bool) (*Client, error) {
 		Context: context, Config: cfg,
 		Clients: clientset, Dynamic: dyn, httpClient: httpClient,
 		discoveryTyped: discoveryTyped, discoveryDynamic: discoveryDynamic,
-		EKS: signing,
+		EKS: signing, generation: m.generation.Add(1),
+	}
+	if m.building != nil {
+		m.building()
 	}
 
 	m.mu.Lock()

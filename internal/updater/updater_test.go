@@ -577,3 +577,32 @@ func TestAnInstallThatMovedOnIsNotFailedByTheWait(t *testing.T) {
 		t.Errorf("%+v, want idle: installed, not restarted", s)
 	}
 }
+
+// An update installed and not started again says so in the install log
+// (#178, C31.1): the line a person reads to know the next start runs it.
+func TestInstalledNotRestartedIsLogged(t *testing.T) {
+	was := abandonHelper
+	abandonHelper = func() error { return nil }
+	t.Cleanup(func() { abandonHelper = was })
+	f := newFake(t)
+	dir := t.TempDir()
+	u := f.updater(dir, &recorder{err: fmt.Errorf("%w: no /bin/sh", ErrNotRestarted)}, nil)
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, u)
+	if _, err := u.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, _ := os.ReadFile(filepath.Join(u.dir(), installLog))
+		if strings.Contains(string(raw), "installed; not restarted: ") && strings.Contains(string(raw), "no /bin/sh") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the install log does not say it: %s", raw)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

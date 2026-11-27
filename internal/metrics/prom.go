@@ -299,6 +299,12 @@ func (p *pathRefused) Error() string {
 
 func (p *pathRefused) Unwrap() error { return p.cause }
 
+// wrongPathAnswer says the query under a target's path was answered "not
+// here": a 404, or a 400 (VictoriaMetrics answers an unknown path so).
+func wrongPathAnswer(err error) bool {
+	return apierrors.IsNotFound(err) || apierrors.IsBadRequest(err)
+}
+
 // answers asks the health endpoint through get, each place in healthPaths with
 // a timeout of its own, so one that hangs leaves the next its time.
 //
@@ -321,6 +327,14 @@ func (p *PromTarget) answers(ctx context.Context, timeout time.Duration, get fun
 				return get(ctx, p.Path+endpointQuery, url.Values{"query": {"1"}})
 			})
 			if err != nil {
+				// Only an answer saying the path is not there - a 404, or a
+				// 400 such as VictoriaMetrics' "unsupported path" - is a wrong
+				// path. A 401, a 5xx or a timeout says nothing about the path:
+				// it is returned as itself, so the proxy's failure falls back
+				// to the port-forward (#156).
+				if !wrongPathAnswer(err) {
+					return nil, err
+				}
 				return nil, &pathRefused{path: p.Path, cause: err}
 			}
 		}

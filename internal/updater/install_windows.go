@@ -12,6 +12,9 @@ import (
 func init() {
 	installers[WindowsSetup] = installSetup
 	installers[WindowsZip] = installZip
+	// The zip's new exe written beside the running one, left when its swap
+	// never ran (#154).
+	sweepers[WindowsZip] = func(path string) { sweepBeside(path, ".kubetower-update-*.exe") }
 	abandonHelper = stopHelper
 	installsAfterExit = true
 }
@@ -52,7 +55,7 @@ const createNoWindow = 0x08000000
 
 // helper starts the hidden PowerShell that finishes the update after exit,
 // then stops this process.
-var helper = func(script string) error { return finish(script, startPowerShell, stopper) }
+var helper = func(script string) error { return finish(script, startPowerShell, stopFunc()) }
 
 // helperOnQuit starts the helper and asks nothing more: KubeTower is already
 // quitting (InstallOnQuit), and the helper runs once it has exited.
@@ -60,7 +63,11 @@ var helperOnQuit = startPowerShell
 
 // startPowerShell starts the script in a hidden PowerShell and lets it go.
 func startPowerShell(script string) error {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+	powershell, err := systemTool("powershell.exe")
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-WindowStyle", "Hidden", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP}
 	if err := cmd.Start(); err != nil {

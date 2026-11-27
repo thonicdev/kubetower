@@ -468,3 +468,23 @@ func TestAPassRuleDrawsNoEdgeAndALogRuleDoesNotExist(t *testing.T) {
 		t.Errorf("%+v", pa.Ingress.Rules)
 	}
 }
+
+// The diagonal follows Calico's rule order, and marks what it cannot
+// evaluate rather than allow it.
+func TestTheDiagonalFollowsCalico(t *testing.T) {
+	h := calicoShop(t, gnp("own-first", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Allow\n    source: {selector: all()}\n  - action: Deny\n    source: {selector: all()}\n"))
+	check(t, h, []askedFlow{{"shop/web", "shop/api", "80", "yes"}})
+	if got := shopDiagonal(t, h); got != diagInside {
+		t.Errorf("an allow before a deny: diagonal %q", got)
+	}
+	h = calicoShop(t, gnp("deny-first", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Deny\n    source: {selector: all()}\n  - action: Allow\n    source: {selector: all()}\n"))
+	check(t, h, []askedFlow{{"shop/web", "shop/api", "80", "no"}})
+	if got := shopDiagonal(t, h); got != diagDenied {
+		t.Errorf("a deny before an allow: diagonal %q", got)
+	}
+	h = calicoShop(t, gnp("sa", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Allow\n    source: {serviceAccounts: {names: [builder]}}\n"))
+	check(t, h, []askedFlow{{"shop/web", "shop/api", "80", "unevaluated"}})
+	if got := shopDiagonal(t, h); got != diagUnevaluated {
+		t.Errorf("a service account it cannot tell: diagonal %q", got)
+	}
+}

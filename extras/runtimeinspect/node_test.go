@@ -1,12 +1,14 @@
 package runtimeinspect
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -452,7 +454,7 @@ func runOpenScript(t *testing.T, procs map[string][2]string, pid int) (string, s
 	if err != nil {
 		// GitHub's runners carry node; a CI without it would pass this
 		// test without ever running the script, so it fails there instead.
-		if os.Getenv("CI") != "" {
+		if underCI() {
 			t.Fatal("no node on PATH to run the opening script, and under CI it must run")
 		}
 		t.Skip("no node on PATH to run the opening script")
@@ -550,5 +552,47 @@ func TestAChosenProcessThatExitedIsSaid(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"pids":[7]`) ||
 		!strings.Contains(rec.Body.String(), "Process 12 is no longer running: choose another.") {
 		t.Errorf("gone, another left: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// underCI is whether the CI variable says this runs under CI: a true value,
+// as GitHub and every other runner sets it. CI=false or CI=0 is a person
+// saying it does not (#157).
+func underCI() bool {
+	on, err := strconv.ParseBool(os.Getenv("CI"))
+	return err == nil && on
+}
+
+func TestOnlyATrueCIIsCI(t *testing.T) {
+	for value, want := range map[string]bool{"true": true, "1": true, "TRUE": true, "false": false, "0": false, "": false, "yes": false} {
+		t.Setenv("CI", value)
+		if got := underCI(); got != want {
+			t.Errorf("CI=%q: %v, want %v", value, got, want)
+		}
+	}
+}
+
+// The inspector's target must be a plain ws:// address (#157): the tunnel is
+// a TCP stream to the pod, so neither wss:// nor any other scheme is dialled,
+// and the refusal names the target rather than the dialer's own complaint.
+func TestOnlyAWsTargetIsDialled(t *testing.T) {
+	for _, target := range []string{"wss://127.0.0.1:9229/0f2c-uuid", "http://127.0.0.1:9229/0f2c-uuid"} {
+		upgraded := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/json/list" {
+				_ = json.NewEncoder(w).Encode([]map[string]string{{"type": "node", "webSocketDebuggerUrl": target}})
+				return
+			}
+			upgraded = true
+			http.Error(w, "not a debugger", http.StatusBadRequest)
+		}))
+		_, err := dialInspector(context.Background(), extension.Tunnel{Addr: strings.TrimPrefix(srv.URL, "http://")})
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), "is not a WebSocket address") {
+			t.Errorf("%s: %v, want it refused as not a WebSocket address", target, err)
+		}
+		if upgraded {
+			t.Errorf("%s was dialled", target)
+		}
 	}
 }

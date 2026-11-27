@@ -59,7 +59,7 @@ function policy(i: number, over: Partial<PolicyRow> = {}): PolicyRow {
 const GRAPH: Graph = {
   scope: 'cluster',
   nodes: [
-    { id: 'ns:shop', label: 'shop', kind: 'namespace', namespace: 'shop', pods: 3, isolatedIn: 3, isolatedOut: 1, internal: 2 },
+    { id: 'ns:shop', label: 'shop', kind: 'namespace', namespace: 'shop', pods: 3, isolatedIn: 3, isolatedOut: 1, internal: 2, diagonal: 'inside' },
     { id: 'ns:ops', label: 'ops', kind: 'namespace', namespace: 'ops', pods: 1, isolatedIn: 0, isolatedOut: 0, internal: 0 },
   ],
   edges: [{ kind: 'allow', from: 'ns:ops', to: 'ns:shop', side: 'ingress', ports: ['9090/TCP'], policies: ['api-from-ops'], rules: 1 }],
@@ -356,7 +356,7 @@ describe('on a cluster of 5 000 pods and 1 000 policies', () => {
   it('draws bounded tables and reads once', async () => {
     const rows = Array.from({ length: 5000 }, (_, i) => pod(i));
     const policies = Array.from({ length: 1000 }, (_, i) => policy(i));
-    const nodes = Array.from({ length: 40 }, (_, i) => ({ id: `ns:n${String(i)}`, label: `n${String(i)}`, kind: 'namespace' as const, namespace: `n${String(i)}`, pods: 125, isolatedIn: 60, isolatedOut: 20, internal: 1 }));
+    const nodes = Array.from({ length: 40 }, (_, i) => ({ id: `ns:n${String(i)}`, label: `n${String(i)}`, kind: 'namespace' as const, namespace: `n${String(i)}`, pods: 125, isolatedIn: 60, isolatedOut: 20, internal: 1, diagonal: 'inside' as const }));
     const edges = nodes.flatMap((a, i) => nodes.filter((_, j) => j !== i && (i + j) % 3 === 0).map((b) => ({ kind: 'allow' as const, from: a.id, to: b.id, side: 'ingress' as const, ports: ['8080/TCP'], policies: ['p'], rules: 2 })));
     const big = overview({
       summary: { pods: 5000, isolatedIn: 2400, isolatedOut: 800, open: 2600, hostNetwork: 0, policies: 1000, defaultDeny: 100, idle: 0 },

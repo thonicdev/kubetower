@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ApiError, queryKeys, type ExtensionInfo } from '../../api';
 import { Icon, type IconName } from '../../components/Icon';
@@ -145,6 +145,7 @@ export function ExtraSwitch({
   onToggle,
   describedBy,
   focusFirst = false,
+  pending = false,
 }: {
   on: boolean;
   label: string;
@@ -152,28 +153,45 @@ export function ExtraSwitch({
   onToggle: () => void;
   describedBy?: string | undefined;
   focusFirst?: boolean;
+  /** A write in flight: the switch answers no press but keeps the focus
+   *  (`aria-disabled`, never `disabled`), and its new state is said once
+   *  the write lands. */
+  pending?: boolean;
 }): ReactNode {
+  // Said once a write has landed, and then as the listing read again has it.
+  const [said, setSaid] = useState(false);
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    if (wasPending.current && !pending) setSaid(true);
+    wasPending.current = pending;
+  }, [pending]);
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      title={on ? 'On' : 'Off'}
-      {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
-      {...(focusFirst ? { 'data-dialog-focus': '' } : {})}
-      disabled={disabled}
-      onClick={onToggle}
-      data-extra-switch={on ? 'on' : 'off'}
-      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${focusRingTight} ${
-        on ? 'border-ok bg-ok/60' : 'border-line bg-panel-2'
-      }`}
-    >
-      <span
-        aria-hidden="true"
-        className={`inline-block size-3.5 rounded-full bg-fg shadow transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
-      />
-    </button>
+    <>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        title={on ? 'On' : 'Off'}
+        {...(describedBy === undefined ? {} : { 'aria-describedby': describedBy })}
+        {...(focusFirst ? { 'data-dialog-focus': '' } : {})}
+        disabled={disabled}
+        aria-disabled={pending || undefined}
+        onClick={pending ? undefined : onToggle}
+        data-extra-switch={on ? 'on' : 'off'}
+        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-wait aria-disabled:opacity-50 ${focusRingTight} ${
+          on ? 'border-ok bg-ok/60' : 'border-line bg-panel-2'
+        }`}
+      >
+        <span
+          aria-hidden="true"
+          className={`inline-block size-3.5 rounded-full bg-fg shadow transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </button>
+      <span role="status" className="sr-only" data-extra-switch-said="">
+        {said ? `${label}: ${on ? 'on' : 'off'}` : ''}
+      </span>
+    </>
   );
 }
 

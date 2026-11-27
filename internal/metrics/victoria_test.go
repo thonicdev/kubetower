@@ -15,8 +15,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -137,9 +139,13 @@ func toObjects(services []corev1.Service) []runtime.Object {
 
 // A cluster running both keeps Prometheus, and VictoriaMetrics in another
 // namespace does not make it ambiguous.
-func TestPrometheusIsPreferredToVictoriaMetrics(t *testing.T) {
+// Prometheus and VictoriaMetrics in one namespace: one owner put both there,
+// and Prometheus is kept (#133).
+func TestPrometheusIsPreferredToVictoriaMetricsInOneNamespace(t *testing.T) {
+	vm := vmsingleOperator()
+	vm.Namespace = "monitoring"
 	h := newHarness(t,
-		vmsingleOperator(),
+		vm,
 		promService("monitoring", "kps-prometheus", map[string]string{"app": "kube-prometheus-stack-prometheus"}, "http-web", 9090),
 	)
 	chosen := &PromTarget{Namespace: "monitoring", Service: "kps-prometheus", Port: 9090}
@@ -151,6 +157,28 @@ func TestPrometheusIsPreferredToVictoriaMetrics(t *testing.T) {
 	}
 	if found.Engine != EnginePrometheus {
 		t.Errorf("engine %q", found.Engine)
+	}
+}
+
+// The decoy across engines (#133): a real vmsingle in vm and a Service
+// labelled app=prometheus on 9090 in a tenant's namespace. Neither is chosen,
+// nothing is asked of either, and the detail names both namespaces.
+func TestPrometheusAndVictoriaMetricsInDifferentNamespacesAreNotChosen(t *testing.T) {
+	decoy := promService("team-a", "fake", map[string]string{"app": "prometheus"}, "web", 9090)
+	h := newHarness(t, vmsingleOperator(), decoy)
+	h.answer(rawAnswers{metricsAPIPath: {err: notFound(metricsAPIPath)}})
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindNone || found.Prometheus != nil {
+		t.Fatalf("kind %q target %+v (%s); want none chosen", found.Kind, found.Prometheus, found.Detail)
+	}
+	if !strings.Contains(found.Detail, "Prometheus (team-a)") || !strings.Contains(found.Detail, "VictoriaMetrics (vm)") {
+		t.Errorf("detail %q does not name both namespaces", found.Detail)
+	}
+	for _, p := range h.paths {
+		if strings.Contains(p, "team-a") || strings.Contains(p, "/vm/") {
+			t.Errorf("a candidate was asked: %s", p)
+		}
 	}
 }
 
@@ -443,5 +471,82 @@ func TestEachHealthAttemptHasItsOwnTimeout(t *testing.T) {
 	})
 	if err != nil || string(body) != "Prometheus Server is Healthy." || asked != 3 {
 		t.Fatalf("%q, %v after %d asks", body, err, asked)
+	}
+}
+
+// Only "not here" - a 404, or VictoriaMetrics' 400 - is a wrong path (#156).
+// A 401, a 5xx or a timeout on the confirming query says nothing about the
+// path: it comes back as itself, so the proxy's failure falls back to the
+// port-forward instead of being reported as a typo.
+func TestOnlyNotFoundOrBadRequestIsAWrongPath(t *testing.T) {
+	target := &PromTarget{Namespace: "vm", Service: "vmselect-main", Port: 8481, Path: "/select/0/prometheus"}
+	status := func(code int) error {
+		return apierrors.NewGenericServerResponse(code, http.MethodGet, schema.GroupResource{Resource: "prometheus"}, "", "x", 0, false)
+	}
+	for _, c := range []struct {
+		name  string
+		err   error
+		wrong bool
+	}{
+		{"404", status(http.StatusNotFound), true},
+		{"400, unsupported path", status(http.StatusBadRequest), true},
+		{"401", status(http.StatusUnauthorized), false},
+		{"503", status(http.StatusServiceUnavailable), false},
+		{"timeout", context.DeadlineExceeded, false},
+	} {
+		_, err := target.answers(context.Background(), time.Second, func(_ context.Context, path string, _ url.Values) ([]byte, error) {
+			if path == endpointHealth {
+				return []byte(vmHealthy), nil
+			}
+			if strings.HasSuffix(path, endpointQuery) {
+				return nil, c.err
+			}
+			return nil, status(http.StatusNotFound)
+		})
+		var wrongPath *pathRefused
+		if got := errors.As(err, &wrongPath); got != c.wrong || err == nil {
+			t.Errorf("%s: %v, wrong path %v, want %v", c.name, err, got, c.wrong)
+		}
+	}
+}
+
+// The proxy reaches the Service's root, but an authenticating front refuses
+// the query under the path with a 401 (#156). That says nothing about the
+// path: the port-forward is tried, and the target is reached through it.
+func TestARefusedQueryUnderThePathFallsBackToThePortForward(t *testing.T) {
+	target, _ := ParseTarget("vm/vmselect-main:8481/select/0/prometheus")
+	vmselect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case endpointHealth:
+			w.Write([]byte(vmHealthy))
+		case target.Path + endpointQuery:
+			w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		default:
+			http.Error(w, "unsupported path", http.StatusBadRequest)
+		}
+	}))
+	defer vmselect.Close()
+	h := newHarnessWith(t, func(o *Options) { o.Configured, o.Prometheus = true, target })
+	unauthorised := apierrors.NewGenericServerResponse(http.StatusUnauthorized, http.MethodGet, schema.GroupResource{Resource: "services"}, "", "", 0, false)
+	h.answer(rawAnswers{
+		target.proxyRoot(endpointHealth):              {body: []byte(vmHealthy)},
+		target.proxyRoot(target.Path + endpointQuery): {err: unauthorised},
+	})
+	h.tunnels.addr = strings.TrimPrefix(vmselect.URL, "http://")
+
+	found := h.metrics.Discover(context.Background(), testCluster, false)
+	if found.Kind != KindPrometheus || found.Transport != TransportForward {
+		t.Fatalf("kind %q transport %q (%s); want reached by the port-forward", found.Kind, found.Transport, found.Detail)
+	}
+	h.metrics.Close()
+}
+
+// The refusal names at most three namespaces of each engine, then counts the
+// rest, so the detail stays one line (#133).
+func TestTheCrossEngineRefusalNamesAtMostThreeNamespacesEach(t *testing.T) {
+	prom := map[string]bool{"a": true, "b": true, "c": true, "d": true, "e": true}
+	got := notChosenAcross(prom, map[string]bool{"vm": true})
+	if !strings.Contains(got, "Prometheus (a, b, c and 2 more)") || !strings.Contains(got, "VictoriaMetrics (vm)") {
+		t.Errorf("%q", got)
 	}
 }

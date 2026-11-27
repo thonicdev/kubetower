@@ -575,6 +575,18 @@ export function useClusters(): UseQueryResult<ListResult<Cluster>> {
 }
 
 /**
+ * Whether cluster is read-only, as an extension's tab is told it
+ * (`ExtensionTabProps.readOnly`, #157): undefined until the clusters are
+ * read; a list that could not be read, or a cluster missing from it, is
+ * false.
+ */
+export function useClusterReadOnly(cluster: string): boolean | undefined {
+  const clusters = useClusters();
+  if (clusters.data?.state === 'ok') return clusters.data.items.find((c) => c.name === cluster)?.readOnly === true;
+  return clusters.isError || clusters.data !== undefined ? false : undefined;
+}
+
+/**
  * Whether this console keeps what a person arranges - the rail, the column
  * layouts, the density. **False only where the server says so**: under the
  * server profile, where what it kept would be everybody's, and where it
