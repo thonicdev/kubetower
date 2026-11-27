@@ -295,16 +295,35 @@ describe('Settings › Infos', () => {
   });
 
   it('turns automatic on, then picks At once: the banner and Download go, the check stays', async () => {
-    const c = console(idle, (_m, _p, body) => ({ status: 200, body: { ...idle, ...(body as Partial<UpdateInstall>) } }));
+    let hold = false;
+    let release: () => void = () => undefined;
+    const c = console(idle, (_m, _p, body) => {
+      const answer = { status: 200, body: { ...idle, ...(body as Partial<UpdateInstall>) } };
+      if (!hold) return answer;
+      hold = false;
+      return new Promise((resolve) => (release = () => resolve(answer)));
+    });
     mountApp('/settings/infos');
     const toggle = await screen.findByRole('switch', { name: 'Install updates automatically' });
     await waitFor(() => {
       expect(banner()).not.toBeNull();
     });
+    // While the write is in flight the switch is pending, never disabled: a
+    // disabled control drops the focus a keyboard press left on it.
+    toggle.focus();
+    hold = true;
     fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    });
+    expect(toggle.hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    release();
     await waitFor(() => {
       expect(banner()).toBeNull();
     });
+    expect(toggle.hasAttribute('aria-disabled')).toBe(false);
+    expect(document.activeElement).toBe(toggle);
     expect(document.querySelector('[data-update-download]')).toBeNull();
     expect(document.querySelector('[data-update-check] button')?.textContent).toBe('Check now');
     const now = document.querySelector<HTMLButtonElement>('[data-install-when="now"]');
@@ -696,6 +715,8 @@ describe('the account menu trigger', () => {
       expect(trigger.getAttribute('aria-describedby')).not.toBeNull();
     });
     expect(document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Update available');
+    // Its hover says the update too, under the account's line.
+    expect(trigger?.getAttribute('title')).toBe('Signed in as alice\nUpdate available\nRunning: kubetower 0.1.2\nNew: 0.1.3');
   });
 });
 

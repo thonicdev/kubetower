@@ -312,7 +312,8 @@ describe('the Show unused kinds button', () => {
     await arrived();
 
     const button = toggle();
-    expect(button.getAttribute('aria-pressed')).toBe('false');
+    // The label carries the state: no aria-pressed besides it.
+    expect(button.hasAttribute('aria-pressed')).toBe(false);
     // jobs, persistentvolumeclaims, helm and the certificate: what the answer
     // names none, custom resources included.
     expect(button.textContent).toContain('Show unused kinds');
@@ -322,7 +323,7 @@ describe('the Show unused kinds button', () => {
     await waitFor(() => {
       expect(row('/c/prod/jobs')).not.toBeNull();
     });
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().hasAttribute('aria-pressed')).toBe(false);
     // The label says what the next press does.
     expect(toggle().textContent).toContain('Hide unused kinds');
     expect(toggle().textContent).not.toContain('Show unused kinds');
@@ -337,7 +338,7 @@ describe('the Show unused kinds button', () => {
     cleanup();
     await arrived();
     expect(row('/c/prod/jobs')).not.toBeNull();
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().textContent).toContain('Hide unused kinds');
   });
 
   it('keeps the choice on the server where the server keeps it', async () => {

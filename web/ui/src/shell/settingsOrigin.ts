@@ -59,8 +59,9 @@ export function originOf(location: Pick<Location, 'state'>): SettingsOrigin | un
   if (typeof from !== 'object' || from === null) return undefined;
   const { path, key, idx, scroll } = from as Partial<SettingsOrigin>;
   // A path of this console only: `//host` and `/\host` are read by a browser as
-  // another host, and `history.replaceState` refuses those.
-  if (typeof path !== 'string' || !/^\/(?![/\\])/.test(path)) return undefined;
+  // another host, and `history.replaceState` refuses those. A browser drops a
+  // tab, CR or LF when it parses a URL, so `/\t/host` is `//host`: none passes.
+  if (typeof path !== 'string' || /[\t\n\r]/.test(path) || !/^\/(?![/\\])/.test(path)) return undefined;
   return {
     path,
     key: typeof key === 'string' ? key : '',
@@ -147,6 +148,27 @@ export function useSettingsBack(): { origin: SettingsOrigin; back: () => void } 
 /** The scroll position to put back, and on which entry. */
 let pendingScroll: { key: string; path: string; top: number } | undefined;
 
+/** Each page entry's last position, by history key, noted as the person
+ *  scrolls: Back to an entry left and scrolled since puts back where it was
+ *  left the last time, not where Settings was first opened from it. */
+const lastScroll = new Map<string, number>();
+const LAST_SCROLLS = 50;
+
+/** For tests: forget what was noted, as a reload does. */
+export function forgetSettingsScroll(): void {
+  lastScroll.clear();
+  pendingScroll = undefined;
+}
+
+function noteScroll(key: string, top: number): void {
+  lastScroll.delete(key);
+  lastScroll.set(key, top);
+  if (lastScroll.size > LAST_SCROLLS) {
+    const oldest = lastScroll.keys().next().value;
+    if (oldest !== undefined) lastScroll.delete(oldest);
+  }
+}
+
 /**
  * Note the origin's scroll for when the person leaves Settings by the
  * browser's Back rather than the control. Mounted by the Settings page.
@@ -174,12 +196,21 @@ export function useRestoreSettingsScroll(): void {
   const location = useLocation();
   const type = useNavigationType();
   useEffect(() => {
+    if (isSettingsPath(location.pathname)) return;
+    const page = document.getElementById(PAGE);
+    if (page === null) return;
+    const note = (): void => noteScroll(location.key, page.scrollTop);
+    page.addEventListener('scroll', note, { passive: true });
+    return () => page.removeEventListener('scroll', note);
+  }, [location.key, location.pathname]);
+  useEffect(() => {
     const wanted = pendingScroll;
     if (wanted === undefined || isSettingsPath(location.pathname)) return;
     pendingScroll = undefined;
     const same =
       type === 'POP' ? location.key === wanted.key : `${location.pathname}${location.search}${location.hash}` === wanted.path;
-    if (!same || wanted.top <= 0) return;
+    const top = type === 'POP' ? (lastScroll.get(wanted.key) ?? wanted.top) : wanted.top;
+    if (!same || top <= 0) return;
     const page = document.getElementById(PAGE);
     if (page === null) return;
     const started = performance.now();
@@ -195,8 +226,8 @@ export function useRestoreSettingsScroll(): void {
     page.addEventListener('pointerdown', stop, { passive: true });
     const step = (): void => {
       if (stopped) return;
-      page.scrollTop = wanted.top;
-      if (Math.abs(page.scrollTop - wanted.top) < 1 || performance.now() - started > RESTORE_MS) return;
+      page.scrollTop = top;
+      if (Math.abs(page.scrollTop - top) < 1 || performance.now() - started > RESTORE_MS) return;
       frame = requestAnimationFrame(step);
     };
     step();

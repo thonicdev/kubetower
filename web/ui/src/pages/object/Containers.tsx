@@ -280,7 +280,7 @@ function One({
           <StatusPill status={container.status} />
         </span>
       </header>
-      <ImageLine image={container.image} />
+      <ImageLine image={container.image} of={container.name} />
       <StatusLines status={container.status} />
 
       <Section

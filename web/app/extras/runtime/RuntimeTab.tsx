@@ -68,7 +68,7 @@ function ContainerFacts({ runtime, container }: { runtime: Runtime; container: C
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone="info">{RUNTIME_LABEL[runtime]}</Pill>
         <span className="font-medium">{container.name}</span>
-        <ImageRef image={container.image} className="max-w-full" />
+        <ImageRef image={container.image} of={container.name} className="max-w-full" />
       </div>
       <div className="flex flex-wrap gap-1" data-runtime-hints="">
         {container.hints.map((hint) => (
