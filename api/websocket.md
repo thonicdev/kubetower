@@ -216,7 +216,8 @@ In order:
    ended, is `unreadable` / `container_not_started` at once; the bound is
    `timeout`.
 7. A shell is exec-ed into that container, exactly as on `exec` (`create
-   pods/exec`, the same frames, the same `exit`). `pods/attach` is never asked.
+   pods/exec`, the same frames, the same `exit`), with the container's own `sh`
+   from its PATH rather than `exec`'s `/bin/sh`. `pods/attach` is never asked.
 
 The PATCH's refusals keep their cause apart, because each has a different owner:
 
