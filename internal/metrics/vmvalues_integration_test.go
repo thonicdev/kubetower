@@ -7,6 +7,13 @@ package metrics_test
 //
 //	KT_VM_CLUSTER=kind-kubetower go test ./internal/metrics/ -run VictoriaMetricsIntegrationValues -v
 //
+// On kind-kubetower, where Prometheus and VictoriaMetrics sit in different
+// namespaces, discovery chooses neither: name the reference too, with
+// KT_VM_REFERENCE=monitoring/prometheus-server:80. After the cluster was
+// paused, the copy needs as much continuous scraping as it reads
+// (compareUntil + KT_VM_COMPARE + KT_VM_LONGEST + 10m): KT_VM_COMPARE=15m
+// KT_VM_LONGEST=15m asks 45 minutes of it rather than 2h45m.
+//
 // Two scrapers never sample at the same instants, so comparing what each
 // scraped would measure the scrapes. Here the raw samples every recorded
 // query reads are copied out of the cluster's Prometheus into a tenant of
