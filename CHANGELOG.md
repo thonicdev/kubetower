@@ -84,6 +84,10 @@ dialog draws it first, as a New extra line.
   their connections; a Retry and the watcher no longer apply an older read
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
+- **Storage and What's new polish.** A cluster with no claim no longer
+  shows a "fill unread" badge, a claim that backs two volumes of a pod is
+  listed once, and a Fixed entry is never shown ahead of a new extra in
+  What's new (#182).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 
