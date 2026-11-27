@@ -13,7 +13,7 @@ import { expect, test } from '@playwright/test';
  * - every text of the graph is drawn at 9px or more, however narrow the
  *   window: the graph is laid out at the width it has, not shrunk to it.
  */
-for (const width of [1440, 1024, 390]) {
+for (const width of [1440, 1024, 390, 300]) {
   test(`the enlarged pod view stays in its width and its graph text readable, at ${String(width)}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/?scene=extra-netinspect-tab');

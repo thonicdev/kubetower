@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 )
 
 func anp(name string, priority int, spec string) string {
@@ -212,5 +213,85 @@ func TestAnUnreadableAdminPolicyIsNotEvaluated(t *testing.T) {
 	v := verdictOf(t, h, "shop/web", "shop/api", "80")
 	if v.Answer != "yes" || len(v.Ingress.Caveats) != 1 {
 		t.Errorf("%s %v", v.Answer, v.Ingress.Caveats)
+	}
+}
+
+// A baseline's rules are drawn apart: the page sets them aside where a
+// NetworkPolicy isolates that side, as the engine does.
+func TestTheGraphMarksTheBaselinesRules(t *testing.T) {
+	h := adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\ningress:\n  - name: ops\n    action: Allow\n    from:\n      - namespaces: {matchLabels: {team: ops}}\n"))
+	p := np("shop", "api-from-ops", map[string]string{"app": "api"})
+	p.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{nsPeer(map[string]string{"team": "ops"})}}}
+	h.policy(t, p)
+	var baseline, plain int
+	for _, e := range overviewOf(t, h, "").Graph.Edges {
+		if e.From != "ns:ops" || e.To != "ns:shop" {
+			continue
+		}
+		if e.Baseline {
+			baseline++
+			if strings.Join(e.Policies, ",") != "default" {
+				t.Errorf("baseline edge %+v", e)
+			}
+		} else {
+			plain++
+		}
+	}
+	if baseline != 1 || plain != 1 {
+		t.Errorf("ops to shop: %d baseline edges, %d others", baseline, plain)
+	}
+}
+
+// The matrix's diagonal is the engine's own answer for flows between a
+// namespace's pods, precedence and all, and agrees with the verdict a person
+// asks for shop/web to shop/api.
+func shopDiagonal(t *testing.T, h *fakeHost) string {
+	t.Helper()
+	for _, n := range overviewOf(t, h, "").Graph.Nodes {
+		if n.ID == "ns:shop" {
+			return n.Diagonal
+		}
+	}
+	return "absent"
+}
+
+func TestTheDiagonalIsTheEnginesAnswer(t *testing.T) {
+	diagonalOf := func(h *fakeHost) string { return shopDiagonal(t, h) }
+	self := func(action string) string {
+		return "subject:\n  namespaces: {matchLabels: {team: shop}}\ningress:\n  - name: own\n    action: " + action +
+			"\n    from:\n      - namespaces: {matchLabels: {team: shop}}\n"
+	}
+	for _, c := range []struct {
+		name    string
+		build   func() *fakeHost
+		want    string
+		answers string
+	}{
+		{"a baseline allow under a default deny", func() *fakeHost {
+			h := adminShop(t, banp(self("Allow")))
+			h.policy(t, defaultDenyIngress("shop"))
+			return h
+		}, diagRefused, "no"},
+		{"an admin deny", func() *fakeHost { return adminShop(t, anp("no-self", 10, self("Deny"))) }, diagDenied, "no"},
+		{"an admin allow before an admin deny", func() *fakeHost {
+			return adminShop(t, anp("yes-self", 5, self("Allow")), anp("no-self", 10, self("Deny")))
+		}, diagInside, "yes"},
+		{"an admin allow over a baseline deny", func() *fakeHost {
+			return adminShop(t, anp("yes-self", 5, self("Allow")), banp(self("Deny")))
+		}, diagInside, "yes"},
+		{"an admin pass before an admin deny", func() *fakeHost {
+			return adminShop(t, anp("pass-self", 5, self("Pass")), anp("no-self", 10, self("Deny")))
+		}, diagOpen, "yes"},
+		{"a baseline deny alone", func() *fakeHost { return adminShop(t, banp(self("Deny"))) }, diagDenied, "no"},
+		{"a baseline allow alone", func() *fakeHost { return adminShop(t, banp(self("Allow"))) }, diagInside, "yes"},
+		{"no policy", func() *fakeHost { return adminShop(t) }, diagOpen, "yes"},
+	} {
+		h := c.build()
+		if got := diagonalOf(h); got != c.want {
+			t.Errorf("%s: diagonal %q, want %q", c.name, got, c.want)
+		}
+		if v := verdictOf(t, h, "shop/web", "shop/api", "80"); v.Answer != c.answers {
+			t.Errorf("%s: the engine answers %s for web to api, the test expects %s", c.name, v.Answer, c.answers)
+		}
 	}
 }

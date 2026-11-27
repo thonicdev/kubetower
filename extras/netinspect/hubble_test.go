@@ -244,6 +244,18 @@ func TestObservedFlowsAreAggregatedAndSaid(t *testing.T) {
 	if h.tunnels != h.stopped || h.tunnels != 2 {
 		t.Errorf("%d tunnels opened, %d stopped", h.tunnels, h.stopped)
 	}
+	// A namespace the person may not list, asked by name: an empty answer,
+	// said narrowed, with nothing of it.
+	hidden := flowsOf(t, h, "?ns=secret")
+	if hidden.State != flowsEmpty || hidden.Forwarded != 0 || hidden.Dropped != 0 || len(hidden.Rows) != 0 || len(hidden.Edges) != 0 || !hidden.Narrowed {
+		t.Errorf("?ns=secret: %+v", hidden)
+	}
+	fr.mu.Lock()
+	last := fr.asked[len(fr.asked)-1]
+	fr.mu.Unlock()
+	if strings.Contains(string(last), "secret") {
+		t.Errorf("the relay was asked for a namespace the person may not list")
+	}
 }
 
 func TestEachWayRelayFailsIsItsOwnState(t *testing.T) {

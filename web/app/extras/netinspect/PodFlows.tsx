@@ -14,9 +14,11 @@ const WINDOW_WORD: Record<number, string> = { 60: '1 min', 300: '5 min', 900: '1
  * What the flow source saw of one pod, in the enlarged view: its namespace's
  * flows over the period picked, kept where the pod is an end. The period is
  * a read of its own (`?window=`), like a metrics span; nothing is drawn where
- * the cluster has no flow source.
+ * the cluster has no flow source. A host-network pod has no identity of its
+ * own: the flow source names it by its address, its node's, so `address`
+ * keeps those rows too.
  */
-export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; namespace: string; pod: string; query: string }): ReactNode {
+export function PodFlows({ cluster, namespace, pod, address, query }: { cluster: string; namespace: string; pod: string; address?: string; query: string }): ReactNode {
   const [window, setWindow] = useState(DEFAULT_FLOW_WINDOW);
   const [picked, setPicked] = useState<string | null>(null);
   const flows = useQuery({ ...flowsQuery(cluster, namespace, window), placeholderData: (previous) => previous });
@@ -47,7 +49,8 @@ export function PodFlows({ cluster, namespace, pod, query }: { cluster: string; 
       </p>
     );
   } else {
-    const mine = data.rows.filter((r) => r.from === id || r.to === id);
+    const ends = new Set([id, ...(address === undefined || address === '' ? [] : [address])]);
+    const mine = data.rows.filter((r) => ends.has(r.from) || ends.has(r.to));
     const q = query.trim().toLowerCase();
     const rows = q === '' ? mine : mine.filter((r) => searchOf(r).includes(q));
     const forwarded = mine.filter((r) => r.verdict === 'FORWARDED').reduce((n, r) => n + r.count, 0);

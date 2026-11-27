@@ -17,7 +17,10 @@ export type Order = 'traffic' | 'rules' | 'name';
 export const ORDERS: readonly Order[] = ['traffic', 'rules', 'name'];
 
 /** The sizes offered. The largest is a bound, not "all": a few hundred
- *  namespaces squared is tens of thousands of cells. Find reaches the rest. */
+ *  namespaces squared is tens of thousands of cells. Find reaches the rest
+ *  of what the server sent; a namespace the server folded into its own
+ *  "others" (a dense cluster, `maxNodes` in `extras/netinspect/view.go`)
+ *  has no row to find. */
 export const TOPS: readonly number[] = [12, 24, 48, 96];
 
 export const DEFAULT_TOP = 24;
@@ -166,8 +169,9 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
   }
   others.label = `${String(folded > 0 ? folded : foldedEnds)} others`;
   // The ends it holds, the server's included: an end never refuses, so an
-  // "others" holding one is never taken as isolated (Matrix).
-  others.ends = foldedEnds + (serverOthers?.ends ?? 0);
+  // "others" holding one is never taken as isolated (Matrix). A server that
+  // did not count them may hold one.
+  others.ends = foldedEnds + (serverOthers === undefined ? 0 : (serverOthers.ends ?? 1));
   const any = folded + foldedEnds > 0;
   const nodes = any ? [...kept, others] : kept;
   const drawn = (id: string): string | undefined => {
@@ -200,10 +204,19 @@ export function fold(graph: Graph, flows: readonly FlowEdge[], showFlows: boolea
       c.allowOut ||= e.side !== 'ingress';
     }
   };
+  // A baseline's rule is not consulted on a side a NetworkPolicy isolates:
+  // the policy engine reads it only for a pod no NetworkPolicy selects.
+  const isolatedSide = (id: string, n: (g: GraphNode) => number): boolean => {
+    const node = known.get(id) ?? (id === OTHERS ? serverOthers : undefined);
+    return node !== undefined && node.pods > 0 && n(node) >= node.pods;
+  };
+  const setAside = (e: (typeof graph.edges)[number]): boolean =>
+    e.baseline === true &&
+    (e.side === 'ingress' ? isolatedSide(e.to, (n) => n.isolatedIn) : e.side === 'egress' ? isolatedSide(e.from, (n) => n.isolatedOut) : isolatedSide(e.to, (n) => n.isolatedIn) && isolatedSide(e.from, (n) => n.isolatedOut));
   for (const e of graph.edges) {
     const from = drawn(e.from);
     const to = drawn(e.to);
-    if (from === undefined || to === undefined) continue;
+    if (from === undefined || to === undefined || setAside(e)) continue;
     add(`${from}>${to}`, e);
     // A rule whose peer is everyone speaks for every pair it covers, not
     // only for the Anyone row or column: without this, every other cell

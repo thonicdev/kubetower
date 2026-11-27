@@ -15,8 +15,10 @@ const (
 	// maxNodes is the cluster graph's nodes; the least connected beyond it
 	// are folded into one "others" node, and more of them when the edges
 	// between the rest would not fit in maxEdges (finish). The page draws
-	// only the busiest of them and folds the rest itself, so this bounds the
-	// answer, not the picture: a namespace kept here can be found and drawn.
+	// only the busiest of them and folds the rest itself: a namespace kept
+	// here can be found and drawn, one folded here cannot. On a dense
+	// cluster finish keeps far fewer than maxNodes, so Find does not reach
+	// every namespace there.
 	maxNodes = 300
 	// maxEdges is the graph's edges, the busiest kept.
 	maxEdges = 2_000
@@ -168,10 +170,14 @@ type Node struct {
 	// Internal is rules whose both ends fall inside this node (a namespace
 	// allowing its own pods), drawn as a count rather than a loop.
 	Internal int `json:"internal"`
+	// Diagonal is the policy engine's answer for flows between the
+	// namespace's own pods (diagonal.go), for the matrix's diagonal: absent
+	// where no pod of it could be asked.
+	Diagonal string `json:"diagonal,omitempty"`
 	// Ends is, on "others", how many of the nodes it holds are not
 	// namespaces (a CIDR, world, an entity): such an end never refuses, so
 	// "others" cannot be called isolated when it holds one.
-	Ends int `json:"ends,omitempty"`
+	Ends int `json:"ends"`
 }
 
 // Edge is "a rule lets From reach To". Side says which end's policy says so:
@@ -186,6 +192,9 @@ type Edge struct {
 	Ports    []string `json:"ports"`
 	Policies []string `json:"policies"`
 	Rules    int      `json:"rules"`
+	// Baseline marks the rules of a BaselineAdminNetworkPolicy, which apply
+	// only to a pod no NetworkPolicy selects on that side.
+	Baseline bool `json:"baseline,omitempty"`
 }
 
 // show filters the pod rows: the tiles' keys.
@@ -436,6 +445,7 @@ type edgeAcc struct {
 	policies  map[string]bool
 	rules     int
 	weightKey string
+	baseline  bool
 }
 
 type graphBuilder struct {
@@ -456,7 +466,7 @@ func (g *graphBuilder) node(id, label, kind, namespace string) *Node {
 	return n
 }
 
-func (g *graphBuilder) edge(from, to, side string, r *rule, policyName string) {
+func (g *graphBuilder) edge(from, to, side string, r *rule, policyName string, baseline bool) {
 	if from == to {
 		if n := g.nodes[from]; n != nil {
 			n.Internal++
@@ -465,9 +475,12 @@ func (g *graphBuilder) edge(from, to, side string, r *rule, policyName string) {
 	}
 	kind := ruleKind(r)
 	key := kind + "\x00" + from + "\x00" + to
+	if baseline {
+		key += "\x00baseline"
+	}
 	e, ok := g.edges[key]
 	if !ok {
-		e = &edgeAcc{kind: kind, from: from, to: to, ports: map[string]bool{}, policies: map[string]bool{}}
+		e = &edgeAcc{kind: kind, from: from, to: to, ports: map[string]bool{}, policies: map[string]bool{}, baseline: baseline}
 		g.edges[key] = e
 	}
 	if side == "ingress" {
@@ -540,9 +553,9 @@ func (m *model) ruleEdges(g *graphBuilder, p *policy, nodeOf func(id int) string
 		for t := range targets {
 			for peerNode := range peers {
 				if side == "ingress" {
-					g.edge(peerNode, t, side, r, p.Name)
+					g.edge(peerNode, t, side, r, p.Name, p.family == "banp")
 				} else {
-					g.edge(t, peerNode, side, r, p.Name)
+					g.edge(t, peerNode, side, r, p.Name, p.family == "banp")
 				}
 			}
 		}
@@ -558,9 +571,11 @@ func (m *model) ruleEdges(g *graphBuilder, p *policy, nodeOf func(id int) string
 // clusterGraph is namespaces joined by the rules between them.
 func (m *model) clusterGraph(rows map[string]*NSRow) Graph {
 	g := newGraphBuilder()
+	diagonal := m.diagonals()
 	for name, r := range rows {
 		n := g.node("ns:"+name, name, nodeNamespace, name)
 		n.Pods, n.IsolatedIn, n.IsolatedOut = r.Pods, r.IsolatedIn, r.IsolatedOut
+		n.Diagonal = diagonal[name]
 	}
 	// Each identity's node, named once: the graph asks for it per rule.
 	names := make([]string, len(m.Identities))
@@ -699,9 +714,12 @@ func (g *graphBuilder) foldAt(scope string, ids []string, keep int) Graph {
 			continue
 		}
 		key := e.kind + "\x00" + from + "\x00" + to
+		if e.baseline {
+			key += "\x00baseline"
+		}
 		m, ok := merged[key]
 		if !ok {
-			m = &edgeAcc{kind: e.kind, from: from, to: to, ports: map[string]bool{}, policies: map[string]bool{}}
+			m = &edgeAcc{kind: e.kind, from: from, to: to, ports: map[string]bool{}, policies: map[string]bool{}, baseline: e.baseline}
 			merged[key] = m
 		}
 		m.ingress = m.ingress || e.ingress
@@ -727,7 +745,7 @@ func (g *graphBuilder) foldAt(scope string, ids []string, keep int) Graph {
 			side = "egress"
 		}
 		out.Edges = append(out.Edges, Edge{Kind: e.kind, From: e.from, To: e.to, Side: side, Ports: sortedKeys(e.ports),
-			Policies: sortedKeys(e.policies), Rules: e.rules})
+			Policies: sortedKeys(e.policies), Rules: e.rules, Baseline: e.baseline})
 	}
 	sort.Slice(out.Edges, func(i, j int) bool {
 		a, b := out.Edges[i], out.Edges[j]

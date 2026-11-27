@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { btnToggle, focusRing } from '@kubetower/ui';
 
-import type { FlowEdge, Graph, GraphNode } from './data';
+import { DIAGONALS, type FlowEdge, type Graph, type GraphNode } from './data';
 import { fold, ORDERS, TOPS, type CellData, type FoldAsk, type Order } from './fold';
 
 /** What the matrix's own controls write to the address, `''` deleting a key. */
@@ -144,18 +144,18 @@ export function Matrix({
           </table>
         </div>
       )}
-      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} />
+      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} diagonals={new Set(nodes.map((n) => n.diagonal))} />
     </div>
   );
 }
 
-type State = 'allowed' | 'denied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
+type State = 'allowed' | 'denied' | 'partDenied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'mixed' | 'partial' | 'folded' | 'unknown';
 
 /** Every pod of a namespace, or of every namespace "others" holds, is
  *  isolated that way: nothing passes unless a rule of its own lets it. An
  *  "others" holding an end (a CIDR, world) is never isolated: an end never
  *  refuses. */
-const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && (n.ends ?? 0) === 0);
+const grouped = (n: GraphNode) => n.kind === 'namespace' || (n.kind === 'others' && n.ends === 0);
 const isolatedIn = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedIn >= n.pods;
 const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut >= n.pods;
 
@@ -163,23 +163,30 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  * What the rules say of one pair. A flow passes only if **each** isolated
  * side lets it: the source's egress rules and the destination's ingress
  * rules are two halves, and an allow on one never answers for the other. A
- * deny anywhere wins. A namespace to itself is allowed when a rule speaks
- * between its own pods (`internal`). On a cut answer nothing but a deny is
- * concluded: a rule left out could deny or allow any pair.
+ * deny on a pair between two namespaces wins. On a cut answer nothing but a
+ * deny is concluded: a rule left out could deny or allow any pair.
  *
  * "others" stands for several namespaces, and a rule on the cell may be any
  * one member's. So a cell touching it is refused only when every member
  * refuses (all isolated on that side, and no rule of that side on the
- * cell), and never allowed: what one member allows, another may refuse.
+ * cell), never allowed (what one member allows, another may refuse), and
+ * never wholly denied: a deny on it is one member's. An "others" holding an
+ * end (a CIDR, world), or whose ends were not counted, is never isolated.
+ *
+ * A namespace to itself is the policy engine's own answer (`diagonal`),
+ * precedence and all: AdminNetworkPolicy priority and Pass, Calico's rule
+ * order, the baseline last. Where an older server sent none, or a value this
+ * page does not know, it is read as any other pair, never taken as inside.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
-  if (cell !== undefined && cell.deny.length > 0) return 'denied';
-  if (cut) return 'unknown';
   const mixed = from.kind === 'others' || to.kind === 'others';
+  // The engine's own answer, precedence and all, before any count of rules.
+  if (!mixed && from.id === to.id && to.diagonal !== undefined && DIAGONALS.has(to.diagonal)) return to.diagonal;
+  if (cell !== undefined && cell.deny.length > 0) return mixed ? 'partDenied' : 'denied';
+  if (cut) return 'unknown';
   // Rules between two folded namespaces are not sent at all (the server
   // drops a merged edge from "others" to itself): nothing to conclude.
   if (from.kind === 'others' && to.kind === 'others') return 'folded';
-  if (!mixed && from.id === to.id && to.internal > 0) return 'inside';
   const inOK = !isolatedIn(to) || cell?.allowIn === true;
   const outOK = !isolatedOut(from) || cell?.allowOut === true;
   if (inOK && outOK) {
@@ -195,7 +202,10 @@ function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut
 const LOOK: Record<State, string> = {
   allowed: 'bg-accent/45',
   inside: 'bg-accent/25',
+  mixed: 'border border-dashed border-muted bg-panel-2',
+  partial: 'border border-dotted border-warn/60',
   denied: 'bg-bad/60',
+  partDenied: 'border border-dashed border-bad/60 bg-bad/20',
   unevaluated: 'border border-dotted border-muted',
   refused: 'bg-panel-2 text-muted',
   refusedOut: 'bg-panel-2 text-muted',
@@ -207,7 +217,10 @@ const LOOK: Record<State, string> = {
 const WORD: Record<State, string> = {
   allowed: 'allowed by a rule',
   inside: 'allowed between its own pods',
+  mixed: 'mixed: some flows between its pods pass, others are refused',
+  partial: 'partial: too many pods or ports to ask every pair',
   denied: 'denied by a rule',
+  partDenied: 'denied for some of the namespaces in others',
   unevaluated: 'a rule not evaluated here (FQDN, Service, layer 7)',
   refused: 'refused: the destination is isolated and no rule lets this in',
   refusedOut: 'refused: the source is isolated and no rule lets this out',
@@ -311,12 +324,14 @@ function Heading({
   );
 }
 
-function Legend({ cut, others }: { cut: boolean; others: boolean }): ReactNode {
+function Legend({ cut, others, diagonals }: { cut: boolean; others: boolean; diagonals: ReadonlySet<string | undefined> }): ReactNode {
   const items: { state: State; label: string }[] = [
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
     ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
-    ...(others ? [{ state: 'folded' as const, label: 'folded' }] : []),
+    ...(others ? [{ state: 'folded' as const, label: 'folded' }, { state: 'partDenied' as const, label: 'partly denied' }] : []),
+    ...(diagonals.has('mixed') ? [{ state: 'mixed' as const, label: 'mixed' }] : []),
+    ...(diagonals.has('partial') ? [{ state: 'partial' as const, label: 'partial' }] : []),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">

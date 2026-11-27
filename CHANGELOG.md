@@ -45,6 +45,17 @@ dialog draws it first, as a New extra line.
   again. The unused kinds toggle says its state once. The reason for No
   metrics and an image's tag with its digest open on a press, the image's
   copy names its container, and the account's hover says an update (#155).
+- **Network Inspector cells say what the policy engine would.** A
+  BaselineAdminNetworkPolicy rule no longer colours a cell where a
+  NetworkPolicy isolates that side, and a namespace's own cell is the
+  engine's answer for every pair of its pods on every port that can differ:
+  mixed where some flows pass and others are refused, partial where it is
+  too large to ask in full. One deny among the namespaces in others reads
+  partly denied, and an others whose ends were not counted is never taken as
+  isolated. A host-network pod shows its flows, the enlarged graph keeps its
+  size below 320 px, a flow UI link no longer takes the focus it was not
+  asked for, and a namespace the person may not list is not asked of the
+  flow source (#152).
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
   desktop, Services claiming to be Prometheus in one namespace and
   VictoriaMetrics in another are now refused as two Prometheus Services in two

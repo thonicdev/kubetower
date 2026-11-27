@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '@kubetower/ui';
+
 import { configuredHref, tunnelSuffix, type FlowUIs } from './data';
 import { FlowUIButtons } from './FlowUIs';
 
@@ -51,8 +53,11 @@ function stub(uis: FlowUIs | number, portForward = true, toolWindow = false): Re
   return fetch;
 }
 
+/** The client of the last mount, to read the forwards again as the page would. */
+let client = new QueryClient();
+
 function mount(namespace = '', cluster = 'kind'): (cluster: string) => void {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = (c: string) => (
     <QueryClientProvider client={client}>
       <FlowUIButtons cluster={c} namespace={namespace} />
@@ -145,6 +150,23 @@ describe('FlowUIButtons', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Hubble UI' }));
     const link = await screen.findByRole('link', { name: /Hubble UI/ });
     await waitFor(() => expect(document.activeElement).toBe(link));
+  });
+
+  it('drops the focus request when the list read again does not draw the forward it opened', async () => {
+    stub({ hubble: { tunnel: TUNNEL_HUBBLE } });
+    // The page names the cluster another way than the forward does: it never matches.
+    mount('shop', 'other');
+    fireEvent.click(await screen.findByRole('button', { name: 'Hubble UI' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Hubble UI' }) as HTMLButtonElement).disabled).toBe(false));
+    const elsewhere = document.createElement('input');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    // A forward of this cluster appears later: its link does not take the focus.
+    held = [{ ...FORWARD, id: 'f2', cluster: 'other' }];
+    await client.invalidateQueries({ queryKey: queryKeys.forwards });
+    expect(await screen.findByRole('link', { name: /Hubble UI/ })).toBeTruthy();
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
   });
 
   it('links at once to a forward already open, and turns back into a button once the server closed it', async () => {
