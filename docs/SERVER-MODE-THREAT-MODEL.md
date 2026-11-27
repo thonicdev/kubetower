@@ -397,7 +397,10 @@ verb and the same held answers:
   claiming to be Prometheus in one namespace and VictoriaMetrics in another are
   refused alike, since a Service labelled `app=prometheus` in a tenant's
   namespace beside a real vmsingle elsewhere is the same decoy; the two in one
-  namespace keep Prometheus. An answer larger than 16 MiB is refused on both
+  namespace keep Prometheus. A source set by hand in Settings › Monitoring
+  replaces discovery on that cluster, as the server profile's configuration
+  does, and is kept in the desktop's state directory under the resolved
+  context's name. An answer larger than 16 MiB is refused on both
   transports.
 - **A tunnel is reviewed as the request it is**: `terminal.Forwarder.Forward`
   reads the Service and its pods for whoever the context carries and digs the

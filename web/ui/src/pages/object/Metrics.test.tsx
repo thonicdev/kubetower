@@ -1196,6 +1196,28 @@ describe('a first answer with no metrics (#127)', () => {
     });
   });
 
+  it("draws the person's own refusal as a refusal, and a backend's as no metrics", async () => {
+    counted({
+      body: {
+        state: 'forbidden',
+        reason: { code: 'read_denied', message: 'pods "api-0" is forbidden', scope: { cluster: 'prod', resource: 'pods', verb: 'get' } },
+      },
+    });
+    mounted();
+    await waitFor(() => {
+      expect(document.querySelector('[data-state="forbidden"]')).not.toBeNull();
+    });
+    expect(document.querySelector('[data-no-metrics]')).toBeNull();
+  });
+
+  it("draws a metrics backend's refusal of the console as no metrics", async () => {
+    counted({ body: { state: 'forbidden', reason: { code: 'read_denied', message: 'prometheus answered 403' } } });
+    mounted();
+    await waitFor(() => {
+      expect(document.querySelector('[data-no-metrics]')).not.toBeNull();
+    });
+  });
+
   it('never draws pending as No metrics available', async () => {
     const asked = counted({
       body: { state: 'pending', reason: { code: 'not_probed_yet', message: 'the first round has not reached this cluster' } },

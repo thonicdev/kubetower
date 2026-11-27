@@ -83,8 +83,15 @@ func TestAClaimsPanelIsReviewedAsGetOnTheClaim(t *testing.T) {
 	reviews := &accesstest.Reviews{Answer: func(accesstest.Question) (bool, error) { return false, nil }}
 	prom := &promFake{}
 	reads := apiReads{&Server{series: prom, gate: reviews.Gate()}}
-	if _, fail := reads.Metrics(context.Background(), claimQuery()); fail == nil {
+	_, fail := reads.Metrics(context.Background(), claimQuery())
+	if fail == nil {
 		t.Fatal("a refused review answered a panel")
+	}
+	// The refusal names the person's own question, so the tab draws a
+	// refusal rather than no metrics (#156).
+	if fail.State != api.StateForbidden || fail.Reason.Scope == nil ||
+		fail.Reason.Scope.Verb != "get" || fail.Reason.Scope.Resource != "persistentvolumeclaims" {
+		t.Errorf("refusal %+v scope %+v", fail, fail.Reason.Scope)
 	}
 	if len(prom.ranges) != 0 {
 		t.Errorf("Prometheus was asked %d times for a person who may not read the claim", len(prom.ranges))

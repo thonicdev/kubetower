@@ -10,6 +10,7 @@ import { KeyLayer } from '../../keyboard/layers';
 import { useIntent } from '../../router/prefetch';
 import { NoMetrics } from '../../state/NoMetrics';
 import { ValueView } from '../../state/Result';
+import { StateNotice } from '../../state/StateNotice';
 import { formatInstant } from '../../components/instant';
 
 /**
@@ -183,6 +184,11 @@ export function Metrics({
     // (#127): a metrics backend missing or not reached is not a cluster
     // failure. Waiting, `pending` and a request that failed outright stay
     // `ValueView`'s to say, as everywhere else.
+    // The person's own `get` refused is not an absence of metrics (#156):
+    // the console's refusal notice, as on any page they may not read.
+    if (answer !== undefined && answer.state === 'forbidden' && answer.reason?.scope?.verb !== undefined) {
+      return <StateNotice state={answer.state} reason={answer.reason} compact />;
+    }
     if (answer !== undefined && answer.state !== 'ok' && answer.state !== 'pending') {
       return <NoMetrics state={answer.state} reason={answer.reason} onRetry={() => void query.refetch()} />;
     }

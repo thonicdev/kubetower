@@ -1320,11 +1320,8 @@ func consoleOptions(bundle fs.FS, inCluster bool, p *profile, w *workers) web.Op
 		Metrics:  measure,
 		// Settings › General's metrics source: editable where the settings
 		// writes are (api.Deps' `kept`).
-		MetricsSources: metricsSources{
-			measure: measure, store: p.sources, configured: p.promTarget,
-			editable: p.sources != nil && p.statePersistent && !p.replicas.Several,
-			resolve:  clusters.Resolve,
-		},
+		MetricsSources: newMetricsSources(measure, p.sources, p.promTarget,
+			p.sources != nil && p.statePersistent && !p.replicas.Several, clusters),
 		Hotbars:    p.bars,
 		Columns:    p.cols,
 		Nameplates: p.plates,
