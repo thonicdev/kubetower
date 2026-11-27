@@ -91,6 +91,10 @@ dialog draws it first, as a New extra line.
   writable has Retry, and is kept across a restart rather than downloaded
   again at every start, until a newer release comes; a failure that only a
   restart clears offers no Retry (#178).
+- **Storage and What's new polish.** A cluster with no claim no longer
+  shows a "fill unread" badge, a claim that backs two volumes of a pod is
+  listed once, and a Fixed entry is never shown ahead of a new extra in
+  What's new (#182).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

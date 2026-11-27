@@ -9,7 +9,8 @@ import changelog from 'virtual:kubetower-changelog';
  * changelog's own short sentence) and at most MAX_HIGHLIGHTS per release. An
  * entry carrying `<!-- extra: <key> -->` introduces that extra: the dialog
  * draws it first, as a New extra line (#121), and it is kept before the cut to
- * MAX_HIGHLIGHTS, wherever the release lists it (#125). Its key is read in
+ * MAX_HIGHLIGHTS, wherever the release lists it (#125). Only an Added entry
+ * does; the marker on a Fixed entry is ignored. Its key is read in
  * lower case with `_` as `-`; `app/extras/changelog.test.ts` refuses a marker
  * naming no shipped extra.
  */
@@ -48,7 +49,9 @@ export function parseChangelog(text: string): Release[] {
     const counts = section === 'added' || (section === 'fixed' && whole.includes(MARK));
     if (!counts) return;
     const title = titleOf(whole);
-    const extra = extraKey(whole);
+    // Only an Added entry introduces an extra: a Fixed one marked so stays a
+    // fix, never promoted before an Added extra (#182).
+    const extra = section === 'added' ? extraKey(whole) : undefined;
     if (title !== '') {
       release.highlights.push({ title, kind: section === 'added' ? 'added' : 'fixed', ...(extra === undefined ? {} : { extra }) });
     }
