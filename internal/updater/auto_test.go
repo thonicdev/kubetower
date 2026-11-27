@@ -480,3 +480,93 @@ func TestAtOnceSettlesTheFolderBeforeInstalling(t *testing.T) {
 		t.Fatalf("%+v, %d installs", s, len(plans(rec)))
 	}
 }
+
+// A folder found not writable is kept for the next start (#178, C37.5): it
+// says the manual phase again, with the folder, and the automatic update does
+// not download that release once more at every start. A person's download
+// clears it, and a release this build is not older than, or a folder gone,
+// is not said.
+func TestTheManualPhaseIsKeptForTheNextStart(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	notWritable := func(o *Options) { o.Writable = func() bool { return false } }
+	u := f.updater(dir, &recorder{}, notWritable)
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	first := settle(t, u)
+	if first.Phase != Manual || first.Folder == "" {
+		t.Fatalf("first start: %+v", first)
+	}
+	waitSaved(t, dir, `"manualVersion":"0.1.3"`)
+
+	next := f.updater(dir, &recorder{}, notWritable)
+	s := next.Status()
+	if s.Phase != Manual || s.Version != "0.1.3" || s.Folder != first.Folder {
+		t.Fatalf("next start: %+v, want the manual phase of 0.1.3 in %s", s, first.Folder)
+	}
+	fetched := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return strings.Count(strings.Join(f.hits, "\n"), "/dl/"+f.asset)
+	}
+	downloads := fetched()
+	next.autoStep(context.Background(), func() string { return "0.1.3" }, func() (int, int) { return 0, 0 })
+	if fetched() != downloads {
+		t.Error("the automatic update downloaded the release found not writable again")
+	}
+
+	// The release now runs: nothing to say.
+	if s := f.updater(dir, &recorder{}, func(o *Options) { notWritable(o); o.Version = "0.1.3" }).Status(); s.Phase == Manual {
+		t.Errorf("0.1.3 runs it: %+v", s)
+	}
+	// Its folder gone: nothing to open, so nothing said.
+	if err := os.RemoveAll(first.Folder); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.updater(dir, &recorder{}, notWritable).Status(); s.Phase == Manual {
+		t.Errorf("folder gone: %+v", s)
+	}
+	// A person's download, into a folder now writable, clears what was kept.
+	last := f.updater(dir, &recorder{}, func(o *Options) { o.Writable = func() bool { return true } })
+	if _, err := last.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, last); s.Phase != Ready {
+		t.Fatalf("after a download by hand: %+v", s)
+	}
+	last.mu.Lock()
+	kept := last.held.ManualVersion
+	last.mu.Unlock()
+	if kept != "" {
+		t.Errorf("after a download by hand, %q is still kept as not writable", kept)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, _ := os.ReadFile(filepath.Join(dir, settingsFile))
+		if !strings.Contains(string(raw), "manualVersion") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("updater.json still keeps it: %s", raw)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitSaved waits until updater.json in dir holds want: the settings are
+// written on a goroutine of their own.
+func waitSaved(t *testing.T, dir, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, _ := os.ReadFile(filepath.Join(dir, settingsFile))
+		if strings.Contains(string(raw), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("updater.json is %s, want it to hold %s", raw, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

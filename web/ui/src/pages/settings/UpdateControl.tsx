@@ -142,15 +142,19 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <span className="min-w-0 truncate text-bad" data-update-step="failed" title={install.reason}>
             {install.reason === undefined || install.reason === '' ? 'Failed' : install.reason}
           </span>
-          <button
-            type="button"
-            className={btnSecondary}
-            disabled={busy}
-            onClick={start}
-            data-update-retry=""
-          >
-            Retry
-          </button>
+          {/* An earlier helper still alive: Download is refused until
+              KubeTower restarts, so a Retry would only fail (#178). */}
+          {install.helperAlive === true ? null : (
+            <button
+              type="button"
+              className={btnSecondary}
+              disabled={busy}
+              onClick={start}
+              data-update-retry=""
+            >
+              Retry
+            </button>
+          )}
         </>
       );
       break;
@@ -173,6 +177,18 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
             data-update-open-folder=""
           >
             Open folder
+          </button>
+          {/* The way out once the folder can be written, or the file was put
+              in place by hand: download and check the folder again (#178). */}
+          <button
+            type="button"
+            className={btnSecondary}
+            disabled={busy}
+            onClick={start}
+            title="Download again and check the folder"
+            data-update-retry=""
+          >
+            Retry
           </button>
         </>
       );

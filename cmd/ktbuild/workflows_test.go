@@ -2255,19 +2255,10 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 			t.Errorf("the sign job holds %s: write; it needs none", scope)
 		}
 	}
-	// The secret appears in exactly one step, of this job only.
-	for name, job := range jobs {
-		for _, step := range steps(job) {
-			env, _ := step["env"].(map[string]any)
-			text := jobText(map[string]any{"steps": []any{step}})
-			has := strings.Contains(text, "secrets.RELEASE_SIGNING_KEY")
-			if has && (name != "sign" || step["id"] != "sign") {
-				t.Errorf("release.yml's %s job step %q reads RELEASE_SIGNING_KEY; only sign's signing step may", name, step["name"])
-			}
-			if name == "sign" && step["id"] == "sign" && env["RELEASE_SIGNING_KEY"] != "${{ secrets.RELEASE_SIGNING_KEY }}" {
-				t.Errorf("the signing step does not take the key from its env (%v)", env["RELEASE_SIGNING_KEY"])
-			}
-		}
+	// The secret appears in exactly one step, of this job only: never in a
+	// job's or the workflow's own env, which every step would get (#178).
+	for _, problem := range signingKeyLeaks(workflowEnv(t, "release.yml"), jobs) {
+		t.Error(problem)
 	}
 	signStep := stepWhere(sign, func(s map[string]any) bool { return s["id"] == "sign" })
 	if signStep < 0 {
@@ -2287,10 +2278,8 @@ func TestTheReleaseSignsChecksumsOffThePool(t *testing.T) {
 			t.Errorf("the signing step does not carry %q", want)
 		}
 	}
-	for _, refused := range []string{"set -x", "set -eux", `echo "$RELEASE_SIGNING_KEY`, "cat \"$KEY_DIR"} {
-		if strings.Contains(run, refused) {
-			t.Errorf("the signing step carries %q, which can print the key", refused)
-		}
+	for _, problem := range printsTheKey(run) {
+		t.Error(problem)
 	}
 	all := steps(sign)
 	last := all[len(all)-1]
@@ -2492,5 +2481,112 @@ func TestTheReleaseNotesLinkTheKeyAtTheTag(t *testing.T) {
 	used := strings.Index(run, `gh release view "$TAG"`)
 	if read < 0 || put < 0 || used < 0 || !(read < put && put < used) {
 		t.Errorf("the draft job does not put the tag into the notes between reading and using them (read %d, sed %d, use %d)", read, put, used)
+	}
+}
+
+// workflowEnv is a workflow's top-level env, or nil.
+func workflowEnv(t *testing.T, file string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Env map[string]any `json:"env"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%s: %v", file, err)
+	}
+	return doc.Env
+}
+
+// signingKeyLeaks are the places release.yml hands RELEASE_SIGNING_KEY out
+// beyond the sign job's signing step (#46, #178): the workflow's env, a job's
+// env (every step of the job would get it), or another step.
+func signingKeyLeaks(workflow map[string]any, jobs map[string]map[string]any) []string {
+	var out []string
+	names := func(env map[string]any) bool { return strings.Contains(fmt.Sprint(env), "RELEASE_SIGNING_KEY") }
+	if names(workflow) {
+		out = append(out, "release.yml's workflow-level env names RELEASE_SIGNING_KEY: every job would get it")
+	}
+	for name, job := range jobs {
+		if env, _ := job["env"].(map[string]any); names(env) {
+			out = append(out, fmt.Sprintf("release.yml's %s job env names RELEASE_SIGNING_KEY: every step of it would get it", name))
+		}
+		for _, step := range steps(job) {
+			env, _ := step["env"].(map[string]any)
+			text := jobText(map[string]any{"steps": []any{step}})
+			has := strings.Contains(text, "secrets.RELEASE_SIGNING_KEY")
+			if has && (name != "sign" || step["id"] != "sign") {
+				out = append(out, fmt.Sprintf("release.yml's %s job step %q reads RELEASE_SIGNING_KEY; only sign's signing step may", name, step["name"]))
+			}
+			if name == "sign" && step["id"] == "sign" && env["RELEASE_SIGNING_KEY"] != "${{ secrets.RELEASE_SIGNING_KEY }}" {
+				out = append(out, fmt.Sprintf("the signing step does not take the key from its env (%v)", env["RELEASE_SIGNING_KEY"]))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// keyPrinters are what in a script can put the key on the log, unmasked:
+// tracing, echoing it quoted or not, encoding it (a masked secret encoded is
+// no longer masked), or printing the file it was written to (#178).
+var keyPrinters = []struct {
+	pattern *regexp.Regexp
+	what    string
+}{
+	{regexp.MustCompile(`(?m)\bset\s+-[a-z]*x`), "tracing (set -x)"},
+	{regexp.MustCompile(`\becho\b[^\n|;&]*\$\{?RELEASE_SIGNING_KEY`), "echo of the key"},
+	{regexp.MustCompile(`\$\{?RELEASE_SIGNING_KEY[^\n]*\|\s*(base64|xxd|od|hexdump)`), "the key piped to an encoder"},
+	{regexp.MustCompile(`\b(base64|xxd|od|hexdump)\b[^\n]*\$\{?RELEASE_SIGNING_KEY`), "an encoder given the key"},
+	{regexp.MustCompile(`\bcat\s+"?\$KEY_DIR`), "cat of the key file"},
+}
+
+// printsTheKey is what in the signing step's script could print the key.
+func printsTheKey(run string) []string {
+	var out []string
+	for _, p := range keyPrinters {
+		if p.pattern.MatchString(run) {
+			out = append(out, "the signing step carries "+p.what+", which can print the key")
+		}
+	}
+	return out
+}
+
+// The key-leak checks see what they were missing (#178, C9.1): a job's or
+// the workflow's env, an unquoted echo and an encoder. The release workflow
+// itself, as committed, trips none (TestTheReleaseSignsChecksumsOffThePool).
+func TestTheKeyLeakChecksSeeEveryWay(t *testing.T) {
+	signStep := map[string]any{"id": "sign", "name": "Sign", "env": map[string]any{"RELEASE_SIGNING_KEY": "${{ secrets.RELEASE_SIGNING_KEY }}"},
+		"run": `printf '%s\n' "$RELEASE_SIGNING_KEY" > "$KEY_DIR/key.pem"`}
+	clean := map[string]map[string]any{"sign": {"steps": []any{signStep}}, "build": {"steps": []any{map[string]any{"name": "Build", "run": "make"}}}}
+	if got := signingKeyLeaks(nil, clean); len(got) != 0 {
+		t.Fatalf("a clean workflow: %v", got)
+	}
+	secret := map[string]any{"RELEASE_SIGNING_KEY": "${{ secrets.RELEASE_SIGNING_KEY }}"}
+	if got := signingKeyLeaks(secret, clean); len(got) != 1 || !strings.Contains(got[0], "workflow-level") {
+		t.Errorf("a workflow-level env: %v", got)
+	}
+	jobEnv := map[string]map[string]any{"sign": {"env": secret, "steps": []any{signStep}}}
+	if got := signingKeyLeaks(nil, jobEnv); len(got) != 1 || !strings.Contains(got[0], "sign job env") {
+		t.Errorf("a job-level env: %v", got)
+	}
+	for _, run := range []string{
+		"echo $RELEASE_SIGNING_KEY",
+		`echo "${RELEASE_SIGNING_KEY}" > /dev/stderr`,
+		`printf '%s' "$RELEASE_SIGNING_KEY" | base64`,
+		`base64 <<< "$RELEASE_SIGNING_KEY"`,
+		"set -euxo pipefail",
+		`cat "$KEY_DIR/key.pem"`,
+	} {
+		if len(printsTheKey(run)) == 0 {
+			t.Errorf("%q passes", run)
+		}
+	}
+	for _, run := range []string{`printf '%s\n' "$RELEASE_SIGNING_KEY" > "$KEY_DIR/key.pem"`, `if [ -z "$RELEASE_SIGNING_KEY" ]; then`, "set -euo pipefail"} {
+		if got := printsTheKey(run); len(got) != 0 {
+			t.Errorf("%q is refused: %v", run, got)
+		}
 	}
 }
