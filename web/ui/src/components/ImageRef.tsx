@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { CopyButton } from './CopyButton';
+import { DetailTip } from './DetailTip';
 
 /** An image reference split the way a person reads it: where it comes from,
  *  and which version. */
@@ -59,9 +60,12 @@ export function ImageRef({
   image,
   className = '',
   copy = true,
+  of,
 }: {
   image: string | undefined;
   className?: string;
+  /** Whose image it is (a container's name), for the copy's name. */
+  of?: string | undefined;
   /** False inside a control of its own (a button), where a second button
    *  cannot go: the reference is then the hover only. */
   copy?: boolean;
@@ -89,8 +93,9 @@ export function ImageRef({
         <VersionBadge parts={parts} />
       </span>
       {copy ? (
-        <span className="shrink-0">
-          <CopyButton value={parts.full} label="Copy image" />
+        <span className="shrink-0 whitespace-nowrap">
+          <VersionTip parts={parts} />
+          <CopyButton value={parts.full} label={copyLabel(parts, of)} />
         </span>
       ) : null}
     </span>
@@ -131,14 +136,31 @@ function MiddleCut({ repository }: { repository: string }): ReactNode {
  * tag and digest whole in its hover. A tag longer than the line (up to 128
  * characters) is cut at its end, never past the line.
  */
-function VersionBadge({ parts }: { parts: ImageParts }): ReactNode {
-  const versionTitle = parts.implicit
+function versionTitleOf(parts: ImageParts): string {
+  return parts.implicit
     ? 'latest (implicit)'
     : parts.tag !== '' && parts.digest !== ''
       ? `${parts.tag}@${parts.digest}`
       : parts.tag !== ''
         ? parts.tag
         : parts.digest;
+}
+
+/** The copy's name: whose image, or which. */
+function copyLabel(parts: ImageParts, of: string | undefined): string {
+  return of === undefined || of === '' ? `Copy image ${parts.full}` : `Copy image of ${of}`;
+}
+
+/** The whole version within a keyboard's reach, where the badge shows less
+ *  of it (a digest, or a tag with its digest). */
+function VersionTip({ parts }: { parts: ImageParts }): ReactNode {
+  const whole = versionTitleOf(parts);
+  if (parts.implicit || whole === parts.version) return null;
+  return <DetailTip text={whole} label={`Version of ${parts.full}`} />;
+}
+
+function VersionBadge({ parts }: { parts: ImageParts }): ReactNode {
+  const versionTitle = versionTitleOf(parts);
   return (
     <span
       data-image-version={parts.implicit ? 'implicit' : parts.tag !== '' ? 'tag' : 'digest'}
@@ -159,7 +181,7 @@ function VersionBadge({ parts }: { parts: ImageParts }): ReactNode {
  * the whole line, cut in its middle only if it is still too long. The whole
  * reference is the line's hover, and the copy copies it exactly.
  */
-export function ImageLine({ image }: { image: string | undefined }): ReactNode {
+export function ImageLine({ image, of }: { image: string | undefined; of?: string | undefined }): ReactNode {
   const parts = imageParts(image);
   if (parts.full === '') return null;
   const separator = parts.tag === '' && parts.digest !== '' ? '@' : ':';
@@ -174,8 +196,9 @@ export function ImageLine({ image }: { image: string | undefined }): ReactNode {
       </span>
       <span className="flex max-w-full min-w-0 flex-[0_1_auto] items-center gap-1">
         <VersionBadge parts={parts} />
-        <span className="shrink-0">
-          <CopyButton value={parts.full} label="Copy image" />
+        <span className="shrink-0 whitespace-nowrap">
+          <VersionTip parts={parts} />
+          <CopyButton value={parts.full} label={copyLabel(parts, of)} />
         </span>
       </span>
     </div>

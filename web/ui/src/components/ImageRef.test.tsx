@@ -63,7 +63,7 @@ describe('an image reference', () => {
     expect(badge?.textContent).toBe('2.14.3-rc.2');
     // The repository gives way first: it shrinks far faster than the badge.
     expect(repo?.className).toContain('shrink-[999]');
-    expect(document.querySelector('button[aria-label="Copy image"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label^="Copy image"]')).not.toBeNull();
   });
 
   it('reads as a reference when selected: the separator is drawn', () => {
@@ -181,7 +181,7 @@ describe('an image line', () => {
     });
     try {
       render(<ImageLine image={pinned} />);
-      fireEvent.click(screen.getByRole('button', { name: 'Copy image' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Copy image/ }));
       await waitFor(() => expect(written).toEqual([pinned]));
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
@@ -192,6 +192,28 @@ describe('an image line', () => {
   it('draws nothing for no image', () => {
     render(<ImageLine image={undefined} />);
     expect(document.querySelector('[data-image-line]')).toBeNull();
+  });
+});
+
+describe('what an image reference offers a keyboard', () => {
+  it("names its copy after the container, or the reference", () => {
+    render(<ImageLine image="ghcr.io/acme/api:1.2.0" of="api" />);
+    expect(screen.getByRole('button', { name: 'Copy image of api' })).toBeTruthy();
+    cleanup();
+    render(<ImageRef image="ghcr.io/acme/api:1.2.0" />);
+    expect(screen.getByRole('button', { name: 'Copy image ghcr.io/acme/api:1.2.0' })).toBeTruthy();
+  });
+
+  it('shows a tag with its digest on a press, where the badge shows the tag alone', () => {
+    const digest = `sha256:${'a'.repeat(64)}`;
+    render(<ImageLine image={`ghcr.io/acme/api:1.2.0@${digest}`} of="api" />);
+    const tip = screen.getByRole('button', { name: /^Version of / });
+    fireEvent.click(tip);
+    expect(document.querySelector('[data-detail-tip-text]')?.textContent).toBe(`1.2.0@${digest}`);
+    cleanup();
+    // A tag alone says all of itself: nothing to press.
+    render(<ImageLine image="ghcr.io/acme/api:1.2.0" of="api" />);
+    expect(screen.queryByRole('button', { name: /^Version of / })).toBeNull();
   });
 });
 

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -74,6 +75,10 @@ func TestNoDownloadBesideAHelperStillAlive(t *testing.T) {
 	if err := os.MkdirAll(keep, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Said, so the page offers no Retry that could only fail (#178).
+	if s := u.Status(); !s.HelperAlive {
+		t.Errorf("the status does not say the helper is alive: %+v", s)
+	}
 	if _, err := u.Download(); !errors.Is(err, ErrHelperAlive) {
 		t.Fatalf("Download beside a live helper: %v", err)
 	}
@@ -84,6 +89,18 @@ func TestNoDownloadBesideAHelperStillAlive(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.hits) != 0 {
 		t.Errorf("asked GitHub: %v", f.hits)
+	}
+}
+
+// Any other failure is retried: helperAlive says only that one.
+func TestOnlyALiveHelperIsSaidAlive(t *testing.T) {
+	f := newFake(t)
+	u := f.updater(t.TempDir(), &recorder{}, nil)
+	u.mu.Lock()
+	u.status.Phase, u.status.Reason = Failed, "the signature does not match"
+	u.mu.Unlock()
+	if u.Status().HelperAlive {
+		t.Error("an ordinary failure is said to have a live helper")
 	}
 }
 
@@ -235,5 +252,22 @@ func TestALeftoversAgeIsTheOneInItsName(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Errorf("the stale folder is still there: %v", err)
+	}
+}
+
+// The stop is read by a request's goroutine while the console wires it from
+// its own (#178, C16): held atomically, which -race checks here.
+func TestSetStopAndItsReadRaceFree(t *testing.T) {
+	was := stopper.Load()
+	t.Cleanup(func() { stopper.Store(was) })
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(2)
+		go func() { defer wg.Done(); SetStop(func() { _ = i }) }()
+		go func() { defer wg.Done(); _ = stopFunc() }()
+	}
+	wg.Wait()
+	if stopFunc() == nil {
+		t.Error("no stop after fifty were set")
 	}
 }

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup as cleanupMounted, fireEvent, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,9 +20,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function Runs({ cluster, kind, namespace, name }: ExtensionTabProps) {
+function Runs({ cluster, kind, namespace, name, readOnly }: ExtensionTabProps) {
   return (
-    <p data-testid="runs">
+    <p data-testid="runs" data-read-only={String(readOnly)}>
       runs of {cluster}/{kind}/{namespace}/{name}
     </p>
   );
@@ -74,6 +74,19 @@ describe("an extension's tab in the object panel", () => {
     fireEvent.click(tab);
     expect((await screen.findByTestId('runs')).textContent).toBe('runs of prod/pods/batch/backup-29-x7');
     expect(document.querySelector('[data-extension-tab="x.kubecron.runs"]')).toBeTruthy();
+  });
+
+  it("is told whether the cluster is read-only, and drawn only once that is known (#157)", async () => {
+    const clusters = (readOnly: boolean): StubReply => ({
+      body: { state: 'ok', items: [{ name: 'prod', label: 'prod', state: 'ok', readOnly }] },
+    });
+    for (const readOnly of [true, false]) {
+      stubFetch({ [PATH]: ok, '/api/c/prod/nav': menu('kubecron'), '/api/clusters': clusters(readOnly) });
+      mount(pod);
+      fireEvent.click(await screen.findByRole('tab', { name: 'KubeCron' }));
+      expect((await screen.findByTestId('runs')).getAttribute('data-read-only')).toBe(String(readOnly));
+      cleanupMounted();
+    }
   });
 
   it('is absent while the extension is off for the cluster', async () => {

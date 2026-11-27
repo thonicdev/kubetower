@@ -182,6 +182,19 @@ describe('an icon is a shape, and the label belongs to the control', () => {
     expect(container.querySelector('use')?.getAttribute('href')).toBe('#i-trash');
   });
 
+  it('draws each glyph the sheet defines as itself, never as the fallback', () => {
+    for (const name of EVERY_GLYPH) {
+      const { container, unmount } = render(<Icon name={name} />);
+      expect(container.querySelector('use')?.getAttribute('href'), name).toBe(`#i-${name}`);
+      unmount();
+    }
+  });
+
+  it('draws the extra glyph for a name the sheet does not define', () => {
+    const { container } = render(<Icon name={'nonexistent' as IconName} />);
+    expect(container.querySelector('use')?.getAttribute('href')).toBe('#i-extra');
+  });
+
   it('is hidden from the accessibility tree and is not a tab stop', () => {
     const { container } = render(<Icon name="drain" />);
     const svg = container.querySelector('svg');

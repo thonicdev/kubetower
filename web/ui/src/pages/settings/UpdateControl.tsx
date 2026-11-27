@@ -142,15 +142,19 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
           <span className="min-w-0 truncate text-bad" data-update-step="failed" title={install.reason}>
             {install.reason === undefined || install.reason === '' ? 'Failed' : install.reason}
           </span>
-          <button
-            type="button"
-            className={btnSecondary}
-            disabled={busy}
-            onClick={start}
-            data-update-retry=""
-          >
-            Retry
-          </button>
+          {/* An earlier helper still alive: Download is refused until
+              KubeTower restarts, so a Retry would only fail (#178). */}
+          {install.helperAlive === true ? null : (
+            <button
+              type="button"
+              className={btnSecondary}
+              disabled={busy}
+              onClick={start}
+              data-update-retry=""
+            >
+              Retry
+            </button>
+          )}
         </>
       );
       break;
@@ -173,6 +177,18 @@ export function UpdateControl({ prominent = false }: { prominent?: boolean }): R
             data-update-open-folder=""
           >
             Open folder
+          </button>
+          {/* The way out once the folder can be written, or the file was put
+              in place by hand: download and check the folder again (#178). */}
+          <button
+            type="button"
+            className={btnSecondary}
+            disabled={busy}
+            onClick={start}
+            title="Download again and check the folder"
+            data-update-retry=""
+          >
+            Retry
           </button>
         </>
       );
@@ -307,7 +323,8 @@ export function InstallUpdatesSetting(): ReactNode {
       <ExtraSwitch
         on={on}
         label="Install updates automatically"
-        disabled={allow.isPending}
+        disabled={false}
+        pending={allow.isPending}
         onToggle={() => allow.mutate({ enabled: !on })}
       />
       <span>Install updates automatically</span>
@@ -320,13 +337,14 @@ export function InstallUpdatesSetting(): ReactNode {
               type="button"
               role="radio"
               aria-checked={picked}
-              disabled={!on || allow.isPending}
+              disabled={!on}
+              aria-disabled={allow.isPending || undefined}
               title={choice.title}
               onClick={() => {
-                if (!picked) allow.mutate({ enabled: true, when: choice.value });
+                if (!picked && !allow.isPending) allow.mutate({ enabled: true, when: choice.value });
               }}
               data-install-when={choice.value}
-              className={`px-2 py-0.5 disabled:cursor-not-allowed ${focusRingTight} ${picked ? 'bg-accent text-fg' : 'text-muted hover:text-fg'}`}
+              className={`px-2 py-0.5 disabled:cursor-not-allowed aria-disabled:cursor-wait ${focusRingTight} ${picked ? 'bg-accent text-fg' : 'text-muted hover:text-fg'}`}
             >
               {choice.label}
             </button>

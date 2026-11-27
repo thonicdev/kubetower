@@ -351,4 +351,10 @@ export interface ExtensionTabProps {
   /** Absent on a cluster-scoped kind. */
   namespace: string | undefined;
   name: string;
+  /** The cluster is marked read-only (KT_READONLY_CLUSTERS): every write,
+   *  command and tunnel is refused, and each refusal is audited. A tab that
+   *  runs something on its own when it opens does not where this is true.
+   *  The console renders a tab only once it knows; undefined where a host
+   *  does not say. */
+  readOnly?: boolean | undefined;
 }

@@ -37,15 +37,25 @@ dialog draws it first, as a New extra line.
 
 ### Fixed
 
+- **Settings and the shell, within a keyboard's reach.** A card's switch
+  keeps the focus while its write is pending and says its new state, a
+  refusal on one cluster no longer follows the card to another, and an
+  extra naming an icon the console lacks draws the extra glyph. Back from
+  Settings puts the page's last scroll back, after Back, Forward and Back
+  again. The unused kinds toggle says its state once. The reason for No
+  metrics and an image's tag with its digest open on a press, the image's
+  copy names its container, and the account's hover says an update (#155).
 - **Network Inspector cells say what the policy engine would.** A
   BaselineAdminNetworkPolicy rule no longer colours a cell where a
-  NetworkPolicy isolates that side, a namespace isolated on egress with an
-  ingress-only rule for its own pods reads refused rather than inside, one
-  deny among the namespaces in others reads partly denied, and an others
-  whose ends were not counted is never taken as isolated. A host-network
-  pod shows its flows, the enlarged graph keeps its size below 320 px, a
-  flow UI link no longer takes the focus it was not asked for, and a
-  namespace the person may not list is not asked of the flow source (#152).
+  NetworkPolicy isolates that side, and a namespace's own cell is the
+  engine's answer for every pair of its pods on every port that can differ:
+  mixed where some flows pass and others are refused, partial where it is
+  too large to ask in full. One deny among the namespaces in others reads
+  partly denied, and an others whose ends were not counted is never taken as
+  isolated. A host-network pod shows its flows, the enlarged graph keeps its
+  size below 320 px, a flow UI link no longer takes the focus it was not
+  asked for, and a namespace the person may not list is not asked of the
+  flow source (#152).
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
   desktop, Services claiming to be Prometheus in one namespace and
   VictoriaMetrics in another are now refused as two Prometheus Services in two
@@ -93,6 +103,24 @@ dialog draws it first, as a New extra line.
   their connections; a Retry and the watcher no longer apply an older read
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
+- **Runtime Inspector: the program left running names the runtime.** In a
+  shell chain the program exec'd decides unless it is plumbing itself, or
+  else the last one that is not plumbing (`cd`, `wait`, `sleep`, `tail`,
+  `echo`, `tee`, `cat`…) nor a fallback after `||`: `npx wait-on … &&
+  /app/bin/start` with JAVA_HOME is Java, `python app.py & wait`, `cat x |
+  node` and `node server.js & exec tail -f /dev/null` are read, and `bash
+  -ceo pipefail` is read. Opening the JVM, Go, Node.js or Python tab, on a
+  pod's page or in the Runtime Inspector, on a read-only cluster runs
+  nothing and records no refusal; a switch is
+  reviewed once, an old `jvm` grant that could not be reviewed answers 503
+  and grants nothing, and a refusal is drawn on one line (#157).
+- **Updates: no program found through PATH, and a way out of Not
+  writable.** The updater starts powershell, explorer, xdg-open, open,
+  pkexec and the package tools from the system's own folders. The Windows
+  zip's swap retries the move while the old executable is still held. Not
+  writable has Retry, and is kept across a restart rather than downloaded
+  again at every start, until a newer release comes; a failure that only a
+  restart clears offers no Retry (#178).
 - **Storage and What's new polish.** A cluster with no claim no longer
   shows a "fill unread" badge, a claim that backs two volumes of a pod is
   listed once, and a Fixed entry is never shown ahead of a new extra in

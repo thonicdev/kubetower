@@ -228,3 +228,84 @@ func TestAHelperThatCouldNotBeStoppedFailsTheInstall(t *testing.T) {
 		t.Errorf("the log does not say the helper could not be stopped:\n%s", raw)
 	}
 }
+
+// The whole group goes, not the shell alone (#178, C32.3): a long sleep in
+// the shell's group is killed with it. Killing the shell's pid only would
+// leave it running.
+func TestStoppingTheRelaunchKillsItsGroupsChildren(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30 & echo $!; wait")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); _ = cmd.Wait() })
+	var child int
+	if _, err := fmt.Fscan(out, &child); err != nil || child <= 0 {
+		t.Fatalf("the child's pid: %d %v", child, err)
+	}
+	relaunchHelper.Lock()
+	relaunchHelper.pid = cmd.Process.Pid
+	relaunchHelper.Unlock()
+	if err := stopRelaunch(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for alive(child) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the sleep %d in the relaunch shell's group is still running", child)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// alive says pid runs and is not a zombie.
+func alive(pid int) bool {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	return err == nil && !strings.Contains(string(raw), ") Z ")
+}
+
+// A group that could not be killed is said (#178, C31.1): awaitExit then
+// keeps the helper's files and offers no second install beside it.
+func TestARefusedGroupKillIsAnError(t *testing.T) {
+	was := killGroup
+	killGroup = func(int, syscall.Signal) error { return syscall.EPERM }
+	t.Cleanup(func() { killGroup = was })
+	relaunchHelper.Lock()
+	relaunchHelper.pid = 424242
+	relaunchHelper.Unlock()
+	if err := stopRelaunch(); !errors.Is(err, syscall.EPERM) {
+		t.Errorf("a refused kill: %v, want EPERM", err)
+	}
+	// A group already gone is not one.
+	killGroup = func(int, syscall.Signal) error { return syscall.ESRCH }
+	relaunchHelper.Lock()
+	relaunchHelper.pid = 424242
+	relaunchHelper.Unlock()
+	if err := stopRelaunch(); err != nil {
+		t.Errorf("a group already gone: %v", err)
+	}
+}
+
+// A kill at the bound is decided by its cause, not by exec's sentence
+// (#178, C33.2): a refused kill reworded is still not "nothing installed".
+func TestABoundIsReadByItsCauseNotItsWords(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"killed", context.DeadlineExceeded, true},
+		{"refused, as exec words it today", fmt.Errorf("exec: canceling Cmd: %w", errors.Join(context.DeadlineExceeded, syscall.EPERM)), false},
+		{"refused, reworded", fmt.Errorf("exec: stopping the command failed: %w", errors.Join(context.DeadlineExceeded, syscall.EPERM)), false},
+		{"refused as a permission", errors.Join(context.DeadlineExceeded, os.ErrPermission), false},
+		{"another failure", errors.New("exit status 1"), false},
+	} {
+		if got := killedAtTheBound(c.err); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
