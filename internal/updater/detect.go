@@ -144,7 +144,7 @@ func owner(path string) string {
 // dash is never read as an option. answered is false only when the tool ran
 // past ownerWait; a missing tool answers no.
 var ownedBy = func(tool, flag, path string) (owned, answered bool) {
-	found, err := exec.LookPath(tool)
+	found, err := systemTool(tool)
 	if err != nil {
 		return false, true
 	}

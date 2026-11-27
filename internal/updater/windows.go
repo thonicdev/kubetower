@@ -106,14 +106,22 @@ func finish(script string, start func(string) error, stop func()) error {
 	return nil
 }
 
+// moveAttempts is how often the zip's helper tries to move the new
+// executable over the old one.
+const moveAttempts = 10
+
 // swapScript waits for pid, moves the new executable over the old one, then
 // starts it. The new file was written beside the old one, on its volume.
 func swapScript(pid int, next, exe string, args []string, log string, restart bool) string {
+	// The move is tried moveAttempts times, half a second apart: just after
+	// KubeTower exits, an antivirus or the indexer may still hold the old
+	// executable (#178, C14.4).
 	return psLog(log) + fmt.Sprintf("L %s; Wait-Process -Id %d -ErrorAction SilentlyContinue; "+
-		"L %s; try { Move-Item -LiteralPath %s -Destination %s -Force -ErrorAction Stop; L 'moved' } "+
-		"catch { L ('move failed: ' + $_.Exception.Message) }",
+		"L %s; $moved = $false; for ($try = 1; $try -le %d -and -not $moved; $try++) { "+
+		"try { Move-Item -LiteralPath %s -Destination %s -Force -ErrorAction Stop; $moved = $true; L 'moved' } "+
+		"catch { L ('move failed (try ' + $try + '): ' + $_.Exception.Message); Start-Sleep -Milliseconds 500 } }",
 		psQuote(fmt.Sprintf("waiting for KubeTower (pid %d) to exit", pid)), pid,
-		psQuote("KubeTower exited; moving "+next+" over "+exe), psQuote(next), psQuote(exe)) +
+		psQuote("KubeTower exited; moving "+next+" over "+exe), moveAttempts, psQuote(next), psQuote(exe)) +
 		startScript(exe, args, restart)
 }
 

@@ -17,7 +17,11 @@ var openFolder = func(dir string) error {
 	case "darwin":
 		name = "open"
 	}
-	cmd := exec.Command(name, dir)
+	tool, err := systemTool(name)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(tool, dir)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

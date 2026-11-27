@@ -246,11 +246,27 @@ describe('the banner and its two clicks', () => {
     expect(button.textContent).toBe('Open folder');
     expect(button.title).toBe(manual.folder);
     expect(banner()?.querySelector('[data-update-step="manual"]')?.textContent).toBe('Not writable');
-    expect(banner()?.querySelector('[data-update-restart], [data-update-download], [data-update-retry]')).toBeNull();
+    expect(banner()?.querySelector('[data-update-restart], [data-update-download]')).toBeNull();
     fireEvent.click(button);
     await waitFor(() => {
       expect(c.sent).toEqual([{ method: 'POST', path: '/api/settings/update/open-folder', body: undefined }]);
     });
+    // The way out (#178): Retry downloads again, and the folder is checked again.
+    const retry = banner()?.querySelector<HTMLButtonElement>('[data-update-retry]');
+    expect(retry?.textContent).toBe('Retry');
+    fireEvent.click(retry as HTMLButtonElement);
+    await waitFor(() => {
+      expect(c.sent.map((one) => one.path)).toContain('/api/settings/update/download');
+    });
+  });
+
+  it('offers no Retry while an earlier helper is alive, which only a restart clears (#178)', async () => {
+    console({ ...idle, phase: 'failed', reason: 'the update\'s helper could not be stopped', helperAlive: true });
+    mountApp('/settings/general');
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-banner] [data-update-step="failed"]')).not.toBeNull();
+    });
+    expect(banner()?.querySelector('[data-update-retry]')).toBeNull();
   });
 
   it("says a refused download in the server's words", async () => {
