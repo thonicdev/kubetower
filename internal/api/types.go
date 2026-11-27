@@ -632,6 +632,9 @@ type UpdateInstall struct {
 	Reason       string `json:"reason,omitempty"`
 	// Folder holds the verified file, in the manual phase.
 	Folder string `json:"folder,omitempty"`
+	// HelperAlive: failed with an earlier helper still alive, which Download
+	// refuses until KubeTower restarts (#178, C33.1).
+	HelperAlive bool `json:"helperAlive,omitempty"`
 	// Ends is what the restart closes for good.
 	Ends UpdateEnds `json:"ends"`
 }

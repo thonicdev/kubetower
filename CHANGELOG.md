@@ -92,6 +92,13 @@ dialog draws it first, as a New extra line.
   their connections; a Retry and the watcher no longer apply an older read
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
+- **Updates: no program found through PATH, and a way out of Not
+  writable.** The updater starts powershell, explorer, xdg-open, open,
+  pkexec and the package tools from the system's own folders. The Windows
+  zip's swap retries the move while the old executable is still held. Not
+  writable has Retry, and is kept across a restart rather than downloaded
+  again at every start, until a newer release comes; a failure that only a
+  restart clears offers no Retry (#178).
 - **Storage and What's new polish.** A cluster with no claim no longer
   shows a "fill unread" badge, a claim that backs two volumes of a pod is
   listed once, and a Fixed entry is never shown ahead of a new extra in

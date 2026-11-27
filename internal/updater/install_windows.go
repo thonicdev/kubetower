@@ -63,7 +63,11 @@ var helperOnQuit = startPowerShell
 
 // startPowerShell starts the script in a hidden PowerShell and lets it go.
 func startPowerShell(script string) error {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+	powershell, err := systemTool("powershell.exe")
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
 		"-WindowStyle", "Hidden", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP}
 	if err := cmd.Start(); err != nil {
