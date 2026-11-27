@@ -163,9 +163,8 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  * What the rules say of one pair. A flow passes only if **each** isolated
  * side lets it: the source's egress rules and the destination's ingress
  * rules are two halves, and an allow on one never answers for the other. A
- * deny anywhere wins. A namespace to itself is allowed when a rule speaks
- * between its own pods (`internal`). On a cut answer nothing but a deny is
- * concluded: a rule left out could deny or allow any pair.
+ * deny on a pair between two namespaces wins. On a cut answer nothing but a
+ * deny is concluded: a rule left out could deny or allow any pair.
  *
  * "others" stands for several namespaces, and a rule on the cell may be any
  * one member's. So a cell touching it is refused only when every member
@@ -174,29 +173,20 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  * never wholly denied: a deny on it is one member's. An "others" holding an
  * end (a CIDR, world), or whose ends were not counted, is never isolated.
  *
- * A namespace to itself is read from its own rules as the engine reads them
- * (`self`): a deny wins, a baseline's deny where nothing isolates that side,
- * and its pods reach each other when each isolated side has an allow of its
- * own. An ingress rule between its pods does not let them out of a namespace
- * isolated on egress, and a baseline's allow never lets past a NetworkPolicy.
+ * A namespace to itself is the policy engine's own answer (`diagonal`),
+ * precedence and all: AdminNetworkPolicy priority and Pass, Calico's rule
+ * order, the baseline last. Where an older server sent none, it is read as
+ * any other pair, never taken as inside.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   const mixed = from.kind === 'others' || to.kind === 'others';
+  // The engine's own answer, precedence and all, before any count of rules.
+  if (!mixed && from.id === to.id && to.diagonal !== undefined) return to.diagonal;
   if (cell !== undefined && cell.deny.length > 0) return mixed ? 'partDenied' : 'denied';
   if (cut) return 'unknown';
   // Rules between two folded namespaces are not sent at all (the server
   // drops a merged edge from "others" to itself): nothing to conclude.
   if (from.kind === 'others' && to.kind === 'others') return 'folded';
-  if (!mixed && from.id === to.id && to.internal > 0) {
-    const own = to.self;
-    if (own === undefined) return 'inside';
-    if (own.deny > 0 || (own.baselineDenyIn > 0 && !isolatedIn(to)) || (own.baselineDenyOut > 0 && !isolatedOut(to))) return 'denied';
-    const selfIn = !isolatedIn(to) || own.allowIn > 0 || cell?.allowIn === true;
-    const selfOut = !isolatedOut(from) || own.allowOut > 0 || cell?.allowOut === true;
-    if (selfIn && selfOut) return own.allowIn + own.allowOut > 0 || cell?.allow.length ? 'inside' : 'open';
-    if (own.unevaluated > 0) return 'unevaluated';
-    return selfIn ? 'refusedOut' : 'refused';
-  }
   const inOK = !isolatedIn(to) || cell?.allowIn === true;
   const outOK = !isolatedOut(from) || cell?.allowOut === true;
   if (inOK && outOK) {

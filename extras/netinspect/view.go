@@ -170,27 +170,14 @@ type Node struct {
 	// Internal is rules whose both ends fall inside this node (a namespace
 	// allowing its own pods), drawn as a count rather than a loop.
 	Internal int `json:"internal"`
-	// Self sorts Internal as the policy engine reads it, so the matrix's
-	// diagonal says the engine's answer: absent where Internal is 0.
-	Self *SelfRules `json:"self,omitempty"`
+	// Diagonal is the policy engine's answer for flows between the
+	// namespace's own pods (diagonal.go), for the matrix's diagonal: absent
+	// where no pod of it could be asked.
+	Diagonal string `json:"diagonal,omitempty"`
 	// Ends is, on "others", how many of the nodes it holds are not
 	// namespaces (a CIDR, world, an entity): such an end never refuses, so
 	// "others" cannot be called isolated when it holds one.
 	Ends int `json:"ends"`
-}
-
-// SelfRules are a node's rules between its own pods, by what they do. An
-// allow is one side's half, as on any other pair; a deny of a NetworkPolicy
-// layer or an AdminNetworkPolicy wins; a baseline's deny applies only on a
-// side no NetworkPolicy isolates, and a baseline's allow never lets past
-// one, so it is not counted.
-type SelfRules struct {
-	AllowIn         int `json:"allowIn"`
-	AllowOut        int `json:"allowOut"`
-	Deny            int `json:"deny"`
-	BaselineDenyIn  int `json:"baselineDenyIn"`
-	BaselineDenyOut int `json:"baselineDenyOut"`
-	Unevaluated     int `json:"unevaluated"`
 }
 
 // Edge is "a rule lets From reach To". Side says which end's policy says so:
@@ -483,26 +470,6 @@ func (g *graphBuilder) edge(from, to, side string, r *rule, policyName string, b
 	if from == to {
 		if n := g.nodes[from]; n != nil {
 			n.Internal++
-			if n.Self == nil {
-				n.Self = &SelfRules{}
-			}
-			in := side == "ingress"
-			switch kind := ruleKind(r); {
-			case kind == "pass":
-			case kind == "unevaluated":
-				n.Self.Unevaluated++
-			case kind == "deny" && baseline && in:
-				n.Self.BaselineDenyIn++
-			case kind == "deny" && baseline:
-				n.Self.BaselineDenyOut++
-			case kind == "deny":
-				n.Self.Deny++
-			case baseline:
-			case in:
-				n.Self.AllowIn++
-			default:
-				n.Self.AllowOut++
-			}
 		}
 		return
 	}
@@ -604,9 +571,11 @@ func (m *model) ruleEdges(g *graphBuilder, p *policy, nodeOf func(id int) string
 // clusterGraph is namespaces joined by the rules between them.
 func (m *model) clusterGraph(rows map[string]*NSRow) Graph {
 	g := newGraphBuilder()
+	diagonal := m.diagonals()
 	for name, r := range rows {
 		n := g.node("ns:"+name, name, nodeNamespace, name)
 		n.Pods, n.IsolatedIn, n.IsolatedOut = r.Pods, r.IsolatedIn, r.IsolatedOut
+		n.Diagonal = diagonal[name]
 	}
 	// Each identity's node, named once: the graph asks for it per rule.
 	names := make([]string, len(m.Identities))

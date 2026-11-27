@@ -110,17 +110,9 @@ export interface CiliumRead {
   notEvaluated: string[];
 }
 
-/** A node's rules between its own pods, by what they do (`view.go`, SelfRules).
- *  A baseline's deny applies only on a side no NetworkPolicy isolates; a
- *  baseline's allow is not counted, as it never lets past one. */
-export interface SelfRules {
-  allowIn: number;
-  allowOut: number;
-  deny: number;
-  baselineDenyIn: number;
-  baselineDenyOut: number;
-  unevaluated: number;
-}
+/** The policy engine's answer for flows between a namespace's own pods
+ *  (`diagonal.go`), drawn as the matrix's diagonal. */
+export type Diagonal = 'inside' | 'open' | 'denied' | 'refused' | 'refusedOut' | 'unevaluated';
 
 export interface GraphNode {
   id: string;
@@ -131,8 +123,8 @@ export interface GraphNode {
   isolatedIn: number;
   isolatedOut: number;
   internal: number;
-  /** internal sorted as the policy engine reads it (absent from an older server). */
-  self?: SelfRules;
+  /** The engine's answer for the namespace to itself (absent from an older server). */
+  diagonal?: Diagonal;
   /** On "others": how many of the nodes it holds are not namespaces. */
   ends?: number;
 }

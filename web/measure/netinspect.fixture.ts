@@ -2656,7 +2656,10 @@ function manyGraph(cap: number): Overview['graph'] {
     ...TENANTS.map((name, i) => {
       const pods = 1 + spread(i, 6);
       const isolated = i % 5 !== 0;
-      return { id: `ns:${name}`, label: name, kind: 'namespace' as const, namespace: name, pods, isolatedIn: isolated ? pods : 0, isolatedOut: i % 3 === 0 ? pods : 0, internal: i % 4 === 0 ? 1 : 0 };
+      return { id: `ns:${name}`, label: name, kind: 'namespace' as const, namespace: name, pods, isolatedIn: isolated ? pods : 0, isolatedOut: i % 3 === 0 ? pods : 0, internal: i % 4 === 0 ? 1 : 0,
+        // The engine's answer for its own pods, as the server sends it: an
+        // ingress rule between them does not let them out where egress is isolated.
+        ...(i % 4 === 0 ? { diagonal: i % 3 === 0 ? ('refusedOut' as const) : ('inside' as const) } : {}) };
     }),
   ];
   const edges: Overview['graph']['edges'] = [...CLUSTER.graph.edges];

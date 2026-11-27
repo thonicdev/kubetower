@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { FlowEdge, Graph, GraphNode, SelfRules } from './data';
+import type { FlowEdge, Graph, GraphNode } from './data';
 import { foldAskOf } from './fold';
 import { Matrix } from './Matrix';
 
@@ -90,8 +90,9 @@ describe('the namespace matrix on 120 namespaces', () => {
 /** 120 namespaces, each isolated and letting every namespace in, as the
  *  server sends them: folded until every edge between what is kept fits. */
 function dense(kept: number, truncated: boolean): Graph {
-  // Each lets its own pods in too: the server counts that rule on the node (`internal`).
-  const nodes: GraphNode[] = Array.from({ length: kept }, (_, i) => ({ ...ns(i), isolatedIn: 2, internal: 1 }));
+  // Each lets its own pods in too: the server counts that rule on the node
+  // (`internal`) and sends the engine's answer for it (`diagonal`).
+  const nodes: GraphNode[] = Array.from({ length: kept }, (_, i) => ({ ...ns(i), isolatedIn: 2, internal: 1, diagonal: 'inside' as const }));
   nodes.push({ id: 'others', label: `${String(120 - kept)} others`, kind: 'others', pods: 2 * (120 - kept), isolatedIn: 2 * (120 - kept), isolatedOut: 0, internal: 0 });
   const edges = nodes.flatMap((a) =>
     nodes.filter((b) => b.id !== a.id).map((b) => ({ kind: 'allow' as const, from: a.id, to: b.id, side: 'ingress' as const, ports: ['every port'], policies: ['from-all'], rules: 1 })),
@@ -252,7 +253,6 @@ describe('an others holding an end', () => {
 });
 
 describe('cells the policy engine would answer otherwise', () => {
-  const own = (over: Partial<SelfRules>): SelfRules => ({ allowIn: 0, allowOut: 0, deny: 0, baselineDenyIn: 0, baselineDenyOut: 0, unevaluated: 0, ...over });
   const node = (i: number, inIso: boolean, outIso: boolean, extra: Partial<GraphNode> = {}): GraphNode => ({ ...ns(i), isolatedIn: inIso ? 2 : 0, isolatedOut: outIso ? 2 : 0, ...extra });
   const show = (g: Graph, query = '') =>
     render(<Matrix graph={g} flows={[]} showRules showFlows ask={foldAskOf(new URLSearchParams(query))} onAsk={() => undefined} onNamespace={() => undefined} />);
@@ -288,33 +288,28 @@ describe('cells the policy engine would answer otherwise', () => {
     expect(state('ns:team-000>ns:team-001')).toBe('denied');
   });
 
-  it('reads a namespace isolated on egress with an ingress-only rule for its own pods as refused out, not inside', () => {
+  it("draws a namespace's own cell as the engine answered it, whatever the rules counted", () => {
+    // The engine's word wins over any count: an admin allow above a deny, a
+    // pass above a deny, a rule it cannot evaluate.
+    for (const diagonal of ['inside', 'open', 'denied', 'refused', 'refusedOut', 'unevaluated'] as const) {
+      show({ scope: 'cluster', nodes: [node(0, true, true, { internal: 2, diagonal })], edges: [], folded: 0, edgesTotal: 0 });
+      expect(state('ns:team-000>ns:team-000'), diagonal).toBe(diagonal);
+      cleanup();
+    }
+    // Even beside a deny drawn on the cell by a rule open to everyone.
     show({
       scope: 'cluster',
-      nodes: [node(0, true, true, { internal: 1, self: own({ allowIn: 1 }) }), node(1, true, true, { internal: 2, self: own({ allowIn: 1, allowOut: 1 }) })],
-      edges: [],
+      nodes: [node(0, false, false, { internal: 1, diagonal: 'inside' }), { id: 'anyone', label: 'Anyone', kind: 'anyone', pods: 0, isolatedIn: 0, isolatedOut: 0, internal: 0 }],
+      edges: [rule('deny', 'anyone', 'ns:team-000', 'ingress')],
       folded: 0,
-      edgesTotal: 0,
+      edgesTotal: 1,
     });
-    expect(state('ns:team-000>ns:team-000')).toBe('refusedOut');
-    expect(state('ns:team-001>ns:team-001')).toBe('inside');
+    expect(state('ns:team-000>ns:team-000')).toBe('inside');
   });
 
-  it("reads a namespace's own cell as the engine does: a baseline allow under a default deny, an admin deny", () => {
-    // A baseline's allow between shop's pods, under a NetworkPolicy default deny ingress.
-    show({ scope: 'cluster', nodes: [node(0, true, false, { internal: 1, self: own({}) })], edges: [], folded: 0, edgesTotal: 0 });
+  it('never takes a namespace with rules between its own pods as inside when the server sent no answer for it', () => {
+    show({ scope: 'cluster', nodes: [node(0, true, false, { internal: 1 })], edges: [], folded: 0, edgesTotal: 0 });
     expect(state('ns:team-000>ns:team-000')).toBe('refused');
-    cleanup();
-    // An AdminNetworkPolicy's deny of shop to shop, beside an allow.
-    show({ scope: 'cluster', nodes: [node(0, false, false, { internal: 2, self: own({ allowIn: 1, deny: 1 }) })], edges: [], folded: 0, edgesTotal: 0 });
-    expect(state('ns:team-000>ns:team-000')).toBe('denied');
-    cleanup();
-    // A baseline's deny: where nothing isolates the side it applies, under an isolation it does not.
-    show({ scope: 'cluster', nodes: [node(0, false, false, { internal: 1, self: own({ baselineDenyIn: 1 }) })], edges: [], folded: 0, edgesTotal: 0 });
-    expect(state('ns:team-000>ns:team-000')).toBe('denied');
-    cleanup();
-    show({ scope: 'cluster', nodes: [node(0, true, false, { internal: 2, self: own({ baselineDenyIn: 1, allowIn: 1 }) })], edges: [], folded: 0, edgesTotal: 0 });
-    expect(state('ns:team-000>ns:team-000')).toBe('inside');
   });
 
   it('reads one deny among the namespaces in others as partly denied, not denied', () => {

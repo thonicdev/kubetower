@@ -1,7 +1,6 @@
 package netinspect
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -243,30 +242,56 @@ func TestTheGraphMarksTheBaselinesRules(t *testing.T) {
 	}
 }
 
-// A namespace's rules between its own pods are sorted as the engine reads
-// them: a baseline's allow under a NetworkPolicy's default deny lets nothing
-// in, and an AdminNetworkPolicy's deny wins.
-func TestSelfRulesAreSortedAsTheEngineReadsThem(t *testing.T) {
-	shopOf := func(h *fakeHost) *Node {
-		for _, n := range overviewOf(t, h, "").Graph.Nodes {
-			if n.ID == "ns:shop" {
-				return &n
-			}
+// The matrix's diagonal is the engine's own answer for flows between a
+// namespace's pods, precedence and all, and agrees with the verdict a person
+// asks for shop/web to shop/api.
+func shopDiagonal(t *testing.T, h *fakeHost) string {
+	t.Helper()
+	for _, n := range overviewOf(t, h, "").Graph.Nodes {
+		if n.ID == "ns:shop" {
+			return n.Diagonal
 		}
-		return nil
 	}
-	selfIngress := "ingress:\n  - name: own\n    action: %s\n    from:\n      - namespaces: {matchLabels: {team: shop}}\n"
-	h := adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Allow")))
-	h.policy(t, defaultDenyIngress("shop"))
-	if n := shopOf(h); n == nil || n.Self == nil || *n.Self != (SelfRules{}) {
-		t.Errorf("a baseline allow under a default deny: %+v", n)
+	return "absent"
+}
+
+func TestTheDiagonalIsTheEnginesAnswer(t *testing.T) {
+	diagonalOf := func(h *fakeHost) string { return shopDiagonal(t, h) }
+	self := func(action string) string {
+		return "subject:\n  namespaces: {matchLabels: {team: shop}}\ningress:\n  - name: own\n    action: " + action +
+			"\n    from:\n      - namespaces: {matchLabels: {team: shop}}\n"
 	}
-	h = adminShop(t, anp("no-self", 10, "subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Deny")))
-	if n := shopOf(h); n == nil || n.Self == nil || n.Self.Deny != 1 || n.Self.AllowIn != 0 {
-		t.Errorf("an admin deny of shop to shop: %+v", n)
-	}
-	h = adminShop(t, banp("subject:\n  namespaces: {matchLabels: {team: shop}}\n"+fmt.Sprintf(selfIngress, "Deny")))
-	if n := shopOf(h); n == nil || n.Self == nil || n.Self.BaselineDenyIn != 1 || n.Self.Deny != 0 {
-		t.Errorf("a baseline deny of shop to shop: %+v", n)
+	for _, c := range []struct {
+		name    string
+		build   func() *fakeHost
+		want    string
+		answers string
+	}{
+		{"a baseline allow under a default deny", func() *fakeHost {
+			h := adminShop(t, banp(self("Allow")))
+			h.policy(t, defaultDenyIngress("shop"))
+			return h
+		}, diagRefused, "no"},
+		{"an admin deny", func() *fakeHost { return adminShop(t, anp("no-self", 10, self("Deny"))) }, diagDenied, "no"},
+		{"an admin allow before an admin deny", func() *fakeHost {
+			return adminShop(t, anp("yes-self", 5, self("Allow")), anp("no-self", 10, self("Deny")))
+		}, diagInside, "yes"},
+		{"an admin allow over a baseline deny", func() *fakeHost {
+			return adminShop(t, anp("yes-self", 5, self("Allow")), banp(self("Deny")))
+		}, diagInside, "yes"},
+		{"an admin pass before an admin deny", func() *fakeHost {
+			return adminShop(t, anp("pass-self", 5, self("Pass")), anp("no-self", 10, self("Deny")))
+		}, diagOpen, "yes"},
+		{"a baseline deny alone", func() *fakeHost { return adminShop(t, banp(self("Deny"))) }, diagDenied, "no"},
+		{"a baseline allow alone", func() *fakeHost { return adminShop(t, banp(self("Allow"))) }, diagInside, "yes"},
+		{"no policy", func() *fakeHost { return adminShop(t) }, diagOpen, "yes"},
+	} {
+		h := c.build()
+		if got := diagonalOf(h); got != c.want {
+			t.Errorf("%s: diagonal %q, want %q", c.name, got, c.want)
+		}
+		if v := verdictOf(t, h, "shop/web", "shop/api", "80"); v.Answer != c.answers {
+			t.Errorf("%s: the engine answers %s for web to api, the test expects %s", c.name, v.Answer, c.answers)
+		}
 	}
 }
