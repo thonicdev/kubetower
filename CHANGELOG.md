@@ -13,8 +13,30 @@ dialog draws it first, as a New extra line.
 
 ## Unreleased
 
+## 0.3.0 — Debug containers, Python, volume fill and Postgres tables
+
 ### Added
 
+- **Debug containers.** A pod's Shell has a menu joined to it that starts a
+  debug container: busybox, netshoot or another image, sharing the
+  processes of one of its running containers or of none. Its shell opens in
+  the dock. A Debug button stands beside Shell where a container probably
+  has no shell: a distroless, Chainguard or scratch image, or a container
+  whose Shell found none. The shell runs the container's own `sh`, wherever
+  the image's PATH puts it. A debug container stays in the pod until the pod
+  is deleted: the form says so, and the Containers tab lists it after the
+  others, with the container whose processes it shares. It needs
+  `patch pods/ephemeralcontainers` and `create pods/exec`. A read-only
+  cluster, a refused verb, Pod Security, an admission webhook or a cluster
+  without ephemeral containers refuses it, with the reason on hover. A
+  reloaded debug tab does not start another container on its own (#146,
+  #147, #188).
+- **Python in the Runtime Inspector.** A Python pod's tab lists its Python
+  processes, read out of /proc with nothing installed in the pod: the
+  interpreter's version, memory and peak, threads and start time. Where the
+  application serves prometheus_client's metrics, it adds the version, the
+  garbage collector per generation and the process's memory, CPU and open
+  files (#144).
 - **Storage Inspector reads fill from Prometheus or VictoriaMetrics.** How
   full each mounted claim is comes from the kubelets' own
   `kubelet_volume_stats_*` series where the cluster's metrics backend holds
@@ -23,17 +45,21 @@ dialog draws it first, as a New extra line.
   names what gave the figures, and a page where nothing could be read says No
   metrics available, with what grants the read on hover. Extras reach it
   through a new Host door, `VolumeFill` (#91).
-- **Python in the Runtime Inspector.** A Python pod's tab lists its Python
-  processes, read out of /proc with nothing installed in the pod: the
-  interpreter's version, memory and peak, threads and start time. Where the
-  application serves prometheus_client's metrics, it adds the version, the
-  garbage collector per generation and the process's memory, CPU and open
-  files (#144).
 - **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
   reads every database the cluster's user may open, with a database and
   schema picker and a table search; a table's rows come 100 at a time,
   forward and back, by primary key, by ctid or by offset for a view, each
-  value drawn for its type, and a cell opens in full, JSON laid out (#164).
+  value drawn for its type, and a cell opens in full, JSON laid out. A
+  schema or table name longer than Postgres allows is refused (#164, #171).
+
+### Changed
+
+- **VictoriaMetrics' answers are checked against Prometheus' on the same
+  samples, rates included.** The value comparison the project runs on a
+  cluster holding both now holds a rate to the same series, in the same
+  order, within ×10 of each other, and drops each `by` label in turn to show
+  the bound sees it. It also checks a wrong path reached through a
+  port-forward (#176).
 
 ### Fixed
 
@@ -55,7 +81,7 @@ dialog draws it first, as a New extra line.
   isolated. A host-network pod shows its flows, the enlarged graph keeps its
   size below 320 px, a flow UI link no longer takes the focus it was not
   asked for, and a namespace the person may not list is not asked of the
-  flow source (#152).
+  flow source (#152). <!-- highlight -->
 - **A Prometheus decoy beside VictoriaMetrics is no longer chosen.** On the
   desktop, Services claiming to be Prometheus in one namespace and
   VictoriaMetrics in another are now refused as two Prometheus Services in two
@@ -74,9 +100,10 @@ dialog draws it first, as a New extra line.
 - **No Redis tile on what is not a Redis.** The Redis viewer no longer marks a
   web port in front of a pod labelled redis, nor `ghcr.io/redis/nginx`, a web
   client or a `predis` label, and it finds a Redis behind a second port, beside
-  an exporter, on its `--port`, or started by gosu, su-exec or a shell loop. A
-  pod's tiles come from one read of its namespace, and the labels a pod's tile
-  trusts are the server's (#151).
+  an exporter, on its `--port`, or started by gosu, su-exec or a shell loop,
+  past the shell's long options and `-o` names. A pod's tiles come from one
+  read of its namespace, and the labels a pod's tile trusts are the server's
+  (#151, #168).
 - **Windows: a WebView2 failure refuses the window instead of ending
   KubeTower.** When the WebView2 runtime cannot create its environment or
   controller (a locked or full data folder, a policy), the library KubeTower
