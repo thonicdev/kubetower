@@ -47,7 +47,7 @@ function mount(element: ReactNode): void {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{element}</QueryClientProvider>);
 }
 
-const pane = <NodeInspector cluster="kind" namespace="shop" name="web-0" container="app" />;
+const pane = <NodeInspector cluster="kind" namespace="shop" name="web-0" container="app" readOnly={false} />;
 const closed = { port: 9229, source: 'default', started: false, sigusr1Disabled: false, open: false, detail: '/json/list answered 404 Not Found' };
 const open = { ...closed, open: true, detail: undefined };
 
@@ -169,7 +169,7 @@ describe("the Node.js tab's inspector", () => {
 
 describe('the Node.js probe', () => {
   it('opens its tunnel once, not again on focus, on reconnect or on failure', () => {
-    const options = nodeQuery('kind', 'shop', 'web-0', 'app');
+    const options = nodeQuery('kind', 'shop', 'web-0', 'app', false);
     expect(options.refetchOnWindowFocus).toBe(false);
     expect(options.refetchOnReconnect).toBe(false);
     expect(options.retry).toBe(false);

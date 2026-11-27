@@ -159,7 +159,8 @@ export function said(error: unknown): unknown {
   const problem = error.body as Problem | undefined;
   if (typeof problem?.message !== 'string' || problem.message === '') return error;
   const detail = typeof problem.detail === 'string' && problem.detail !== '' ? ` ${problem.detail}` : '';
-  return new ApiError(error.status, `${problem.message}${detail}`, error.body);
+  // One line, whatever the route or the cluster wrapped (#157).
+  return new ApiError(error.status, `${problem.message}${detail}`.replace(/\s+/g, ' ').trim(), error.body);
 }
 
 export async function getInventory(cluster: string, ns: string, signal?: AbortSignal): Promise<Inventory> {
@@ -549,6 +550,17 @@ function problemOf(error: unknown): unknown {
   return shown;
 }
 
+/**
+ * The refusal the route would write for an act on a read-only cluster, made
+ * here: a probe the tab runs on its own when it opens asks nothing there, so
+ * no refusal is audited without a click (#157). A button still asks, and its
+ * refusal is the route's.
+ */
+function refusedHere(cluster: string, readOnly: boolean): InspectProblem | undefined {
+  if (!readOnly) return undefined;
+  return new InspectProblem('read_only', `${cluster} is read-only: no command, tunnel or dump.`, 403);
+}
+
 /** The tooltip of a button that runs jcmd in a container that has none. */
 export const NO_JDK_TITLE = 'No JDK tools in this container';
 
@@ -558,15 +570,17 @@ export interface Tools {
   jcmd: boolean;
 }
 
-export function toolsKey(cluster: string, namespace: string, name: string, container: string) {
-  return [KEY, 'tools', cluster, namespace, name, container] as const;
+export function toolsKey(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
+  return [KEY, 'tools', cluster, namespace, name, container, readOnly] as const;
 }
 
 /** The probe: runs `jcmd -l` once for a container, then is remembered. */
-export function toolsQuery(cluster: string, namespace: string, name: string, container: string) {
+export function toolsQuery(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
   return queryOptions({
-    queryKey: toolsKey(cluster, namespace, name, container),
+    queryKey: toolsKey(cluster, namespace, name, container, readOnly),
     queryFn: async ({ signal }): Promise<Tools> => {
+      const refused = refusedHere(cluster, readOnly);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it runs jcmd in the container, which a link from another
         // site must not reach (#82).
@@ -592,10 +606,11 @@ export function useJdkTools(
   namespace: string,
   name: string,
   container: string,
+  readOnly: boolean,
 ): { noJdk: boolean; offTitle: string; attachOff: string | undefined; markNoJdk: (error?: unknown) => void } {
   const client = useQueryClient();
   const enabled = container !== '';
-  const query = useQuery({ ...toolsQuery(cluster, namespace, name, container), enabled });
+  const query = useQuery({ ...toolsQuery(cluster, namespace, name, container, readOnly), enabled });
   // What an action learned: the JVM refuses the attach. Never fetched, only set.
   const attach = useQuery({ queryKey: attachKey(cluster, namespace, name, container), queryFn: skipToken, staleTime: Infinity });
   const attachOff = typeof attach.data === 'string' ? attach.data : undefined;
@@ -610,7 +625,7 @@ export function useJdkTools(
         client.setQueryData<string>(attachKey(cluster, namespace, name, container), error.message);
         return;
       }
-      client.setQueryData<Tools>(toolsKey(cluster, namespace, name, container), { jcmd: false });
+      client.setQueryData<Tools>(toolsKey(cluster, namespace, name, container, readOnly), { jcmd: false });
     },
   };
 }
@@ -999,10 +1014,12 @@ function pprofPath(cluster: string, namespace: string, name: string, container: 
   return `${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/pprof`;
 }
 
-export function pprofQuery(cluster: string, namespace: string, name: string, container: string) {
+export function pprofQuery(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
   return queryOptions({
-    queryKey: [KEY, 'pprof', cluster, namespace, name, container] as const,
+    queryKey: [KEY, 'pprof', cluster, namespace, name, container, readOnly] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster, readOnly);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel, which a link from another site
         // must not reach (#82).
@@ -1077,10 +1094,12 @@ function nodePath(cluster: string, namespace: string, name: string, container: s
   return `${podPath(cluster, namespace, name)}/${encodeURIComponent(container)}/node`;
 }
 
-export function nodeQuery(cluster: string, namespace: string, name: string, container: string) {
+export function nodeQuery(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
   return queryOptions({
-    queryKey: [KEY, 'node', cluster, namespace, name, container] as const,
+    queryKey: [KEY, 'node', cluster, namespace, name, container, readOnly] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster, readOnly);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel, which a link from another site
         // must not reach (#82).
@@ -1212,10 +1231,12 @@ const ONCE = {
   refetchOnReconnect: false,
 } as const;
 
-export function pythonProcessesQuery(cluster: string, namespace: string, name: string, container: string) {
+export function pythonProcessesQuery(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
   return queryOptions({
-    queryKey: [KEY, 'python', cluster, namespace, name, container] as const,
+    queryKey: [KEY, 'python', cluster, namespace, name, container, readOnly] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster, readOnly);
+      if (refused !== undefined) throw refused;
       let body: PythonProcesses;
       try {
         // A POST: it runs an audited command (#82).
@@ -1230,10 +1251,12 @@ export function pythonProcessesQuery(cluster: string, namespace: string, name: s
   });
 }
 
-export function pythonMetricsQuery(cluster: string, namespace: string, name: string, container: string) {
+export function pythonMetricsQuery(cluster: string, namespace: string, name: string, container: string, readOnly: boolean) {
   return queryOptions({
-    queryKey: [KEY, 'python-metrics', cluster, namespace, name, container] as const,
+    queryKey: [KEY, 'python-metrics', cluster, namespace, name, container, readOnly] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster, readOnly);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel (#82).
         return await request<PythonMetricsState>(`${pythonPath(cluster, namespace, name, container)}/metrics`, { method: 'POST', signal });

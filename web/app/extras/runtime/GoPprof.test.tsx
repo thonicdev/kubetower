@@ -41,7 +41,7 @@ function mount(element: ReactNode): void {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{element}</QueryClientProvider>);
 }
 
-const pane = <GoPprof cluster="kind" namespace="shop" name="api-0" container="app" />;
+const pane = <GoPprof cluster="kind" namespace="shop" name="api-0" container="app" readOnly={false} />;
 
 const dump = {
   total: 4,
@@ -119,7 +119,7 @@ describe("the Go tab's pprof", () => {
 
 describe('the pprof probe', () => {
   it('opens its tunnel once, not again on focus, on reconnect or on failure', () => {
-    const options = pprofQuery('kind', 'shop', 'api-0', 'app');
+    const options = pprofQuery('kind', 'shop', 'api-0', 'app', false);
     expect(options.refetchOnWindowFocus).toBe(false);
     expect(options.refetchOnReconnect).toBe(false);
     expect(options.retry).toBe(false);

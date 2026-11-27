@@ -11,11 +11,11 @@ import { pythonMetricsQuery, pythonProcessesQuery, type PythonMetrics, type Pyth
  * series, through a tunnel, where it serves them. No signal reaches the
  * process; no stack is read.
  */
-export function PythonPanel({ cluster, namespace, name, container }: { cluster: string; namespace: string; name: string; container: string }): ReactNode {
+export function PythonPanel({ cluster, namespace, name, container, readOnly }: { cluster: string; namespace: string; name: string; container: string; readOnly: boolean }): ReactNode {
   return (
     <div data-python="" className="flex flex-col gap-4">
-      <Processes cluster={cluster} namespace={namespace} name={name} container={container} />
-      <Metrics cluster={cluster} namespace={namespace} name={name} container={container} />
+      <Processes cluster={cluster} namespace={namespace} name={name} container={container} readOnly={readOnly} />
+      <Metrics cluster={cluster} namespace={namespace} name={name} container={container} readOnly={readOnly} />
     </div>
   );
 }
@@ -25,8 +25,8 @@ const READER_TITLE: Readonly<Record<string, string>> = {
   python3: "Read out of /proc by the container's python3: it has no sh",
 };
 
-function Processes({ cluster, namespace, name, container }: { cluster: string; namespace: string; name: string; container: string }): ReactNode {
-  const read = useQuery(pythonProcessesQuery(cluster, namespace, name, container));
+function Processes({ cluster, namespace, name, container, readOnly }: { cluster: string; namespace: string; name: string; container: string; readOnly: boolean }): ReactNode {
+  const read = useQuery(pythonProcessesQuery(cluster, namespace, name, container, readOnly));
   return (
     <section data-python-processes="" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -116,8 +116,8 @@ const SOURCE_TITLE: Readonly<Record<string, string>> = {
   default: "prometheus_client's start_http_server default; kubetower.io/metrics-port or a port named metrics sets another",
 };
 
-function Metrics({ cluster, namespace, name, container }: { cluster: string; namespace: string; name: string; container: string }): ReactNode {
-  const state = useQuery(pythonMetricsQuery(cluster, namespace, name, container));
+function Metrics({ cluster, namespace, name, container, readOnly }: { cluster: string; namespace: string; name: string; container: string; readOnly: boolean }): ReactNode {
+  const state = useQuery(pythonMetricsQuery(cluster, namespace, name, container, readOnly));
   return (
     <section data-python-metrics="" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">

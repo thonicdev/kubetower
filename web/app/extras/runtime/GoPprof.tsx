@@ -31,8 +31,8 @@ function save(file: Downloaded): void {
 
 type Run = { status: 'idle' } | { status: 'running'; what: string } | { status: 'failed'; error: unknown };
 
-export function GoPprof({ cluster, namespace, name, container }: { cluster: string; namespace: string; name: string; container: string }): ReactNode {
-  const state = useQuery(pprofQuery(cluster, namespace, name, container));
+export function GoPprof({ cluster, namespace, name, container, readOnly }: { cluster: string; namespace: string; name: string; container: string; readOnly: boolean }): ReactNode {
+  const state = useQuery(pprofQuery(cluster, namespace, name, container, readOnly));
   const [run, setRun] = useState<Run>({ status: 'idle' });
   const [dump, setDump] = useState<Goroutines | undefined>(undefined);
   const [cpu, setCpu] = useState<number>(PPROF_SECONDS.profile[1]);

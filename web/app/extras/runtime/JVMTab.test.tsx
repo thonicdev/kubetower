@@ -159,6 +159,23 @@ describe('the JVM tab', () => {
     expect(asked.every((a) => a.method === 'GET')).toBe(true);
   });
 
+  it('on a read-only cluster, asks nothing on its own when it opens: no probe, so no refusal audited (#157)', async () => {
+    const asked = stub({ [`GET ${POD}`]: { body: pod(true) } });
+    mount(<JVMTab cluster="kind" kind="pods" namespace="shop" name="billing-0" readOnly />);
+    await screen.findByRole('button', { name: 'Inspect' });
+    // The tools probe had its turn: on a writable cluster it posts at once.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked.filter((a) => a.method !== 'GET')).toEqual([]);
+  });
+
+  it('on a writable cluster, still probes for jcmd when it opens', async () => {
+    const asked = stub({ [`GET ${POD}`]: { body: pod(true) } });
+    mount(<JVMTab cluster="kind" kind="pods" namespace="shop" name="billing-0" readOnly={false} />);
+    await waitFor(() => {
+      expect(asked.some((a) => a.method === 'POST' && a.url.endsWith('/tools'))).toBe(true);
+    });
+  });
+
   it('runs nothing when it opens, says what Inspect runs in its title, and posts with the request header on the click', async () => {
     const asked = stub({ [`GET ${POD}`]: { body: pod(true) }, [`POST ${INSPECT}`]: { body: inspection } });
     mount(<JVMTab cluster="kind" kind="pods" namespace="shop" name="billing-0" />);
