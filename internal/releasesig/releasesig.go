@@ -104,6 +104,11 @@ func Verify(key ed25519.PublicKey, sums, sig []byte) (Sums, error) {
 		if m == nil {
 			return nil, fmt.Errorf("%w: line %d", ErrMalformed, i+1)
 		}
+		// A name is an asset's, never a path step or one that a space at
+		// either end makes look like another (#154).
+		if name := m[2]; name == "." || name == ".." || strings.TrimSpace(name) != name {
+			return nil, fmt.Errorf("%w: line %d names %q, which is no asset's", ErrMalformed, i+1, name)
+		}
 		if was, ok := out[m[2]]; ok && was != m[1] {
 			return nil, fmt.Errorf("%w: %s is listed twice with two hashes", ErrMalformed, m[2])
 		}

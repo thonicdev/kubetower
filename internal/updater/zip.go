@@ -2,10 +2,8 @@ package updater
 
 import (
 	"archive/zip"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,7 +30,7 @@ func writeFromZip(dst, archive, name string) (string, error) {
 		}
 		defer in.Close()
 		out, err := os.CreateTemp(filepath.Dir(dst), ".kubetower-update-*.exe")
-		if errors.Is(err, fs.ErrPermission) {
+		if notWritable(err) {
 			// C:\Program Files: the update is installed by hand (Open folder).
 			return "", fmt.Errorf("%w: %s", ErrNotWritable, filepath.Dir(dst))
 		}

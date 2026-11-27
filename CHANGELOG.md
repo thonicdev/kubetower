@@ -29,6 +29,11 @@ dialog draws it first, as a New extra line.
   application serves prometheus_client's metrics, it adds the version, the
   garbage collector per generation and the process's memory, CPU and open
   files (#144).
+- **Browse a Postgres (CNPG) cluster's tables page by page.** Connect now
+  reads every database the cluster's user may open, with a database and
+  schema picker and a table search; a table's rows come 100 at a time,
+  forward and back, by primary key, by ctid or by offset for a view, each
+  value drawn for its type, and a cell opens in full, JSON laid out (#164).
 
 ### Fixed
 
@@ -47,18 +52,21 @@ dialog draws it first, as a New extra line.
   namespaces already were, the detail naming both; in one namespace,
   Prometheus is still chosen. The source can be set in Settings › General
   (#133).
-
-### Fixed
-
+- **Updates: no install races left with automatic updates on.** A second
+  KubeTower started during an install no longer removes the copy the first
+  one is writing: the start-up sweep keeps a leftover younger than an hour.
+  What a quit-time install cut short is swept on Linux too. No download
+  removes the files of an earlier helper still waiting to install. A
+  read-only filesystem says Not writable instead of failing, a locked rpm
+  database no longer holds the start (nor lets a package be replaced as a
+  tar.gz), and an update can no longer be asked
+  to stop KubeTower before the stop is wired (#154).
 - **No Redis tile on what is not a Redis.** The Redis viewer no longer marks a
   web port in front of a pod labelled redis, nor `ghcr.io/redis/nginx`, a web
   client or a `predis` label, and it finds a Redis behind a second port, beside
   an exporter, on its `--port`, or started by gosu, su-exec or a shell loop. A
   pod's tiles come from one read of its namespace, and the labels a pod's tile
   trusts are the server's (#151).
-
-### Fixed
-
 - **Windows: a WebView2 failure refuses the window instead of ending
   KubeTower.** When the WebView2 runtime cannot create its environment or
   controller (a locked or full data folder, a policy), the library KubeTower
@@ -68,6 +76,27 @@ dialog draws it first, as a New extra line.
   window that failed is closed rather than left blank on screen. The library
   is carried patched in `third_party/go-webview2` until upstream takes the
   change (#84).
+- **macOS: a tool window asks before opening a link in the browser.** A
+  sheet shows the link's host and address, with Open in browser and Cancel:
+  WebKit cannot tell a person's click from a page script's, so a script
+  could otherwise send the browser to an address of its choosing (#84).
+- **Metrics: fewer wrong answers about the source.** A metrics backend behind
+  an authenticating front (a 401 or a 5xx under the configured path) is now
+  tried through a port-forward instead of being reported as a wrong path; a
+  saved source never comes back with a probe of the one it replaced; the
+  Metrics tab says when the person may not read the object rather than "No
+  metrics available"; the Monitoring tile says why a failed read failed, on
+  hover (#156).
+- **A kubeconfig edited while KubeTower runs is read whole.** A file
+  truncated while the merge was being read no longer drops its contexts for
+  good; a file renamed away for a moment by an editor keeps its clusters and
+  their connections; a Retry and the watcher no longer apply an older read
+  after a newer one; and a context pointed at another server discovers its
+  kinds there rather than reusing the old server's (#153).
+- **Storage and What's new polish.** A cluster with no claim no longer
+  shows a "fill unread" badge, a claim that backs two volumes of a pod is
+  listed once, and a Fixed entry is never shown ahead of a new extra in
+  What's new (#182).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

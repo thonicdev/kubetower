@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"syscall"
 )
 
 // replaceWith puts the bytes read from src at dst, executable, in one rename:
@@ -20,7 +21,7 @@ func replaceWith(dst string, src io.Reader) error {
 	dir := filepath.Dir(dst)
 	tmp, err := os.CreateTemp(dir, ".kubetower-update-*")
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
+		if notWritable(err) {
 			return fmt.Errorf("%w: %s", ErrNotWritable, dir)
 		}
 		return fmt.Errorf("%s is not writable: %w", dir, err)
@@ -98,4 +99,11 @@ func replaceFromTarGz(dst, archive, name string) error {
 		}
 		return replaceWith(dst, tr)
 	}
+}
+
+// notWritable says an error writing beside the installation means the folder
+// cannot be written - a permission refused, or a read-only filesystem - which
+// is the manual phase, not a failure (#154).
+func notWritable(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
 }

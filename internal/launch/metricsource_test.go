@@ -131,3 +131,22 @@ contexts:
 		}
 	}
 }
+
+// dnsClusters resolves the DNS-friendly form `a--b` to the context `a/b`.
+type dnsClusters struct{}
+
+func (dnsClusters) Resolve(name string) (string, bool) {
+	if name == "a--b" {
+		return "a/b", true
+	}
+	return name, true
+}
+
+// The console's wiring resolves names (#156): without it, a source saved
+// through `a--b` is stored where discovery never looks (#135).
+func TestTheWiredMetricsSourcesResolveNames(t *testing.T) {
+	m := newMetricsSources(nil, nil, nil, false, dnsClusters{})
+	if got := m.resolved("a--b"); got != "a/b" {
+		t.Errorf("resolved %q", got)
+	}
+}

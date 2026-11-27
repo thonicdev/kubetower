@@ -12,6 +12,9 @@ import (
 func init() {
 	installers[WindowsSetup] = installSetup
 	installers[WindowsZip] = installZip
+	// The zip's new exe written beside the running one, left when its swap
+	// never ran (#154).
+	sweepers[WindowsZip] = func(path string) { sweepBeside(path, ".kubetower-update-*.exe") }
 	abandonHelper = stopHelper
 	installsAfterExit = true
 }
@@ -52,7 +55,7 @@ const createNoWindow = 0x08000000
 
 // helper starts the hidden PowerShell that finishes the update after exit,
 // then stops this process.
-var helper = func(script string) error { return finish(script, startPowerShell, stopper) }
+var helper = func(script string) error { return finish(script, startPowerShell, stopFunc()) }
 
 // helperOnQuit starts the helper and asks nothing more: KubeTower is already
 // quitting (InstallOnQuit), and the helper runs once it has exited.

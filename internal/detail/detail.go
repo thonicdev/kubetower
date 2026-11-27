@@ -439,7 +439,7 @@ func (r *Reader) Locate(ctx context.Context, contextName, kind string) (Location
 
 	// kindref splits a custom resource's `plural.group`, and retries once with
 	// a fresh mapper when a kind does not resolve (a newly installed CRD).
-	mapper, mapping, err := r.mappers.Mapping(ctx, client.Context, kind, func(ctx context.Context) (meta.RESTMapper, error) {
+	mapper, mapping, err := r.mappers.Mapping(ctx, client.MapperKey(), kind, func(ctx context.Context) (meta.RESTMapper, error) {
 		return r.newMapper(ctx, client)
 	})
 	if err != nil {

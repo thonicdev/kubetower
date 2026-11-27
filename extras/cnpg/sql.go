@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/thonicdev/kubetower/extension"
 )
@@ -32,6 +33,11 @@ const (
 	// MaxCell is how many characters of one value are read; Postgres cuts
 	// them, so a long value never crosses whole.
 	MaxCell = 512
+	// MaxHexBytes is how many of a binary value's bytes are read.
+	MaxHexBytes = 16
+	// MaxAnswer bounds a page of rows as JSON: a page stops before the row
+	// that would cross it.
+	MaxAnswer = 4 << 20
 )
 
 // Stats is `GET /clusters/{namespace}/{name}/stats`.
@@ -71,10 +77,13 @@ type Replica struct {
 
 // Tables is `GET /clusters/{namespace}/{name}/tables`.
 type Tables struct {
-	Database string   `json:"database"`
-	Verified bool     `json:"verified"`
-	Schemas  []string `json:"schemas"`
-	Tables   []Table  `json:"tables"`
+	Database string `json:"database"`
+	// Databases are the databases the user may connect to, the one read
+	// among them.
+	Databases []string `json:"databases"`
+	Verified  bool     `json:"verified"`
+	Schemas   []string `json:"schemas"`
+	Tables    []Table  `json:"tables"`
 	// Complete is false when MaxTables cut the list.
 	Complete bool `json:"complete"`
 }
@@ -100,23 +109,38 @@ type Rows struct {
 	Verified bool     `json:"verified"`
 	// ColumnsTotal is every column; MaxColumns are read.
 	ColumnsTotal int `json:"columnsTotal"`
-	// More is true when the table holds more rows than MaxRows.
+	// More is true when the table holds rows after these.
 	More bool `json:"more"`
+	// Key is how the pages follow each other (page.go): "primary", "ctid"
+	// or "offset".
+	Key string `json:"key"`
+	// Next asks for the page after this one, sent back as the cursor;
+	// absent on the last page, or past what an offset may reach.
+	Next string `json:"next,omitempty"`
+	// Start is the first row's position, from 0.
+	Start int `json:"start"`
+	// Bounded is true when the page stopped short of MaxRows to stay under
+	// MaxAnswer; Next then goes on from its last row.
+	Bounded bool `json:"bounded,omitempty"`
 }
 
 // Column is one column: its name and its type as Postgres spells it.
 type Column struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+	// Primary marks a column of the primary key.
+	Primary bool `json:"primary,omitempty"`
 }
 
 // Cell is one value: absent for NULL, cut past MaxCell characters (Cut),
-// and a binary value given as its size alone (Bytes).
+// and a binary value given as its size and its first MaxHexBytes bytes in
+// hex (Bytes, Hex).
 type Cell struct {
 	Null  bool   `json:"null,omitempty"`
 	Text  string `json:"text,omitempty"`
 	Cut   bool   `json:"cut,omitempty"`
 	Bytes *int64 `json:"bytes,omitempty"`
+	Hex   string `json:"hex,omitempty"`
 }
 
 const (
@@ -126,19 +150,19 @@ const (
 	sqlReplicas    = `SELECT coalesce(application_name, ''), coalesce(state, ''), CASE WHEN replay_lsn IS NULL THEN NULL ELSE pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint END FROM pg_stat_replication ORDER BY 1 LIMIT 20`
 	sqlSchemas     = `SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\_%' AND nspname <> 'information_schema' AND has_schema_privilege(oid, 'USAGE') ORDER BY 1 LIMIT 200`
 	sqlTables      = `SELECT n.nspname, c.relname, c.relkind::text, c.reltuples::bigint, pg_total_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema' AND has_table_privilege(c.oid, 'SELECT') ORDER BY 1, 2 LIMIT 1001`
-	sqlTableOID    = `SELECT c.oid::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege(c.oid, 'SELECT')`
+	sqlTableOID    = `SELECT c.oid::text, c.relkind::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND has_table_privilege(c.oid, 'SELECT')`
 	sqlColumns     = `SELECT attname, format_type(atttypid, atttypmod), (atttypid = 'bytea'::regtype)::text FROM pg_attribute WHERE attrelid = $1::oid AND attnum > 0 AND NOT attisdropped ORDER BY attnum`
 	sqlRowsPrefix  = `SELECT `
 	sqlRowsSuffix  = ` LIMIT 101`
 	sqlCellText    = `left((%s)::text, 513)`
-	sqlCellBinary  = `octet_length(%s)::text`
+	sqlCellBinary  = `octet_length(%s)::text || ':' || encode(substring(%s from 1 for 16), 'hex')`
 	relkindWord    = "rpvmf"
 	relkindNames   = "table,partitioned,view,materialized,foreign"
 	maxSchemaNames = 200
 )
 
 func (x CNPG) stats(h extension.Host) http.Handler {
-	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, r *http.Request) (any, error) {
+	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, _ sqlAsk) (any, error) {
 		out := Stats{Database: s.database, Verified: s.verified, Databases: []DatabaseSize{}, Replicas: []Replica{}}
 		err := s.q.query(ctx, sqlVersion, nil, func(_ []column, row [][]byte) error {
 			out.Version, out.StartedAt = text(row, 0), text(row, 1)
@@ -186,9 +210,18 @@ func (x CNPG) stats(h extension.Host) http.Handler {
 }
 
 func (x CNPG) tables(h extension.Host) http.Handler {
-	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, r *http.Request) (any, error) {
-		out := Tables{Database: s.database, Verified: s.verified, Schemas: []string{}, Tables: []Table{}, Complete: true}
-		err := s.q.query(ctx, sqlSchemas, nil, func(_ []column, row [][]byte) error {
+	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, _ sqlAsk) (any, error) {
+		out := Tables{Database: s.database, Databases: []string{}, Verified: s.verified, Schemas: []string{}, Tables: []Table{}, Complete: true}
+		err := s.q.query(ctx, sqlDatabases, nil, func(_ []column, row [][]byte) error {
+			if len(out.Databases) < MaxDatabases {
+				out.Databases = append(out.Databases, text(row, 0))
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		err = s.q.query(ctx, sqlSchemas, nil, func(_ []column, row [][]byte) error {
 			if len(out.Schemas) < maxSchemaNames {
 				out.Schemas = append(out.Schemas, text(row, 0))
 			}
@@ -207,79 +240,6 @@ func (x CNPG) tables(h extension.Host) http.Handler {
 		})
 		return out, err
 	})
-}
-
-func (x CNPG) rows(h extension.Host) http.Handler {
-	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, r *http.Request) (any, error) {
-		schema, table := r.PathValue("schema"), r.PathValue("table")
-		if !utf8.ValidString(schema) || !utf8.ValidString(table) || strings.ContainsRune(schema+table, 0) {
-			return nil, &sqlProblem{http.StatusBadRequest, CodeBadRequest, "The address does not name a table."}
-		}
-		oid := ""
-		if err := s.q.query(ctx, sqlTableOID, []string{schema, table}, func(_ []column, row [][]byte) error {
-			oid = text(row, 0)
-			return errEnough
-		}); err != nil {
-			return nil, err
-		}
-		if oid == "" {
-			return nil, &sqlProblem{http.StatusNotFound, CodeNoSuchTable, "There is no table " + schema + "." + table + " the cluster's user may read."}
-		}
-		out := Rows{Schema: schema, Table: table, Columns: []Column{}, Rows: [][]Cell{}, Verified: s.verified}
-		var binary []bool
-		var exprs []string
-		if err := s.q.query(ctx, sqlColumns, []string{oid}, func(_ []column, row [][]byte) error {
-			out.ColumnsTotal++
-			if len(out.Columns) == MaxColumns {
-				return nil
-			}
-			out.Columns = append(out.Columns, Column{Name: text(row, 0), Type: text(row, 1)})
-			isBinary := text(row, 2) == "true"
-			binary = append(binary, isBinary)
-			format := sqlCellText
-			if isBinary {
-				format = sqlCellBinary
-			}
-			exprs = append(exprs, strings.Replace(format, "%s", quoteIdent(text(row, 0)), 1))
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		if len(exprs) == 0 {
-			return out, nil
-		}
-		statement := sqlRowsPrefix + strings.Join(exprs, ", ") + " FROM " + quoteIdent(schema) + "." + quoteIdent(table) + sqlRowsSuffix
-		err := s.q.query(ctx, statement, nil, func(_ []column, row [][]byte) error {
-			if len(out.Rows) == MaxRows {
-				out.More = true
-				return errEnough
-			}
-			cells := make([]Cell, len(row))
-			for i, v := range row {
-				cells[i] = cellOf(v, i < len(binary) && binary[i])
-			}
-			out.Rows = append(out.Rows, cells)
-			return nil
-		})
-		return out, err
-	})
-}
-
-// cellOf is one value as the page draws it.
-func cellOf(v []byte, binary bool) Cell {
-	switch {
-	case v == nil:
-		return Cell{Null: true}
-	case binary:
-		n, _ := strconv.ParseInt(string(v), 10, 64)
-		return Cell{Bytes: &n}
-	}
-	s := string(v)
-	if utf8.RuneCountInString(s) > MaxCell {
-		runes := []rune(s)
-		return Cell{Text: string(runes[:MaxCell]), Cut: true}
-	}
-	return Cell{Text: s}
 }
 
 // quoteIdent is an identifier as SQL quotes it: in double quotes, a double
@@ -318,21 +278,33 @@ type sqlProblem struct {
 func (p *sqlProblem) Error() string { return p.message }
 
 // sqlRoute opens the door, runs read, closes the door, and answers.
-func (x CNPG) sqlRoute(h extension.Host, read func(context.Context, *sqlSession, *http.Request) (any, error)) http.Handler {
+func (x CNPG) sqlRoute(h extension.Host, read func(context.Context, *sqlSession, sqlAsk) (any, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cluster, namespace, name := r.PathValue("cluster"), r.PathValue("namespace"), r.PathValue("name")
-		s, ok := x.openSQL(w, r, h, cluster, namespace, name)
+		ask, err := readAsk(r)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, CodeBadRequest, err.Error(), nil)
+			return
+		}
+		ask.schema, ask.table = r.PathValue("schema"), r.PathValue("table")
+		s, ok := x.openSQL(w, r, h, cluster, namespace, name, ask.database)
 		if !ok {
 			return
 		}
 		defer s.close()
 		ctx, cancel := context.WithTimeout(r.Context(), 3*statementTimeout)
 		defer cancel()
-		out, err := read(ctx, s, r)
+		out, err := read(ctx, s, ask)
 		var p *sqlProblem
+		var pgErr *pgconn.PgError
 		switch {
 		case errors.As(err, &p):
 			writeProblem(w, p.status, p.code, p.message, nil)
+		case err != nil && r.Context().Err() != nil:
+			// The page went away: nobody reads an answer.
+			return
+		case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &pgErr) && pgErr.Code == "57014"):
+			writeProblem(w, http.StatusGatewayTimeout, CodeSQLTimeout, "Postgres in "+namespace+"/"+name+" did not finish the read in time.", err)
 		case err != nil:
 			writeProblem(w, http.StatusBadGateway, CodeSQLFailed, "Postgres in "+namespace+"/"+name+" did not answer the read.", err)
 		default:

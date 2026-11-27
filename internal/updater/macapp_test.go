@@ -141,6 +141,10 @@ func TestARestartThatFailsAfterTheSwapIsAnInstalledApp(t *testing.T) {
 }
 
 func TestTheNextStartSweepsWhatAnInstallLeft(t *testing.T) {
+	// Every leftover here counts as old: the age rule has its own test.
+	was := sweepAge
+	sweepAge = 0
+	t.Cleanup(func() { sweepAge = was })
 	f, _ := stubMac(t, "")
 	dir := t.TempDir()
 	app := filepath.Join(dir, "KubeTower.app")

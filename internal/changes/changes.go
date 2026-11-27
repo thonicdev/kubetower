@@ -168,7 +168,7 @@ func (r *Reader) Read(ctx context.Context, contextName string, req Request) (Rep
 
 	// The mapper resolves what a URL carries and reports the scope, so a
 	// namespace given for a cluster-scoped kind is dropped rather than sent.
-	_, mapping, err := r.mappers.Mapping(ctx, client.Context, req.Kind, func(ctx context.Context) (meta.RESTMapper, error) {
+	_, mapping, err := r.mappers.Mapping(ctx, client.MapperKey(), req.Kind, func(ctx context.Context) (meta.RESTMapper, error) {
 		return r.newMapper(ctx, client)
 	})
 	if err != nil {

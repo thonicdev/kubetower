@@ -253,9 +253,13 @@ func TestAnInstancePodLeadsToItsCluster(t *testing.T) {
 	}
 }
 
-func TestEveryRouteIsAGet(t *testing.T) {
+// This extra changes nothing: every route is a GET, but for a table's page,
+// a read whose cursor rides in a POST body so that a key's values never
+// reach an address (page.go).
+func TestEveryRouteIsAGetButTheRowsRead(t *testing.T) {
+	posts := map[string]bool{"/clusters/{namespace}/{name}/tables/{schema}/{table}": true}
 	for _, rt := range testExtra().Routes(newHost()) {
-		if rt.Method != http.MethodGet {
+		if rt.Method != http.MethodGet && !(rt.Method == http.MethodPost && posts[rt.Pattern]) {
 			t.Fatalf("%s %s: this extra changes nothing, every route is a GET", rt.Method, rt.Pattern)
 		}
 	}
