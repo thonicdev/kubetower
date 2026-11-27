@@ -117,6 +117,11 @@ const (
 	// alertFirstButtonReturn is NSAlertFirstButtonReturn (NSAlert.h): the
 	// response a sheet's completion handler gets for the first button.
 	alertFirstButtonReturn = 1000
+	// alertSecondButtonReturn is NSAlertSecondButtonReturn.
+	alertSecondButtonReturn = 1001
+	// modalResponseCancel is NSModalResponseCancel, what endSheet:returnCode:
+	// hands the completion handler when KubeTower ends a sheet itself.
+	modalResponseCancel = 0
 )
 
 // --- the Dock badge -----------------------------------------------------------

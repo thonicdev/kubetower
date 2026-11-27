@@ -101,7 +101,16 @@ func (c *Cache) Mapper(ctx context.Context, key string, stale bool, build func(c
 	}
 
 	c.mu.Lock()
-	c.entries[key] = cacheEntry{mapper: mapper, built: time.Now()}
+	now := time.Now()
+	// A key is a client's (cluster.Client.MapperKey), and a re-pointed context
+	// gets a new one: the old key is never asked again, so it goes once
+	// expired rather than staying for the life of the process (#153).
+	for k, e := range c.entries {
+		if ttl > 0 && now.Sub(e.built) >= ttl {
+			delete(c.entries, k)
+		}
+	}
+	c.entries[key] = cacheEntry{mapper: mapper, built: now}
 	c.mu.Unlock()
 	return mapper, nil
 }

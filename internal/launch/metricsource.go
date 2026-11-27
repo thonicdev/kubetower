@@ -33,6 +33,14 @@ type metricsSources struct {
 	resolve func(string) (string, bool)
 }
 
+// newMetricsSources is the API's door to the metrics source, resolving names
+// through clusters: a source saved under `a--b` must land where discovery
+// looks for `a/b` (#135, #156).
+func newMetricsSources(measure *metrics.Metrics, store *metrics.SourceStore, configured *metrics.PromTarget, editable bool,
+	clusters interface{ Resolve(string) (string, bool) }) metricsSources {
+	return metricsSources{measure: measure, store: store, configured: configured, editable: editable, resolve: clusters.Resolve}
+}
+
 // resolved is the name the store and discovery know cluster by.
 func (m metricsSources) resolved(cluster string) string {
 	if m.resolve != nil {

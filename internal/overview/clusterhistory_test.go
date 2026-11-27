@@ -77,12 +77,20 @@ func (p *cadvisorProm) Query(_ context.Context, _, promQL string) ([]byte, error
 			p.t.Errorf("the fake Prometheus does not understand this probe: %s", promQL)
 			return nil, fmt.Errorf("unsupported probe")
 		}
-		name, matched := p.selectSeries(selector)
+		_, matched := p.selectSeries(selector)
 		if len(matched) == 0 {
 			continue
 		}
+		// The row is named by the replacement the query wrote, as a real
+		// engine does, never by the selector: an empty one drops the label
+		// (#156), and the counter is then unnamed.
+		value, _, _ := strings.Cut(strings.TrimPrefix(label, `"`+probeLabel+`", "`), `"`)
+		metric := map[string]string{}
+		if value != "" {
+			metric[probeLabel] = value
+		}
 		rows = append(rows, map[string]any{
-			"metric": map[string]string{probeLabel: name},
+			"metric": metric,
 			"value":  []any{1.0, strconv.Itoa(len(matched))},
 		})
 	}
