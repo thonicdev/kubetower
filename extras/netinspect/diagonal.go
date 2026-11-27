@@ -8,14 +8,16 @@ import "sort"
 // tiers and rule order, NetworkPolicy and Cilium, then the baseline). Counts
 // of rules cannot carry that precedence; the engine's own verdict does.
 //
-// It is asked for every identity of the namespace (pods with the same labels
-// answer alike), each to each, on every port whose answer can differ: the
-// ports the destination declares, and the bounds of every port and range the
-// rules of either end name, in every layer (AdminNetworkPolicy and baseline
-// subjects included), plus the lowest port of each protocol. Between two of
-// those bounds every port meets the same rules, so it answers as the bound
-// does. A namespace too large to ask in full is marked partial, never given
-// a verdict drawn from a sample.
+// It is asked for every identity of the namespace, each to each: one pod
+// stands for the pods with its labels. A rule that names pod addresses (an
+// ipBlock, Calico nets) can tell two such pods apart, and its answer for the
+// others is not asked. Each pair is asked on every port whose answer can
+// differ: the ports the destination declares, and the bounds of every port and
+// range the rules of either end name, in every layer (AdminNetworkPolicy and
+// baseline subjects, Calico's notPorts included), plus the lowest port of each
+// protocol. Between two of those bounds every port meets the same rules, so it
+// answers as the bound does. A namespace too large to ask in full is marked
+// partial, never given a verdict drawn from a sample.
 
 // Diagonal states, as the matrix draws them.
 const (
@@ -157,11 +159,16 @@ func passes(s Side) bool {
 	return s.State == sideOpen || s.State == sideAllowed
 }
 
+// flowProtocols are the protocols a flow is asked on.
+var flowProtocols = map[string]bool{"TCP": true, "UDP": true, "SCTP": true}
+
 // diagPortsOf is every port whose answer can differ for a flow from one pod to
 // another: the destination's declared ports and the port after each, the
 // first port and the port after the last of every range the rules of either
-// end name (the source's egress, the destination's ingress, every layer),
-// and port 1, for each protocol in play. whole is false past diagPorts.
+// end name (the source's egress, the destination's ingress, every layer,
+// Calico's notPorts included), and port 1, for each protocol in play: TCP,
+// and every protocol a port or a rule names (all three under a Calico
+// notProtocol). whole is false past diagPorts.
 func (m *model) diagPortsOf(from, to int) (ports []flowPort, whole bool) {
 	protocols := map[string]bool{"TCP": true}
 	var bounds []portSpec
@@ -180,7 +187,24 @@ func (m *model) diagPortsOf(from, to int) (ports []flowPort, whole bool) {
 			pol := &m.Policies[pi]
 			for _, rules := range [][]rule{pol.In, pol.Out} {
 				for ri := range rules {
-					for _, spec := range rules[ri].Ports {
+					r := &rules[ri]
+					specs := r.Ports
+					if c := r.cal; c != nil {
+						// A Calico rule keeps its protocol apart, its ports
+						// under ANY, and the ports it excludes in notPorts.
+						for _, p := range c.proto {
+							if flowProtocols[p] {
+								protocols[p] = true
+							}
+						}
+						if len(c.notProto) > 0 {
+							for p := range flowProtocols {
+								protocols[p] = true
+							}
+						}
+						specs = append(specs[:len(specs):len(specs)], c.notPorts...)
+					}
+					for _, spec := range specs {
 						if spec.Protocol != "" && spec.Protocol != "ANY" {
 							protocols[spec.Protocol] = true
 						}

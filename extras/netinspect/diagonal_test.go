@@ -77,6 +77,20 @@ func TestTheDiagonalAsksEveryPortAndIdentity(t *testing.T) {
 		{"more identities than are asked in full", func() *fakeHost {
 			return shopWith(t, diagIdentities)
 		}, diagPartial, nil},
+		{"H6: a Calico allow on UDP alone", func() *fakeHost {
+			return calicoShop(t, cnp("shop", "udp", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Allow\n    protocol: UDP\n"))
+		}, diagInside, []askedFlow{{"shop/web", "shop/api", "53&protocol=UDP", "yes"}, {"shop/web", "shop/api", "80", "no"}}},
+		{"H8: a Calico allow on UDP 53", func() *fakeHost {
+			return calicoShop(t, cnp("shop", "dns", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Allow\n    protocol: UDP\n"+
+				"    destination: {ports: [53]}\n"))
+		}, diagInside, []askedFlow{{"shop/web", "shop/api", "53&protocol=UDP", "yes"}, {"shop/web", "shop/api", "54&protocol=UDP", "no"}}},
+		{"H7: a Calico deny on TCP but 8080, then an allow", func() *fakeHost {
+			return calicoShop(t, cnp("shop", "only-8080", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Deny\n    protocol: TCP\n"+
+				"    destination: {notPorts: [8080]}\n  - action: Allow\n"))
+		}, diagInside, []askedFlow{{"shop/web", "shop/api", "8080", "yes"}, {"shop/web", "shop/api", "80", "no"}}},
+		{"a Calico allow on every protocol but TCP", func() *fakeHost {
+			return calicoShop(t, cnp("shop", "not-tcp", "selector: all()\ntypes: [Ingress]\ningress:\n  - action: Allow\n    notProtocol: TCP\n"))
+		}, diagInside, []askedFlow{{"shop/web", "shop/api", "9&protocol=SCTP", "yes"}, {"shop/web", "shop/api", "80", "no"}}},
 		{"C9b: an admin deny with an unknown peer key beside namespaces", func() *fakeHost {
 			return adminShop(t, anp("odd", 10, "subject:\n  namespaces: {matchLabels: {team: shop}}\ningress:\n  - name: own\n    action: Deny\n"+
 				"    from:\n      - namespaces: {matchLabels: {team: shop}}\n        sameLabels: [team]\n"))
@@ -142,5 +156,25 @@ func TestTheDiagonalBudgetEndsInPartial(t *testing.T) {
 	budget = diagBudget
 	if got := m.diagonalOf(pods, &budget); got != diagOpen || budget >= diagBudget {
 		t.Errorf("a budget: %q, %d left", got, budget)
+	}
+}
+
+// A pair with more ports to ask than diagPorts is partial: 40 single ports
+// asked with the port after each, past the bound.
+func TestTheDiagonalPastItsPortsIsPartial(t *testing.T) {
+	in := np("shop", "api-in", map[string]string{"app": "api"})
+	var ports []networkingv1.NetworkPolicyPort
+	for i := range 40 {
+		ports = append(ports, tcp(1000+10*i))
+	}
+	in.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: ports}}
+	m := shopModel(*in)
+	if list, whole := m.diagPortsOf(m.podIndex["shop/web"], m.podIndex["shop/api"]); whole || len(list) <= diagPorts {
+		t.Errorf("%d ports, whole %v", len(list), whole)
+	}
+	pods := []int{m.podIndex["shop/api"], m.podIndex["shop/web"]}
+	budget := diagBudget
+	if got := m.diagonalOf(pods, &budget); got != diagPartial {
+		t.Errorf("diagonal %q, want partial", got)
 	}
 }
