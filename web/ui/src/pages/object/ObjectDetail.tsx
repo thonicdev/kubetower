@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate } from 'react-router';
 import {
   isFailedState,
   isReasonOnlyState,
-  useClusters,
+  useClusterReadOnly,
   useNav,
   useResourceDetail,
   type DetailField,
@@ -171,13 +171,7 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
   // An extension's tab is told the cluster is read-only, so it runs nothing
   // on its own there (#157). Unknown until the clusters are read; a list that
   // could not be read leaves it false, as before.
-  const clusters = useClusters();
-  const readOnly =
-    clusters.data?.state === 'ok'
-      ? clusters.data.items.find((c) => c.name === identity.cluster)?.readOnly === true
-      : clusters.isError || clusters.data !== undefined
-        ? false
-        : undefined;
+  const readOnly = useClusterReadOnly(identity.cluster);
 
   /*
     The chosen tab lives in the address, not in a `useState`.

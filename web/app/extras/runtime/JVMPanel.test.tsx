@@ -119,7 +119,9 @@ describe('the pod panel', () => {
     await waitFor(() => expect(document.querySelector('[data-jvm-inspect]')).not.toBeNull());
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(document.querySelector('[data-jvm-panel]')).toBeNull();
-    expect(asked.slice(after).every((u) => u.includes('api-1'))).toBe(true);
+    // Only api-1's reads, and the cluster list the panel reads to know
+    // whether the cluster is read-only (#157).
+    expect(asked.slice(after).every((u) => u.includes('api-1') || u === 'GET /api/clusters')).toBe(true);
   });
 
   it('says in a short line to add a JDK image when there is no jcmd', async () => {

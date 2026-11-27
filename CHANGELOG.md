@@ -93,8 +93,8 @@ dialog draws it first, as a New extra line.
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
 - **Runtime Inspector: the program left running names the runtime.** In a
-  shell chain the program exec'd decides, or else the last one that is not
-  plumbing (`cd`, `wait`, `sleep`, `tail`, `echo`, `tee`, `cat`…) nor a
+  shell chain the program exec'd decides unless it is plumbing itself, or
+  else the last one that is not plumbing (`cd`, `wait`, `sleep`, `tail`, `echo`, `tee`, `cat`…) nor a
   fallback after `||`: `npx wait-on … && /app/bin/start` with JAVA_HOME is
   Java, `python app.py & wait` and `cat x | node` are read, and `bash -ceo
   pipefail` is read. Opening the JVM, Go, Node.js or Python tab on a

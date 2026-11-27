@@ -116,6 +116,12 @@ func TestEachRuntimeIsReadFromTheSpec(t *testing.T) {
 		{"node reading a pipe", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cat x | node"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
 		{"python reading a pipe", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"sh", "-c", "cat req.txt | python app.py"}, Env: envNamed("JAVA_HOME")}, runtimePython, sourceCommand},
 		{"a trap, then node in the background and wait", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "trap 'kill 0' TERM; node server.js & wait"}}, runtimeNode, sourceCommand},
+		{"node in the background, then exec tail -f", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "node server.js & exec tail -f /dev/null"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"node in the background, then exec sleep infinity", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "node server.js & exec sleep infinity"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"java in the background, then exec wait", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"sh", "-c", "java -jar a.jar & exec wait"}}, runtimeJava, sourceCommand},
+		// Two runtimes in the background: the last one started decides.
+		{"node then python in the background", corev1.Container{Image: "registry.example.com/x:1", Command: []string{"sh", "-c", "node a.js & python b.py & wait"}}, runtimePython, sourceCommand},
+		{"java then node in the background", corev1.Container{Image: "registry.example.com/x:1", Command: []string{"sh", "-c", "java -jar a.jar & node side.js & wait"}}, runtimeNode, sourceCommand},
 		{"node piped to cat", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "node server.js | cat"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
 		{"node, or python on failure", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "node server.js || python fallback.py"}}, runtimeNode, sourceCommand},
 		{"node only when a test fails", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "test -f /ready || node setup.js"}}, runtimeNode, sourceCommand},

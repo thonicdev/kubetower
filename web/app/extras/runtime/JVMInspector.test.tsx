@@ -344,3 +344,45 @@ describe('the Runtime column', () => {
     expect(asked).toEqual(['/x/k/runtime/column?kind=deployments']);
   });
 });
+
+describe("the Inspector page's JVM panel", () => {
+  const PANEL_POD = '/x/docker-desktop/runtime/pod/shop/billing-0';
+
+  /** Each path its own answer: the clusters, the pod the panel reads, the
+   *  jcmd probe; anything else the inventory. Every request is recorded. */
+  function routed(readOnly: boolean): string[] {
+    const asked: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname + input.search : input.url;
+        asked.push(`${init?.method ?? 'GET'} ${url}`);
+        const body: unknown = url.startsWith('/api/clusters')
+          ? { state: 'ok', items: [{ name: 'docker-desktop', label: 'docker-desktop', state: 'ok', readOnly }] }
+          : url === PANEL_POD
+            ? { cluster: 'docker-desktop', namespace: 'shop', name: 'billing-0', phase: 'Running', java: true, containers: [app] }
+            : url.endsWith('/tools')
+              ? { jcmd: true }
+              : inventory();
+        return Promise.resolve(new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } }));
+      }),
+    );
+    return asked;
+  }
+
+  it('on a read-only cluster, asks nothing on its own when it opens a pod: no jcmd probe, so no refusal audited (#157)', async () => {
+    const asked = routed(true);
+    mount('/c/docker-desktop/x/runtime?pod=shop%2Fbilling-0');
+    await screen.findByRole('button', { name: 'Inspect' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(asked.filter((a) => !a.startsWith('GET '))).toEqual([]);
+  });
+
+  it('on a writable cluster, still probes for jcmd when it opens a pod', async () => {
+    const asked = routed(false);
+    mount('/c/docker-desktop/x/runtime?pod=shop%2Fbilling-0');
+    await vi.waitFor(() => {
+      expect(asked.some((a) => a.startsWith('POST ') && a.endsWith(`${PANEL_POD}/app/tools`))).toBe(true);
+    });
+  });
+});

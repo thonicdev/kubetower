@@ -15,6 +15,7 @@ import {
   btnToggle,
   focusRing,
   headCell,
+  useClusterReadOnly,
   useDeclarePageFacts,
   useUrlParameter,
 } from '@kubetower/ui';
@@ -357,9 +358,17 @@ function PodPanel({ cluster, open, onClose }: { cluster: string; open: string; o
           Close
         </button>
       </header>
-      <JVMTab key={open} kind="pods" cluster={cluster} namespace={namespace} name={name} />
+      <PanelTab key={open} cluster={cluster} namespace={namespace} name={name} />
     </aside>
   );
+}
+
+/** The JVM tab of an open pod. It runs nothing on its own on a read-only
+ *  cluster (#157), as on the object page: drawn once that is known. */
+function PanelTab({ cluster, namespace, name }: { cluster: string; namespace: string; name: string }): ReactNode {
+  const readOnly = useClusterReadOnly(cluster);
+  if (readOnly === undefined) return <Pending what="the cluster" />;
+  return <JVMTab kind="pods" cluster={cluster} namespace={namespace} name={name} readOnly={readOnly} />;
 }
 
 /** Each group with as many of its rows as the budget has left, in order;

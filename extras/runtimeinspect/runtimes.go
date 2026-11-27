@@ -344,7 +344,7 @@ var plumbing = map[string]bool{
 }
 
 // deciding is the program of c that names its runtime: the one a shell
-// exec'd, which replaces it; otherwise the last that is not plumbing, and
+// exec'd, which replaces it, unless it is plumbing; otherwise the last that is not plumbing, and
 // not the fallback after `||` while one before it qualifies.
 // `npx wait-on … && /app/bin/start` is the start script's, not npx's;
 // `node app.js | tee log`, `cat x | node`, `python app.py & wait` and
@@ -352,7 +352,9 @@ var plumbing = map[string]bool{
 func deciding(c corev1.Container) []program {
 	all := programs(c)
 	for _, p := range all {
-		if p.execd {
+		// `node server.js & exec tail -f /dev/null`: an exec'd plumbing
+		// program only keeps the shell's place; the application is before it.
+		if p.execd && !plumbing[path.Base(p.words[0])] {
 			return []program{p}
 		}
 	}
