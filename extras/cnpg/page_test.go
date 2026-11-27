@@ -388,37 +388,62 @@ func TestTheSessionIsReadOnlyAndInUTC(t *testing.T) {
 }
 
 // The bound counts the columns' names and types too: a hundred long names
-// of escaped characters still answer under MaxAnswer.
+// of escaped characters, the rows filled up to the bound at every cell
+// length from 400 to 512 escaped characters, answer under MaxAnswer.
 func TestAPageWithLongColumnNamesStaysUnderItsBound(t *testing.T) {
 	cols := make([][]string, MaxColumns)
-	row := make([]string, MaxColumns+1)
 	for i := range cols {
 		// The longest a catalog spells: 63-byte names, a type qualified by
 		// its schema, every character one the encoder escapes.
-		cols[i] = []string{strings.Repeat("<", 60) + strconv.Itoa(i), `"` + strings.Repeat("<", 63) + `"."` + strings.Repeat(">", 63) + `"`, "false"}
-		row[i] = strings.Repeat("\x01", MaxCell)
+		cols[i] = []string{strings.Repeat("<", 60) + strconv.Itoa(i), `"` + strings.Repeat("<", 63) + `"."` + strings.Repeat("<", 63) + `"[]`, "false"}
 	}
-	db := &fakeDB{answers: answers{
-		sqlTableOID:   rowsOf([]string{"16384", "r"}),
-		sqlPrimaryKey: rowsOf(),
-		sqlColumns:    rowsOf(cols...),
-		sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
-			for i := 0; i <= MaxRows; i++ {
-				values := make([][]byte, len(row))
-				for j, v := range row {
-					values[j] = []byte(v)
+	worst := 0
+	for length := 400; length <= MaxCell; length++ {
+		cell := []byte(strings.Repeat("<", length))
+		db := &fakeDB{answers: answers{
+			sqlTableOID:   rowsOf([]string{"16384", "r"}),
+			sqlPrimaryKey: rowsOf(),
+			sqlColumns:    rowsOf(cols...),
+			sqlRowsPrefix: func(_ []string, each func([]column, [][]byte) error) error {
+				for i := 0; i <= MaxRows; i++ {
+					values := make([][]byte, MaxColumns+1)
+					for j := range MaxColumns {
+						values[j] = cell
+					}
+					values[MaxColumns] = []byte("(0," + strconv.Itoa(i+1) + ")")
+					if err := each(nil, values); err != nil {
+						return err
+					}
 				}
-				values[len(row)-1] = []byte("(0," + strconv.Itoa(i+1) + ")")
-				if err := each(nil, values); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	}}
-	rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide", "")
-	if rec.Code != http.StatusOK || rec.Body.Len() > MaxAnswer {
-		t.Fatalf("answered %d with %d bytes, over %d", rec.Code, rec.Body.Len(), MaxAnswer)
+				return nil
+			},
+		}}
+		rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/public/wide", "")
+		if rec.Code != http.StatusOK || rec.Body.Len() > MaxAnswer {
+			t.Fatalf("cells of %d: answered %d with %d bytes, over %d", length, rec.Code, rec.Body.Len(), MaxAnswer)
+		}
+		worst = max(worst, rec.Body.Len())
+	}
+	if testing.Verbose() {
+		t.Logf("the largest answer: %d bytes", worst)
+	}
+}
+
+// A schema or table name longer than Postgres keeps is refused before any
+// statement.
+func TestAnOverlongNameIsRefused(t *testing.T) {
+	long := strings.Repeat("s", maxIdentifier+1)
+	for _, path := range []string{"/x/kind/cnpg/clusters/db/pg/tables/" + long + "/t", "/x/kind/cnpg/clusters/db/pg/tables/public/" + long} {
+		db := &fakeDB{answers: answers{}}
+		rec := servePage(t, withDB(db, nil), sqlHost(), path, "")
+		if rec.Code != http.StatusBadRequest || len(db.asked) != 0 {
+			t.Errorf("%s: answered %d after %d statements", path, rec.Code, len(db.asked))
+		}
+	}
+	ok := strings.Repeat("s", maxIdentifier)
+	db := &fakeDB{answers: answers{sqlTableOID: rowsOf([]string{"16384", "r"}), sqlPrimaryKey: rowsOf(), sqlColumns: rowsOf([]string{"a", "integer", "false"})}}
+	if rec := servePage(t, withDB(db, nil), sqlHost(), "/x/kind/cnpg/clusters/db/pg/tables/"+ok+"/"+ok, ""); rec.Code != http.StatusOK {
+		t.Errorf("63 bytes: answered %d", rec.Code)
 	}
 }
 

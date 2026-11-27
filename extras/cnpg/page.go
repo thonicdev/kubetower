@@ -160,7 +160,10 @@ func pagedBy(relkind string, keyColumns int) string {
 func (x CNPG) rows(h extension.Host) http.Handler {
 	return x.sqlRoute(h, func(ctx context.Context, s *sqlSession, ask sqlAsk) (any, error) {
 		schema, table := ask.schema, ask.table
-		if !utf8.ValidString(schema) || !utf8.ValidString(table) || strings.ContainsRune(schema+table, 0) {
+		// Postgres cuts a name at 63 bytes: a longer one names nothing, and
+		// is refused before it can weigh on the answer.
+		if len(schema) > maxIdentifier || len(table) > maxIdentifier ||
+			!utf8.ValidString(schema) || !utf8.ValidString(table) || strings.ContainsRune(schema+table, 0) {
 			return nil, &sqlProblem{http.StatusBadRequest, CodeBadRequest, "The address does not name a table."}
 		}
 		oid, relkind := "", ""
@@ -320,7 +323,7 @@ func pageStatement(exprs []string, from, key string, keys []keyColumn, c pageCur
 // the columns' names and types, its own names, its cursor and the fields
 // around them.
 func answerHead(r Rows) int {
-	n := 512 + 2*len(r.Schema) + 2*len(r.Table) + maxCursor
+	n := 512 + cellSize(Cell{Text: r.Schema}) + cellSize(Cell{Text: r.Table}) + maxCursor
 	for _, c := range r.Columns {
 		n += 64 + cellSize(Cell{Text: c.Name}) + cellSize(Cell{Text: c.Type})
 	}
