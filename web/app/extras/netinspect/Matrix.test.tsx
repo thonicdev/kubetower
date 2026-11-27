@@ -291,7 +291,7 @@ describe('cells the policy engine would answer otherwise', () => {
   it("draws a namespace's own cell as the engine answered it, whatever the rules counted", () => {
     // The engine's word wins over any count: an admin allow above a deny, a
     // pass above a deny, a rule it cannot evaluate.
-    for (const diagonal of ['inside', 'open', 'denied', 'refused', 'refusedOut', 'unevaluated'] as const) {
+    for (const diagonal of ['inside', 'open', 'mixed', 'denied', 'refused', 'refusedOut', 'unevaluated', 'partial'] as const) {
       show({ scope: 'cluster', nodes: [node(0, true, true, { internal: 2, diagonal })], edges: [], folded: 0, edgesTotal: 0 });
       expect(state('ns:team-000>ns:team-000'), diagonal).toBe(diagonal);
       cleanup();
@@ -305,6 +305,21 @@ describe('cells the policy engine would answer otherwise', () => {
       edgesTotal: 1,
     });
     expect(state('ns:team-000>ns:team-000')).toBe('inside');
+  });
+
+  it('reads a diagonal it does not know as no answer, and names mixed and partial in the legend only when drawn', () => {
+    show({ scope: 'cluster', nodes: [node(0, true, true, { internal: 2, diagonal: 'bogus' as 'inside' })], edges: [], folded: 0, edgesTotal: 0 });
+    expect(state('ns:team-000>ns:team-000')).toBe('refused');
+    const legend = (): string => document.querySelector('[data-matrix-legend]')?.textContent ?? '';
+    expect(legend()).not.toContain('mixed');
+    expect(legend()).not.toContain('partial');
+    cleanup();
+    show({ scope: 'cluster', nodes: [node(0, false, false, { diagonal: 'mixed' }), node(1, false, false, { diagonal: 'partial' })], edges: [], folded: 0, edgesTotal: 0 });
+    expect(state('ns:team-000>ns:team-000')).toBe('mixed');
+    expect(state('ns:team-001>ns:team-001')).toBe('partial');
+    expect(document.querySelector('[data-cell="ns:team-000>ns:team-000"]')?.getAttribute('title')).toBe('team-000 → team-000: mixed: some flows between its pods pass, others are refused');
+    expect(legend()).toContain('mixed');
+    expect(legend()).toContain('partial');
   });
 
   it('never takes a namespace with rules between its own pods as inside when the server sent no answer for it', () => {

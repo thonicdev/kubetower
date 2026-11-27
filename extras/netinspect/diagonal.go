@@ -8,75 +8,104 @@ import "sort"
 // tiers and rule order, NetworkPolicy and Cilium, then the baseline). Counts
 // of rules cannot carry that precedence; the engine's own verdict does.
 //
-// It is asked for a few pods of the namespace, one per identity (pods with the
-// same labels answer alike), each to each, on the ports a flow between them
-// could use: the destination's declared ports and the ports the rules
-// isolating it name, or one probe port when there are none.
+// It is asked for every identity of the namespace (pods with the same labels
+// answer alike), each to each, on every port whose answer can differ: the
+// ports the destination declares, and the bounds of every port and range the
+// rules of either end name, in every layer (AdminNetworkPolicy and baseline
+// subjects included), plus the lowest port of each protocol. Between two of
+// those bounds every port meets the same rules, so it answers as the bound
+// does. A namespace too large to ask in full is marked partial, never given
+// a verdict drawn from a sample.
 
 // Diagonal states, as the matrix draws them.
 const (
 	diagInside      = "inside"      // some flow between its pods is allowed by a rule
 	diagOpen        = "open"        // nothing isolates them: every flow passes
+	diagMixed       = "mixed"       // some flows pass unruled, others are refused
 	diagDenied      = "denied"      // a deny rule refuses them
 	diagRefused     = "refused"     // isolated on ingress, and no rule lets them in
 	diagRefusedOut  = "refusedOut"  // isolated on egress, and no rule lets them out
 	diagUnevaluated = "unevaluated" // only a rule this engine does not evaluate decides
+	diagPartial     = "partial"     // too many pairs or ports to ask them all
 )
 
 const (
-	// diagIdentities bounds the pods asked per namespace: one per identity.
-	diagIdentities = 4
+	// diagIdentities bounds the identities asked in full per namespace.
+	diagIdentities = 48
 	// diagPorts bounds the ports asked per pair.
-	diagPorts = 8
+	diagPorts = 64
+	// diagBudget bounds the flows asked over the whole cluster, two sides
+	// each; the namespaces past it, by name, are partial.
+	diagBudget = 200_000
 )
 
 // diagonals answers each namespace with a pod that is not on its node's
 // network, by name.
 func (m *model) diagonals() map[string]string {
-	order := make([]int, len(m.Pods))
-	for i := range order {
-		order[i] = i
-	}
-	// The same pods every time, whatever order the listing gave.
-	sort.SliceStable(order, func(a, b int) bool {
-		pa, pb := &m.Pods[order[a]], &m.Pods[order[b]]
-		if pa.Namespace != pb.Namespace {
-			return pa.Namespace < pb.Namespace
-		}
-		return pa.Name < pb.Name
-	})
 	reps := map[string][]int{}
 	seen := map[int]bool{}
-	for _, i := range order {
+	for i := range m.Pods {
 		p := &m.Pods[i]
-		if p.HostNetwork || seen[p.identity] || len(reps[p.Namespace]) >= diagIdentities {
+		if p.HostNetwork || seen[p.identity] {
 			continue
 		}
 		seen[p.identity] = true
 		reps[p.Namespace] = append(reps[p.Namespace], i)
 	}
-	out := make(map[string]string, len(reps))
+	names := make([]string, 0, len(reps))
 	for ns, pods := range reps {
-		out[ns] = m.diagonalOf(pods)
+		names = append(names, ns)
+		// The same pod for an identity every time, whatever order the
+		// listing gave: the first by name.
+		sort.Slice(pods, func(a, b int) bool { return m.Pods[pods[a]].Name < m.Pods[pods[b]].Name })
+	}
+	sort.Strings(names)
+	out := make(map[string]string, len(reps))
+	budget := diagBudget
+	for _, ns := range names {
+		out[ns] = m.diagonalOf(reps[ns], &budget)
 	}
 	return out
 }
 
-// diagonalOf is the engine's answer for flows among pods: a rule not
-// evaluated anywhere is a mark of its own, never allowed; then any flow
-// allowed by a rule; then open where every flow is; otherwise the first
-// refusal, a deny rule's before an isolation's.
-func (m *model) diagonalOf(pods []int) string {
+// diagonalOf is the engine's answer for flows among pods, one per identity:
+// a rule not evaluated is a mark of its own, never allowed; a namespace not
+// asked in full is partial; then any flow allowed by a rule; then open where
+// every flow is, and mixed where some are and others are refused; otherwise
+// the refusal, a deny rule's before an isolation's.
+func (m *model) diagonalOf(pods []int, budget *int) string {
+	if len(pods) > diagIdentities {
+		return diagPartial
+	}
+	ports := make([][][]flowPort, len(pods))
+	cost := 0
+	for i, a := range pods {
+		ports[i] = make([][]flowPort, len(pods))
+		for j, b := range pods {
+			list, whole := m.diagPortsOf(a, b)
+			if !whole {
+				return diagPartial
+			}
+			ports[i][j] = list
+			cost += len(list)
+		}
+	}
+	if cost > *budget {
+		return diagPartial
+	}
+	*budget -= cost
 	var allowed, open, unevaluated, denied, refused, refusedOut bool
-	for _, a := range pods {
-		for _, b := range pods {
+	for i, a := range pods {
+		for j, b := range pods {
 			from, to := endpoint{pod: a}, endpoint{pod: b}
-			for _, port := range m.diagPortsOf(b) {
+			for _, port := range ports[i][j] {
 				in := m.side("ingress", from, to, port)
 				out := m.side("egress", from, to, port)
 				switch {
 				case denies(in) || denies(out):
 					denied = true
+				case decidedUnevaluated(in) || decidedUnevaluated(out):
+					unevaluated = true
 				case in.State == sideDenied:
 					refused = true
 				case out.State == sideDenied:
@@ -99,7 +128,7 @@ func (m *model) diagonalOf(pods []int) string {
 	case open && !denied && !refused && !refusedOut:
 		return diagOpen
 	case open:
-		return diagInside
+		return diagMixed
 	case denied:
 		return diagDenied
 	case refused:
@@ -116,53 +145,86 @@ func denies(s Side) bool {
 	return s.State == sideDenied && s.Decided != nil && s.Decided.Kind == "deny"
 }
 
+// decidedUnevaluated is a side refused by a rule whose peers this engine does
+// not evaluate (an AdminNetworkPolicy Deny to a peer it cannot read): a
+// refusal, but not one the engine can attribute.
+func decidedUnevaluated(s Side) bool {
+	return s.State == sideDenied && s.Decided != nil && s.Decided.Kind == "unevaluated"
+}
+
 // passes is a side that lets the flow through.
 func passes(s Side) bool {
 	return s.State == sideOpen || s.State == sideAllowed
 }
 
-// diagPortsOf is the ports a flow to pod could use: its declared ports, and
-// the ports the rules isolating it name, at most diagPorts; one probe port
-// where there are none.
-func (m *model) diagPortsOf(pod int) []flowPort {
-	p := &m.Pods[pod]
-	seen := map[flowPort]bool{}
-	var out []flowPort
-	add := func(fp flowPort) {
-		if fp.Num <= 0 || seen[fp] || len(out) >= diagPorts {
-			return
+// diagPortsOf is every port whose answer can differ for a flow from one pod to
+// another: the destination's declared ports and the port after each, the
+// first port and the port after the last of every range the rules of either
+// end name (the source's egress, the destination's ingress, every layer),
+// and port 1, for each protocol in play. whole is false past diagPorts.
+func (m *model) diagPortsOf(from, to int) (ports []flowPort, whole bool) {
+	protocols := map[string]bool{"TCP": true}
+	var bounds []portSpec
+	dst := &m.Pods[to]
+	for _, np := range dst.Ports {
+		protocol := np.Protocol
+		if protocol == "" {
+			protocol = "TCP"
 		}
-		seen[fp] = true
-		out = append(out, fp)
+		protocols[protocol] = true
+		bounds = append(bounds, portSpec{Protocol: protocol, Num: np.Port, End: np.Port})
 	}
-	names := make([]string, 0, len(p.Ports))
-	for name := range p.Ports {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		np := p.Ports[name]
-		add(flowPort{Num: np.Port, Protocol: np.Protocol})
-	}
-	ident := &m.Identities[p.identity]
-	for _, list := range [][]int{ident.In, ident.Out} {
+	src, dstIdent := &m.Identities[m.Pods[from].identity], &m.Identities[dst.identity]
+	for _, list := range [][]int{src.Out, src.OutAlso, dstIdent.In, dstIdent.InAlso} {
 		for _, pi := range list {
 			pol := &m.Policies[pi]
 			for _, rules := range [][]rule{pol.In, pol.Out} {
 				for ri := range rules {
 					for _, spec := range rules[ri].Ports {
-						protocol := spec.Protocol
-						if protocol == "" || protocol == "ANY" {
-							protocol = "TCP"
+						if spec.Protocol != "" && spec.Protocol != "ANY" {
+							protocols[spec.Protocol] = true
 						}
-						add(flowPort{Num: spec.Num, Protocol: protocol})
+						if !spec.Any && spec.Name == "" {
+							bounds = append(bounds, spec)
+						}
 					}
 				}
 			}
 		}
 	}
-	if len(out) == 0 {
-		out = append(out, flowPort{Num: 80, Protocol: "TCP"})
+	names := make([]string, 0, len(protocols))
+	for p := range protocols {
+		names = append(names, p)
 	}
-	return out
+	sort.Strings(names)
+	seen := map[flowPort]bool{}
+	add := func(num int32, protocol string) {
+		fp := flowPort{Num: num, Protocol: protocol}
+		if num < 1 || num > 65535 || seen[fp] {
+			return
+		}
+		seen[fp] = true
+		ports = append(ports, fp)
+	}
+	for _, protocol := range names {
+		add(1, protocol)
+		for _, b := range bounds {
+			if b.Protocol != protocol && b.Protocol != "ANY" && b.Protocol != "" {
+				continue
+			}
+			end := b.End
+			if end < b.Num {
+				end = b.Num
+			}
+			add(b.Num, protocol)
+			add(end+1, protocol)
+		}
+	}
+	sort.Slice(ports, func(a, b int) bool {
+		if ports[a].Protocol != ports[b].Protocol {
+			return ports[a].Protocol < ports[b].Protocol
+		}
+		return ports[a].Num < ports[b].Num
+	})
+	return ports, len(ports) <= diagPorts
 }

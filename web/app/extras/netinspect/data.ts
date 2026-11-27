@@ -112,7 +112,10 @@ export interface CiliumRead {
 
 /** The policy engine's answer for flows between a namespace's own pods
  *  (`diagonal.go`), drawn as the matrix's diagonal. */
-export type Diagonal = 'inside' | 'open' | 'denied' | 'refused' | 'refusedOut' | 'unevaluated';
+export type Diagonal = 'inside' | 'open' | 'mixed' | 'denied' | 'refused' | 'refusedOut' | 'unevaluated' | 'partial';
+
+/** Every diagonal this page draws: another value is read as no answer. */
+export const DIAGONALS: ReadonlySet<string> = new Set<Diagonal>(['inside', 'open', 'mixed', 'denied', 'refused', 'refusedOut', 'unevaluated', 'partial']);
 
 export interface GraphNode {
   id: string;

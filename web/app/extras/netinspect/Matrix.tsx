@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { btnToggle, focusRing } from '@kubetower/ui';
 
-import type { FlowEdge, Graph, GraphNode } from './data';
+import { DIAGONALS, type FlowEdge, type Graph, type GraphNode } from './data';
 import { fold, ORDERS, TOPS, type CellData, type FoldAsk, type Order } from './fold';
 
 /** What the matrix's own controls write to the address, `''` deleting a key. */
@@ -144,12 +144,12 @@ export function Matrix({
           </table>
         </div>
       )}
-      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} />
+      <Legend cut={truncated} others={nodes.some((n) => n.kind === 'others')} diagonals={new Set(nodes.map((n) => n.diagonal))} />
     </div>
   );
 }
 
-type State = 'allowed' | 'denied' | 'partDenied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'folded' | 'unknown';
+type State = 'allowed' | 'denied' | 'partDenied' | 'unevaluated' | 'refused' | 'refusedOut' | 'open' | 'inside' | 'mixed' | 'partial' | 'folded' | 'unknown';
 
 /** Every pod of a namespace, or of every namespace "others" holds, is
  *  isolated that way: nothing passes unless a rule of its own lets it. An
@@ -175,13 +175,13 @@ const isolatedOut = (n: GraphNode) => grouped(n) && n.pods > 0 && n.isolatedOut 
  *
  * A namespace to itself is the policy engine's own answer (`diagonal`),
  * precedence and all: AdminNetworkPolicy priority and Pass, Calico's rule
- * order, the baseline last. Where an older server sent none, it is read as
- * any other pair, never taken as inside.
+ * order, the baseline last. Where an older server sent none, or a value this
+ * page does not know, it is read as any other pair, never taken as inside.
  */
 function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut: boolean): State {
   const mixed = from.kind === 'others' || to.kind === 'others';
   // The engine's own answer, precedence and all, before any count of rules.
-  if (!mixed && from.id === to.id && to.diagonal !== undefined) return to.diagonal;
+  if (!mixed && from.id === to.id && to.diagonal !== undefined && DIAGONALS.has(to.diagonal)) return to.diagonal;
   if (cell !== undefined && cell.deny.length > 0) return mixed ? 'partDenied' : 'denied';
   if (cut) return 'unknown';
   // Rules between two folded namespaces are not sent at all (the server
@@ -202,6 +202,8 @@ function stateOf(from: GraphNode, to: GraphNode, cell: CellData | undefined, cut
 const LOOK: Record<State, string> = {
   allowed: 'bg-accent/45',
   inside: 'bg-accent/25',
+  mixed: 'border border-dashed border-muted bg-panel-2',
+  partial: 'border border-dotted border-warn/60',
   denied: 'bg-bad/60',
   partDenied: 'border border-dashed border-bad/60 bg-bad/20',
   unevaluated: 'border border-dotted border-muted',
@@ -215,6 +217,8 @@ const LOOK: Record<State, string> = {
 const WORD: Record<State, string> = {
   allowed: 'allowed by a rule',
   inside: 'allowed between its own pods',
+  mixed: 'mixed: some flows between its pods pass, others are refused',
+  partial: 'partial: too many pods or ports to ask every pair',
   denied: 'denied by a rule',
   partDenied: 'denied for some of the namespaces in others',
   unevaluated: 'a rule not evaluated here (FQDN, Service, layer 7)',
@@ -320,12 +324,14 @@ function Heading({
   );
 }
 
-function Legend({ cut, others }: { cut: boolean; others: boolean }): ReactNode {
+function Legend({ cut, others, diagonals }: { cut: boolean; others: boolean; diagonals: ReadonlySet<string | undefined> }): ReactNode {
   const items: { state: State; label: string }[] = [
     { state: 'allowed', label: 'allowed' },
     { state: 'denied', label: 'denied' },
     ...(cut ? [{ state: 'unknown' as const, label: 'unknown' }] : [{ state: 'refused' as const, label: 'refused' }, { state: 'open' as const, label: 'open' }]),
     ...(others ? [{ state: 'folded' as const, label: 'folded' }, { state: 'partDenied' as const, label: 'partly denied' }] : []),
+    ...(diagonals.has('mixed') ? [{ state: 'mixed' as const, label: 'mixed' }] : []),
+    ...(diagonals.has('partial') ? [{ state: 'partial' as const, label: 'partial' }] : []),
   ];
   return (
     <p data-matrix-legend="" className="flex flex-wrap items-center gap-3 text-2xs text-muted">
