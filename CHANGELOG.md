@@ -84,6 +84,13 @@ dialog draws it first, as a New extra line.
   their connections; a Retry and the watcher no longer apply an older read
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
+- **Runtime Inspector: the program left running names the runtime.** In a
+  shell chain only the last program, or the one exec'd, decides: `npx
+  wait-on … && /app/bin/start` with JAVA_HOME is Java, and `bash -ceo
+  pipefail` is read. Opening the tab on a read-only cluster runs nothing and
+  records no refusal; a switch is reviewed once, an old `jvm` grant that
+  could not be reviewed answers 503 and grants nothing, and a refusal is
+  drawn on one line (#157).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

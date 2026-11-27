@@ -316,7 +316,14 @@ func (s *Server) reviewUse(ctx context.Context, cluster string, keys []string) (
 	}
 	for j, answer := range s.gate.ReviewAll(ctx, cluster, again) {
 		i := of[j]
-		if answer.Allowed() && !answers[i].Allowed() {
+		switch {
+		case answers[i].Allowed():
+		case answer.Allowed():
+			answers[i], asked[i] = answer, again[j]
+		case answer.Decision == access.Unreviewable:
+			// A grant under the old key may exist and could not be read:
+			// neither a yes nor a no, so 503, never 403, and nothing
+			// granted (#157).
 			answers[i], asked[i] = answer, again[j]
 		}
 	}
@@ -404,8 +411,10 @@ func (s *Server) useOrRefuse(ctx context.Context, cluster, key, change string, w
 	}
 	// Administered as the question that allows it, so a grant on the name the
 	// extra was published under writes as it reads.
-	_, granted := s.reviewUse(ctx, cluster, []string{key})
-	_, err := s.gate.Administer(ctx, cluster, granted[0], change, func() (bool, error) {
+	// Reviewed once: the answer reviewUse read is the one the write is
+	// recorded under (#157).
+	answers, granted := s.reviewUse(ctx, cluster, []string{key})
+	_, err := s.gate.AdministerAnswered(ctx, cluster, granted[0], answers[0], change, func() (bool, error) {
 		err := write()
 		// A choice in effect that could not be written down was applied.
 		return err == nil || errors.Is(err, statefile.ErrNotSaved), err

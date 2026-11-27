@@ -101,6 +101,18 @@ func TestEachRuntimeIsReadFromTheSpec(t *testing.T) {
 		{"after &&", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app && node server.js"}}, runtimeNode, sourceCommand},
 		{"after a glued ;", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app; node server.js"}}, runtimeNode, sourceCommand},
 		{"after a lone ;", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app ; node server.js"}}, runtimeNode, sourceCommand},
+		// The program that decides is the last of a chain, or the one exec'd,
+		// never one that only prepares or reads a pipe (#157).
+		{"npx before the java start script", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"sh", "-c", "npx wait-on tcp:db:5432 && /app/bin/start"}, Env: envNamed("JAVA_HOME")}, runtimeJava, sourceEnv},
+		{"deno warm-up before the java start script", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"sh", "-c", "deno run warmup.ts && /app/bin/start"}, Env: envNamed("JAVA_HOME")}, runtimeJava, sourceEnv},
+		{"npm ci then java", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"sh", "-c", "npm ci; java -jar app.jar"}}, runtimeJava, sourceCommand},
+		{"exec'd node before a trailing command", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "cd /app && exec node server.js; echo never"}}, runtimeNode, sourceCommand},
+		{"node piped to tee", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "node server.js | tee /var/log/app.log"}}, runtimeNode, sourceCommand},
+		{"npm last after a java warm-up", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"sh", "-c", "java -version && npm start"}, Env: envNamed("JAVA_HOME")}, runtimeNode, sourceCommand},
+		{"bash -ceo pipefail", corev1.Container{Image: "registry.example.com/api:1", Command: []string{"bash", "-ceo", "pipefail", "python app.py"}}, runtimePython, sourceCommand},
+		{"bash -ec", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"bash", "-ec", "node server.js"}}, runtimeNode, sourceCommand},
+		{"bash -c -e", corev1.Container{Image: "registry.example.com/web:1", Command: []string{"bash", "-c", "-e", "node server.js"}}, runtimeNode, sourceCommand},
+		{"a shell running a script file", corev1.Container{Image: "registry.example.com/x:1", Command: []string{"bash", "/start.sh", "node"}}, "", ""},
 		{"a flag where the entrypoint's arguments start", corev1.Container{Image: "registry.example.com/x:1", Args: []string{"--config=/etc/app.js"}}, "", ""},
 
 		// Go products.

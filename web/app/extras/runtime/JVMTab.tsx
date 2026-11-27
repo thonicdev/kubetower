@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Failure, Pending, Pill, ROW, TABLE, bodyCell, btnPrimary, btnSecondary, type ExtensionTabProps } from '@kubetower/ui';
 
 import {
+  markReadOnly,
   InspectProblem,
   inspect,
   blocksJcmd,
@@ -36,10 +37,14 @@ import { ThreadDumpSection, spans } from './ThreadDump';
  * The memory bar's geometry is the server's: the tab draws the percentages it
  * is given and never rescales.
  */
-export default function JVMTab({ cluster, namespace, name }: ExtensionTabProps): ReactNode {
+export default function JVMTab({ cluster, namespace, name, readOnly }: ExtensionTabProps): ReactNode {
   if (namespace === undefined || namespace === '') {
     return <p className="text-sm text-muted">A pod is namespaced; this one came without its namespace.</p>;
   }
+  // The probes the panels run on their own ask nothing on a read-only
+  // cluster (#157): marked before any of them mounts. The console renders a
+  // tab only once it knows.
+  markReadOnly(cluster, readOnly === true);
   return <OnPod cluster={cluster} namespace={namespace} name={name} />;
 }
 

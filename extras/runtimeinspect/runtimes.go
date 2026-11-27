@@ -188,6 +188,9 @@ type program struct {
 	// image's own entrypoint, which the API does not carry, may take it as a
 	// subcommand (the EBS CSI driver's `node`).
 	afterEntrypoint bool
+	// execd is a program the shell exec'd: it replaces the shell, and what
+	// follows it never runs. piped reads another program's output (`| tee`).
+	execd, piped bool
 }
 
 // shells run the script after their -c; wrappers run the program after them.
@@ -203,11 +206,22 @@ func programs(c corev1.Container) []program {
 	var out []program
 	at := -1 // the program the next arguments belong to, if any
 	start, wrapped, shell, optionArg := true, false, false, false
-	reset := func() { at, start, wrapped, shell, optionArg = -1, true, false, false, false }
+	// script: the shell's options held a c, so its first word that is not an
+	// option, or the value of one, starts the script (`-ceo pipefail`).
+	// execd and piped describe the next program found.
+	script, execd, piped := false, false, false
+	reset := func() {
+		at, start, wrapped, shell, optionArg = -1, true, false, false, false
+		script, execd, piped = false, false, false
+	}
 	for _, token := range commandLine(c) {
 		switch token {
-		case "&&", "||", "|", "&":
+		case "&&", "||", "&":
 			reset()
+			continue
+		case "|":
+			reset()
+			piped = true
 			continue
 		}
 		// A `;`, alone or ending a word, ends the command.
@@ -222,26 +236,38 @@ func programs(c corev1.Container) []program {
 			case token == "--rcfile" || token == "--init-file":
 				optionArg = true
 			case strings.HasPrefix(token, "--"):
-			case strings.HasPrefix(token, "-") && strings.Contains(token, "c"):
-				shell, start = false, true
 			case isFlag(token) || strings.HasPrefix(token, "+"):
+				// -c takes the first word left after every option, so a c
+				// among them does not end them: `-ceo pipefail` gives
+				// pipefail to -o (#157).
+				if token[0] == '-' && strings.Contains(token, "c") {
+					script = true
+				}
 				optionArg = strings.ContainsAny(token[1:], "oO")
+			case script:
+				// The script's first word: read as a program below.
+				shell = false
 			default:
 				// The shell runs a script file: the program is the shell.
 				shell, start = false, false
 			}
+			if shell || !start {
+				break
+			}
+			fallthrough
 		case start:
 			switch base := path.Base(token); {
 			case isFlag(token) && wrapped, isAssignment(token):
 			case wrappers[base] || token == "--":
 				wrapped = true
+				execd = execd || base == "exec"
 			case shells[base]:
 				shell = true
 			case isFlag(token):
 				// An argument to an entrypoint the spec does not carry.
 				start = false
 			default:
-				out = append(out, program{words: []string{token}, afterEntrypoint: len(out) == 0 && len(c.Command) == 0})
+				out = append(out, program{words: []string{token}, afterEntrypoint: len(out) == 0 && len(c.Command) == 0, execd: execd, piped: piped})
 				at, start = len(out)-1, false
 			}
 		case at >= 0:
@@ -304,10 +330,29 @@ func counts(p program, base string) bool {
 	return !p.afterEntrypoint || !isInterpreter(base) || runsAScript(p)
 }
 
-// programHint is the command-line hint of the first program of c that
-// isProgram knows, or that is a script isScript knows.
+// deciding is the program of c that names its runtime: the one a shell
+// exec'd, which replaces it; otherwise the last that does not read a pipe.
+// `npx wait-on … && /app/bin/start` is the start script's, not npx's, and
+// `node app.js | tee log` is node's (#157).
+func deciding(c corev1.Container) []program {
+	all := programs(c)
+	for _, p := range all {
+		if p.execd {
+			return []program{p}
+		}
+	}
+	for i := len(all) - 1; i >= 0; i-- {
+		if !all[i].piped {
+			return all[i : i+1]
+		}
+	}
+	return nil
+}
+
+// programHint is the command-line hint of c's deciding program, if
+// isProgram knows it or it is a script isScript knows.
 func programHint(c corev1.Container, isProgram func(base string) bool, isScript func(token string) bool) (Hint, bool) {
-	for _, p := range programs(c) {
+	for _, p := range deciding(c) {
 		first := p.words[0]
 		base := path.Base(first)
 		switch {
@@ -320,10 +365,10 @@ func programHint(c corev1.Container, isProgram func(base string) bool, isScript 
 	return Hint{}, false
 }
 
-// programTakingFromJava is the base of the first program of c that takes it
+// programTakingFromJava is the base of c's deciding program when it takes c
 // from Java (takesFromJava), or "".
 func programTakingFromJava(c corev1.Container) string {
-	for _, p := range programs(c) {
+	for _, p := range deciding(c) {
 		if base := path.Base(p.words[0]); takesFromJava(base) && counts(p, base) {
 			return base
 		}

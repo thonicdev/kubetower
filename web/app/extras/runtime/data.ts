@@ -159,7 +159,8 @@ export function said(error: unknown): unknown {
   const problem = error.body as Problem | undefined;
   if (typeof problem?.message !== 'string' || problem.message === '') return error;
   const detail = typeof problem.detail === 'string' && problem.detail !== '' ? ` ${problem.detail}` : '';
-  return new ApiError(error.status, `${problem.message}${detail}`, error.body);
+  // One line, whatever the route or the cluster wrapped (#157).
+  return new ApiError(error.status, `${problem.message}${detail}`.replace(/\s+/g, ' ').trim(), error.body);
 }
 
 export async function getInventory(cluster: string, ns: string, signal?: AbortSignal): Promise<Inventory> {
@@ -549,6 +550,26 @@ function problemOf(error: unknown): unknown {
   return shown;
 }
 
+/** The clusters a tab was told are read-only (ExtensionTabProps.readOnly). */
+const readOnlyClusters = new Set<string>();
+
+/** Records what the console said of cluster: read-only or not. */
+export function markReadOnly(cluster: string, readOnly: boolean): void {
+  if (readOnly) readOnlyClusters.add(cluster);
+  else readOnlyClusters.delete(cluster);
+}
+
+/**
+ * The refusal the route would write for an act on a read-only cluster, made
+ * here: a probe the tab runs on its own when it opens asks nothing there, so
+ * no refusal is audited without a click (#157). A button still asks, and its
+ * refusal is the route's.
+ */
+function refusedHere(cluster: string): InspectProblem | undefined {
+  if (!readOnlyClusters.has(cluster)) return undefined;
+  return new InspectProblem('read_only', `${cluster} is read-only: no command, tunnel or dump.`, 403);
+}
+
 /** The tooltip of a button that runs jcmd in a container that has none. */
 export const NO_JDK_TITLE = 'No JDK tools in this container';
 
@@ -567,6 +588,8 @@ export function toolsQuery(cluster: string, namespace: string, name: string, con
   return queryOptions({
     queryKey: toolsKey(cluster, namespace, name, container),
     queryFn: async ({ signal }): Promise<Tools> => {
+      const refused = refusedHere(cluster);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it runs jcmd in the container, which a link from another
         // site must not reach (#82).
@@ -1003,6 +1026,8 @@ export function pprofQuery(cluster: string, namespace: string, name: string, con
   return queryOptions({
     queryKey: [KEY, 'pprof', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel, which a link from another site
         // must not reach (#82).
@@ -1081,6 +1106,8 @@ export function nodeQuery(cluster: string, namespace: string, name: string, cont
   return queryOptions({
     queryKey: [KEY, 'node', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel, which a link from another site
         // must not reach (#82).
@@ -1216,6 +1243,8 @@ export function pythonProcessesQuery(cluster: string, namespace: string, name: s
   return queryOptions({
     queryKey: [KEY, 'python', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster);
+      if (refused !== undefined) throw refused;
       let body: PythonProcesses;
       try {
         // A POST: it runs an audited command (#82).
@@ -1234,6 +1263,8 @@ export function pythonMetricsQuery(cluster: string, namespace: string, name: str
   return queryOptions({
     queryKey: [KEY, 'python-metrics', cluster, namespace, name, container] as const,
     queryFn: async ({ signal }) => {
+      const refused = refusedHere(cluster);
+      if (refused !== undefined) throw refused;
       try {
         // A POST: it opens an audited tunnel (#82).
         return await request<PythonMetricsState>(`${pythonPath(cluster, namespace, name, container)}/metrics`, { method: 'POST', signal });

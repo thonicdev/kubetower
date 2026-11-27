@@ -63,7 +63,7 @@ func hints(c corev1.Container) []Hint {
 	if h, ok := imageHint(c.Image); ok {
 		out = append(out, h)
 	}
-	if h, ok := commandHint(commandLine(c)); ok {
+	if h, ok := commandHint(javaTokens(c)); ok {
 		out = append(out, h)
 	}
 	for _, e := range c.Env {
@@ -136,6 +136,20 @@ func commandHint(tokens []string) (Hint, bool) {
 		}
 	}
 	return Hint{}, false
+}
+
+// javaTokens are the words commandHint reads: the whole command line, or,
+// where it chains several programs, the words of the one that decides
+// (deciding): `java -version && npm start` is npm's (#157). A line of JVM
+// options alone, for an entrypoint the spec does not carry, has no program
+// and is read whole.
+func javaTokens(c corev1.Container) []string {
+	if len(programs(c)) > 1 {
+		if d := deciding(c); len(d) == 1 {
+			return d[0].words
+		}
+	}
+	return commandLine(c)
 }
 
 // commandLine is c's command then its args, with Kubernetes' $(NAME)
