@@ -82,6 +82,49 @@ func (s *Server) shellFor(ctx context.Context, ref api.ObjectRef) *api.ShellOffe
 	return shellOffer(reviewBoth(ctx, s.gate, ref.Cluster, []access.Attributes{execAttributes(ref.Namespace, ref.Name)})[0])
 }
 
+// debugAttributes is Debug's question about the change, by name: what
+// internal/terminal reviews and records the PATCH adding the container with.
+func debugAttributes(namespace, pod string) access.Attributes {
+	return access.Attributes{Verb: "patch", Version: "v1", Resource: "pods", Subresource: "ephemeralcontainers", Namespace: namespace, Name: pod}
+}
+
+// mayDebug is mayExec for the debug channel.
+func (s *Server) mayDebug() bool {
+	return (apiChannels{s}).Offers(api.ChannelDebug) && len(s.clusters.Contexts()) > 0
+}
+
+// debugFor is whether a pod's page offers Debug: nil on every other kind and
+// where the channel is not served.
+//
+// Unlike Shell it is answered on both profiles, because a read-only cluster
+// refuses it with a sentence (writable's), asked of nobody: adding a container
+// is a change, which the guardrail refuses at the socket too. Shell is refused
+// there only at its socket, `exec` being a mutating verb of the shell rather
+// than a write, so its page draws it.
+//
+// On the desktop it is offered, as Capabilities.PodExec offers Shell: the
+// kubeconfig's own identity goes, and the socket reviews it when it opens.
+// Under the server profile both questions the socket asks are asked here, for
+// the person and the console, and the worse answer decides as Shell's does:
+// withheld from a person refused either, disabled with its sentence where
+// unknown or where the console's ServiceAccount may not.
+func (s *Server) debugFor(ctx context.Context, ref api.ObjectRef, writable bool, note string) *api.ShellOffer {
+	if !isPodKind(ref.Kind) || ref.Namespace == "" || !s.mayDebug() {
+		return nil
+	}
+	if !writable {
+		reason := api.Because(api.CodeVerbDenied, note).Retry(false)
+		return &api.ShellOffer{Reason: &reason}
+	}
+	if !s.inCluster {
+		return &api.ShellOffer{Permitted: true}
+	}
+	verdicts := reviewBoth(ctx, s.gate, ref.Cluster, []access.Attributes{
+		debugAttributes(ref.Namespace, ref.Name), execAttributes(ref.Namespace, ref.Name),
+	})
+	return shellOffer(worse(verdicts[0], verdicts[1]))
+}
+
 // shellOffer is one exec verdict as the page is told it: withheld from a person
 // who may not; disabled with its sentence where unknown or where the console's
 // ServiceAccount may not; offered where both may.
@@ -235,9 +278,10 @@ func selfReason(attrs access.Attributes) string {
 }
 
 // chartGrant is the chart switch that grants a question: `rbac.exec` for a shell
-// or a forward, `rbac.write` for everything this console changes.
+// or a forward, and for the debug container a shell is opened in, `rbac.write`
+// for everything this console changes.
 func chartGrant(attrs access.Attributes) string {
-	if attrs.Subresource == "exec" || attrs.Subresource == "portforward" {
+	if attrs.Subresource == "exec" || attrs.Subresource == "portforward" || attrs.Subresource == "ephemeralcontainers" {
 		return "rbac.exec"
 	}
 	return "rbac.write"

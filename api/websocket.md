@@ -1,7 +1,7 @@
 # The socket surface — what OpenAPI cannot describe
 
 **OpenAPI 3.1 cannot describe a WebSocket.** There is no verb, no request body, no
-response object; an upgrade is a handshake followed by a conversation. Four
+response object; an upgrade is a handshake followed by a conversation. Five
 channels of this product's surface are exactly that, and one more is a stream.
 
 They are **not** omitted from `openapi.yaml`: they are listed there under
@@ -9,12 +9,13 @@ They are **not** omitted from `openapi.yaml`: they are listed there under
 of their contract, and it is written to the same standard — if it is thinner than
 the spec, that is a defect in this file and not a property of sockets.
 
-## The five, and why each is here
+## The six, and why each is here
 
 | Channel | Path | Why it cannot be an operation |
 |---|---|---|
 | **terminal** | `/api/c/{cluster}/ws/terminal` | a shell **on the machine running the console**, scoped to a cluster's context: bidirectional, long-lived, byte-oriented |
 | **exec** | `/api/c/{cluster}/ws/exec` | an interactive shell **inside a pod**, through the API server's `exec` subresource |
+| **debug** | `/api/c/{cluster}/ws/debug` | a shell in a **debug container** the console adds to a running pod, then exec-es into |
 | **nodeshell** | `/api/c/{cluster}/ws/nodeshell` | a shell on a node, after a plan has been agreed |
 | **assistant** | `/api/ws/assistant` | a long-lived control channel |
 | **logs** | `GET /api/logs` | a stream, and it **is** in the spec, as `text/event-stream` |
@@ -191,6 +192,46 @@ Notes on that vocabulary:
    make. A zero written there would be a client reading "it succeeded" off a
    number nobody measured. `code` stays optional in the grammar.
 
+### debug
+
+**A write, then an exec.** The upgrade carries `namespace`, `pod`, `image` and
+optionally `target` (the container whose processes the debug container joins).
+In order:
+
+1. A cluster in `KT_READONLY_CLUSTERS` is refused with 403 before the upgrade,
+   and the refusal is recorded (decision `read_only`, outcome `refused`): an
+   ephemeral container cannot be removed once added. Nothing reaches the cluster.
+2. The names are Kubernetes names and the image a plausible reference, or 400.
+3. After the upgrade, two reviews for the person: `patch pods/ephemeralcontainers`
+   and `create pods/exec` on that pod. Either refused is a `state` frame with
+   `verb_denied`, and its audit record; nothing is added.
+4. The pod is read: one that is not there is `absent` / `no_such_object`, as is a
+   `target` the pod does not declare.
+5. A strategic-merge PATCH on the pod's `ephemeralcontainers` subresource adds
+   `kt-debug-` and five random characters, running the image's `sh` on stdin and
+   a terminal so it stays up, with `targetContainerName` when a target was given.
+   It is audited with the image, the target and the container's name.
+6. The server waits for it to run, at most two minutes, narrating the kubelet's
+   reasons in the output. An image that cannot be pulled, or a container that
+   ended, is `unreadable` / `container_not_started` at once; the bound is
+   `timeout`.
+7. A shell is exec-ed into that container, exactly as on `exec` (`create
+   pods/exec`, the same frames, the same `exit`). `pods/attach` is never asked.
+
+The PATCH's refusals keep their cause apart, because each has a different owner:
+
+| Code | The API server said |
+|---|---|
+| `verb_denied` | 403, RBAC |
+| `pod_security` | 403 carrying "violates PodSecurity": the namespace's level forbids it |
+| `admission_denied` | an admission webhook "denied the request" |
+| `not_supported_here` | 404 or 405 on the subresource: the cluster serves no ephemeral containers |
+| `unclassified` | anything else, its sentence in `message` |
+
+On `exec` and `debug` alike, **a shell program the container runtime did not
+find in the image** is `unreadable` / `no_shell`, not `unclassified`: the remedy
+is a container that has one, which is what `debug` adds.
+
 ### nodeshell
 
 **This channel is the act half of a confirm-then-act pair whose preview is an
@@ -261,7 +302,7 @@ which the workspaces exist to prevent. Where two workspaces hold a transcript
 under one id, the one written last is resumed. Whoever opens the CLI's transcripts for a
 session that is not this console's is outside this contract.
 
-## What is common to all four
+## What is common to all of them
 
 - **The capability flag is the front end's hint; the refusal is the contract.**
   Every channel checks its own condition on the upgrade. A profile that disables a

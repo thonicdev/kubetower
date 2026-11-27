@@ -363,9 +363,11 @@ func TestTheFramedVocabularyIsTheContractsOwn(t *testing.T) {
 		schema  string
 		spelled []string
 	}{
-		{"State", []string{stateForbidden, stateUnreadable, stateUnreachable}},
+		{"State", []string{stateForbidden, stateUnreadable, stateUnreachable, stateAbsent}},
 		{"ReasonCode", []string{
 			codeVerbDenied, codeNotSupportedHere, codeNotInstalled, codeUnclassified,
+			codeNoSuchObject, codeContainerNotStarted, codeTimeout,
+			codeNoShell, codePodSecurity, codeAdmissionDenied,
 		}},
 	} {
 		declared := doc.Components.Schemas[subject.schema].Enum

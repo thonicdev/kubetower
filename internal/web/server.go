@@ -337,8 +337,8 @@ type Terminals interface {
 	// exec-ed into, and deleted when the socket closes.
 	NodeShellHandler() http.Handler
 
-	// The same four sessions over api/websocket.md's frame vocabulary, for the
-	// SPA. **This package mounts all four**, through internal/api's router, so
+	// The sessions over api/websocket.md's frame vocabulary, for the SPA.
+	// **This package mounts all of them**, through internal/api's router, so
 	// listing them here is a true claim about who owns the route.
 	//
 	// The node shell's is the odd one and deliberately so. It takes the node as
@@ -348,6 +348,9 @@ type Terminals interface {
 	// because the query string is not read.
 	FramedShellHandler() http.Handler
 	FramedExecHandler() http.Handler
+	// FramedDebugHandler is a shell in a debug container added to the pod. It
+	// has no raw twin: nothing but the SPA opens it.
+	FramedDebugHandler() http.Handler
 	FramedAssistantHandler() http.Handler
 	FramedNodeShell(w http.ResponseWriter, r *http.Request, node string)
 

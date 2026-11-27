@@ -6,7 +6,7 @@ import (
 	"github.com/thonicdev/kubetower/internal/api"
 )
 
-// apiChannels registers the four socket channels advertised in
+// apiChannels registers the socket channels advertised in
 // `api/openapi.yaml` (`x-channels`) onto `internal/terminal`, which owns the
 // sessions. Offers is asked once, when the router is built, and reads the same
 // facts `apiProfile.Capabilities` reports, so a capability and its route cannot
@@ -43,6 +43,12 @@ func (c apiChannels) Offers(id api.ChannelID) bool {
 		// The kubelet allocates the pseudo-terminal in the pod, so not behind
 		// PTYSupported. The read-only fence is per cluster and stays in the handler.
 		return true
+	case api.ChannelDebug:
+		// Exactly where exec is: its shell is an exec, into a container the API
+		// server adds, bounded by the ServiceAccount's `pods/ephemeralcontainers`
+		// and `pods/exec` under the server profile. The read-only fence stays in
+		// the handler, as for exec.
+		return true
 	case api.ChannelNodeShell:
 		return true
 	case api.ChannelAssistant:
@@ -58,6 +64,10 @@ func (c apiChannels) ServeTerminal(w http.ResponseWriter, r *http.Request, clust
 
 func (c apiChannels) ServeExec(w http.ResponseWriter, r *http.Request, cluster string) {
 	c.withCluster(c.s.claude.FramedExecHandler(), w, r, cluster)
+}
+
+func (c apiChannels) ServeDebug(w http.ResponseWriter, r *http.Request, cluster string) {
+	c.withCluster(c.s.claude.FramedDebugHandler(), w, r, cluster)
 }
 
 // ServeNodeShell takes the node from the caller, which has taken it from the

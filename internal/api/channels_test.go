@@ -20,7 +20,7 @@ type fakeChannels struct {
 
 func allChannels() *fakeChannels {
 	return &fakeChannels{offers: map[ChannelID]bool{
-		ChannelTerminal: true, ChannelExec: true,
+		ChannelTerminal: true, ChannelExec: true, ChannelDebug: true,
 		ChannelNodeShell: true, ChannelAssistant: true,
 	}}
 }
@@ -41,6 +41,11 @@ func (f *fakeChannels) ServeTerminal(w http.ResponseWriter, _ *http.Request, clu
 
 func (f *fakeChannels) ServeExec(w http.ResponseWriter, _ *http.Request, cluster string) {
 	f.record("exec", cluster)
+	w.WriteHeader(http.StatusSwitchingProtocols)
+}
+
+func (f *fakeChannels) ServeDebug(w http.ResponseWriter, _ *http.Request, cluster string) {
+	f.record("debug", cluster)
 	w.WriteHeader(http.StatusSwitchingProtocols)
 }
 
@@ -74,12 +79,12 @@ func routerWithClusters(channels Channels, clusters Clusters) *http.ServeMux {
 	return mux
 }
 
-// The four addresses `x-channels` advertises are served, and they are served
+// The addresses `x-channels` advertises are served, and they are served
 // **without a method**.
 //
 // Every address answers; none answers a JSON 404. That includes the one the
-// node-shell preview mints a real, single-use, short-lived plan token for. The
-// four are listed in `api/openapi.yaml` under `x-channels`, with their protocol
+// node-shell preview mints a real, single-use, short-lived plan token for. They
+// are listed in `api/openapi.yaml` under `x-channels`, with their protocol
 // in `api/websocket.md`.
 //
 // The expectation is read out of the contract at run time rather than listed

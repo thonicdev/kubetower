@@ -77,7 +77,7 @@ info:
 
     ## WebSocket is outside this document, and is not omitted
 
-    OpenAPI 3.1 cannot describe a socket. **Four channels of this product's surface
+    OpenAPI 3.1 cannot describe a socket. **Five channels of this product's surface
     are WebSocket upgrades and are specified in `api/websocket.md`**, with the same
     rigour as the operations here. They are listed under `x-channels` at the root of
     this document so a reader and a generator both see that they exist:
@@ -85,6 +85,7 @@ info:
     - `/api/c/{cluster}/ws/terminal` — a shell on the machine running the console,
       scoped to a cluster's context
     - `/api/c/{cluster}/ws/exec` — an interactive shell inside a pod
+    - `/api/c/{cluster}/ws/debug` — a shell in a debug container added to a pod
     - `/api/c/{cluster}/ws/nodeshell` — a shell on a node, after the plan below
     - `/api/ws/assistant` — the assistant channel
 
@@ -122,6 +123,10 @@ x-channels:
     spec: ./websocket.md
   - id: exec
     path: /api/c/{cluster}/ws/exec
+    kind: websocket
+    spec: ./websocket.md
+  - id: debug
+    path: /api/c/{cluster}/ws/debug
     kind: websocket
     spec: ./websocket.md
   - id: nodeshell
@@ -3276,6 +3281,18 @@ components:
         - name_not_resolved        # the address does not resolve from where this process runs.
         - connection_refused       # something answered the address and said no.
         - unclassified             # none of the known shapes. The error is carried in `detail`.
+        # A pod shell (`exec`, `debug`) whose program the container runtime did
+        # not find in the image: a distroless or scratch image. Not
+        # `unclassified`: the remedy is a container that has a shell - a debug
+        # container - and a retry gives the same answer.
+        - no_shell
+        # A debug container the API server refused because it violates the
+        # namespace's Pod Security level (its 403 says "violates PodSecurity").
+        # Not `verb_denied`: no RoleBinding changes it, the namespace's label does.
+        - pod_security
+        # A debug container an admission webhook denied: a policy engine's
+        # decision, whose owner is neither the person nor their RBAC.
+        - admission_denied
         # On `GET /api/health`'s AWS SSO check, with `state: empty`: this machine
         # holds no SSO session. Not `not_installed` - a
         # session is not something one installs - and not a failure: nothing was
@@ -5970,6 +5987,22 @@ components:
             **An init container that will not start is the reason the pod is stuck,
             and it looks identical to a crashing app container if nothing
             distinguishes them.** Init containers come first, in the order they run.
+        ephemeral:
+          type: boolean
+          description: >-
+            A container added to the running pod afterwards through its
+            `ephemeralcontainers` subresource - a debug container, the console's
+            or `kubectl debug`'s - listed after the app containers, in the order
+            they were added. Not part of the workload: never restarted, never
+            counted for readiness, and kept in the pod's spec until the pod goes.
+            Absent on every other container. Its `status` is the kubelet's
+            `ephemeralContainerStatuses` entry.
+        target:
+          type: string
+          description: >-
+            An ephemeral container's `targetContainerName`: the container whose
+            process namespace it joined, so `ps` in it shows that container's
+            processes. Absent when none was named, and on every other container.
         pullPolicy:
           type: string
           description: >-
@@ -6474,6 +6507,26 @@ components:
             and the console's ServiceAccount may not (the sentence names the
             grant that is missing). The socket reviews the person again when it
             opens; this is what the page draws.
+          properties:
+            permitted: { type: boolean }
+            reason: { $ref: '#/components/schemas/Reason' }
+        debug:
+          type: object
+          required: [permitted]
+          description: >-
+            Whether this pod's page offers Debug, a shell in a debug container
+            the console adds to the pod (`ws/debug`). Present on a pod's page
+            **on both profiles** wherever that channel is served, and absent on
+            every other kind. On a cluster marked read-only it is
+            `permitted: false` with `verb_denied` and the marking's sentence,
+            asked of nobody: adding a container is a change, which `shell` is
+            not (Shell is refused there only on its socket). On the desktop it
+            is otherwise offered, as `podExec` offers Shell. Under `shared` it is
+            asked like `shell`, on both questions the socket asks - `patch
+            pods/ephemeralcontainers` and `create pods/exec` on this pod - and
+            the worse answer decides: **absent where the person may not** do
+            either, `permitted: false` with the reason where the console could
+            not ask or its ServiceAccount may not.
           properties:
             permitted: { type: boolean }
             reason: { $ref: '#/components/schemas/Reason' }

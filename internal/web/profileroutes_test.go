@@ -43,6 +43,11 @@ func TestTheServerProfileOffersNoLocalShell(t *testing.T) {
 			"pseudo-terminal on this machine; what bounds it is the ServiceAccount's " +
 			"pods/exec, which a deployment grants or withholds on purpose.")
 	}
+	// Debug goes with exec: its shell is one, into a container the API server
+	// adds, bounded by the ServiceAccount's pods/ephemeralcontainers.
+	if !channels.Offers(api.ChannelDebug) {
+		t.Error("the server profile does not offer debug, which goes wherever exec does")
+	}
 }
 
 // TestTheDesktopStillOffersEverything is the half that protects the person who
@@ -52,7 +57,7 @@ func TestTheDesktopStillOffersEverything(t *testing.T) {
 	channels := apiChannels{serverFor(t, false)}
 
 	for _, id := range []api.ChannelID{
-		api.ChannelTerminal, api.ChannelExec, api.ChannelNodeShell, api.ChannelAssistant,
+		api.ChannelTerminal, api.ChannelExec, api.ChannelDebug, api.ChannelNodeShell, api.ChannelAssistant,
 	} {
 		if !channels.Offers(id) {
 			t.Errorf("the desktop stopped offering %v", id)

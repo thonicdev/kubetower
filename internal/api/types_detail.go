@@ -227,6 +227,12 @@ type PodContainer struct {
 	// Init is always written, including when false: a stuck init container must
 	// not read as a crashing app container.
 	Init bool `json:"init"`
+	// Ephemeral marks a container added to the running pod through its
+	// `ephemeralcontainers` subresource (a debug container), listed after the
+	// app containers. Target is the container whose processes it joined, when
+	// one was named.
+	Ephemeral bool   `json:"ephemeral,omitempty"`
+	Target    string `json:"target,omitempty"`
 	// PullPolicy is carried only where it is not the default for the tag.
 	PullPolicy string `json:"pullPolicy,omitempty"`
 	// Command and Args are the spec's `command` and `args`, one element per
@@ -606,4 +612,11 @@ type DetailPage struct {
 	Actions       []DetailAction `json:"actions,omitempty"`
 	// Shell is whether this pod's page draws Shell, under the server profile.
 	Shell *ShellOffer `json:"shell,omitempty"`
+	// Debug is whether this pod's page offers Debug, a shell in an ephemeral
+	// container added to the pod: present on a pod's page on both profiles
+	// wherever the debug channel is served, with its reason on a read-only
+	// cluster. Under the server profile it is reviewed like Shell, on both
+	// questions the socket asks (`patch pods/ephemeralcontainers` and `create
+	// pods/exec`); a person refused either gets no offer at all.
+	Debug *ShellOffer `json:"debug,omitempty"`
 }

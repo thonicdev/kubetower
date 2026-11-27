@@ -1876,7 +1876,7 @@ export interface components {
          * @description Stable and branchable. `Reason.message` is display text and may be reworded in any release; a client that branches on the message is branching on prose.
          * @enum {string}
          */
-        ReasonCode: "empty_scope" | "read_denied" | "undecodable" | "not_installed" | "no_such_kind" | "no_such_object" | "cluster_unreachable" | "timeout" | "verb_denied" | "not_supported_here" | "not_probed_yet" | "stale_reading" | "truncated" | "container_not_started" | "access_unreviewable" | "rbac_not_in_profile" | "credentials_expired" | "credentials_refused" | "name_not_resolved" | "connection_refused" | "unclassified" | "no_session";
+        ReasonCode: "empty_scope" | "read_denied" | "undecodable" | "not_installed" | "no_such_kind" | "no_such_object" | "cluster_unreachable" | "timeout" | "verb_denied" | "not_supported_here" | "not_probed_yet" | "stale_reading" | "truncated" | "container_not_started" | "access_unreviewable" | "rbac_not_in_profile" | "credentials_expired" | "credentials_refused" | "name_not_resolved" | "connection_refused" | "unclassified" | "no_shell" | "pod_security" | "admission_denied" | "no_session";
         /** @description What was asked. Without it, "unreachable" does not say unreachable for what. */
         Scope: {
             cluster?: string;
@@ -3246,6 +3246,10 @@ export interface components {
             image: string;
             /** @description **An init container that will not start is the reason the pod is stuck, and it looks identical to a crashing app container if nothing distinguishes them.** Init containers come first, in the order they run. */
             init: boolean;
+            /** @description A container added to the running pod afterwards through its `ephemeralcontainers` subresource - a debug container, the console's or `kubectl debug`'s - listed after the app containers, in the order they were added. Not part of the workload: never restarted, never counted for readiness, and kept in the pod's spec until the pod goes. Absent on every other container. Its `status` is the kubelet's `ephemeralContainerStatuses` entry. */
+            ephemeral?: boolean;
+            /** @description An ephemeral container's `targetContainerName`: the container whose process namespace it joined, so `ps` in it shows that container's processes. Absent when none was named, and on every other container. */
+            target?: string;
             /** @description Carried **only where it is not the default for the tag**, because the interesting case is the one that surprises: `Always` on a pinned tag costs a registry round trip per start, and `IfNotPresent` on `:latest` means the node keeps whatever it happened to pull first. */
             pullPolicy?: string;
             /** @description The spec's `command`, **one element per argument, exactly as written** - never joined, split or re-quoted, because `sh -c "a b"` is two elements and a script, and a joined string makes the boundary between arguments a guess. Absent when the spec sets none (an empty list is the same thing to the kubelet): the image's own ENTRYPOINT runs, which only the registry knows. */
@@ -3439,6 +3443,11 @@ export interface components {
             }[];
             /** @description Whether this pod's page draws Shell, **under `shared` only**: asked as `create pods/exec` on this pod, by name, for the signed-in person - the question the exec socket is reviewed with - and, where the person was not refused, for the console's own ServiceAccount, each held a minute. Absent on the desktop, where `podExec` alone decides, on every kind but a pod, and **where the person may not open a shell here**: absent there is withheld, as a verb the person may not perform is absent from `actions`. `permitted: false` always carries the reason: the console could not ask, or the person may and the console's ServiceAccount may not (the sentence names the grant that is missing). The socket reviews the person again when it opens; this is what the page draws. */
             shell?: {
+                permitted: boolean;
+                reason?: components["schemas"]["Reason"];
+            };
+            /** @description Whether this pod's page offers Debug, a shell in a debug container the console adds to the pod (`ws/debug`). Present on a pod's page **on both profiles** wherever that channel is served, and absent on every other kind. On a cluster marked read-only it is `permitted: false` with `verb_denied` and the marking's sentence, asked of nobody: adding a container is a change, which `shell` is not (Shell is refused there only on its socket). On the desktop it is otherwise offered, as `podExec` offers Shell. Under `shared` it is asked like `shell`, on both questions the socket asks - `patch pods/ephemeralcontainers` and `create pods/exec` on this pod - and the worse answer decides: **absent where the person may not** do either, `permitted: false` with the reason where the console could not ask or its ServiceAccount may not. */
+            debug?: {
                 permitted: boolean;
                 reason?: components["schemas"]["Reason"];
             };

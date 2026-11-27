@@ -117,6 +117,14 @@ type Record struct {
 	// console's own shells included: what a person types in a shell is theirs,
 	// and never recorded.
 	Command string `json:"command,omitempty"`
+	// Image, Target and Container are a debug container's, on the records of a
+	// debug session (the `patch pods/ephemeralcontainers` that adds it and the
+	// shell exec-ed into it): the image it runs, the container whose processes
+	// it joins (empty when none was named), and the name it was given, once it
+	// has one. Name is the pod's. Empty on every other act.
+	Image     string `json:"image,omitempty"`
+	Target    string `json:"target,omitempty"`
+	Container string `json:"container,omitempty"`
 	// DryRun marks a request sent with `dryRun=All`. Recorded, because it is
 	// still a request made with the ServiceAccount's rights for a person, and
 	// without the flag `applied` would claim a change that did not happen.

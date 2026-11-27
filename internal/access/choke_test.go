@@ -184,6 +184,12 @@ var notAPersonsRead = map[string]string{
 	// and on the desktop only - the node shell is not registered under the
 	// server profile.
 	"internal/terminal/nodeshell.go Terminal.startNodeShell": "the node a node-shell write is built on, desktop only",
+	// The pod a debug container is added to, read to tell a missing pod and a
+	// target it does not declare from a cluster with no such subresource, and
+	// read again while the container starts. Part of that write, read only after
+	// the person was reviewed for it (`patch pods/ephemeralcontainers`) and for
+	// the shell (`create pods/exec`); it answers the session, never a page.
+	"internal/terminal/debug.go Terminal.startDebug": "the pod a debug-container write is built on, read only after the person is reviewed for the write",
 	// The desktop's port-forward manager asking whether the pod behind one of
 	// its own tunnels still exists, on a timer, to tear the tunnel down. It
 	// answers a yes or no to the console and shows a person nothing; the

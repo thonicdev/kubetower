@@ -19,6 +19,15 @@ type Container struct {
 	// Init marks an init container: a stuck one is why the pod is stuck, and
 	// looks like a crashing app container otherwise.
 	Init bool
+	// Ephemeral marks a container added to the running pod afterwards, through
+	// its `ephemeralcontainers` subresource (`kubectl debug`, the console's
+	// Debug): not part of the workload, never restarted, and gone with the pod.
+	// Without the flag it reads as an app container the owner declared.
+	Ephemeral bool
+	// Target is an ephemeral container's `targetContainerName`: the container
+	// whose process namespace it joined, so `ps` in it shows that container's
+	// processes. Empty when none was named, and on every other container.
+	Target string
 	// PullPolicy is carried only when it is not the default for the tag: `Always`
 	// on a pinned tag costs a registry round trip per start, `IfNotPresent` on
 	// `:latest` keeps whatever the node pulled first.
@@ -172,9 +181,9 @@ type Whole struct {
 	Absence Absence
 }
 
-// containersOf reads the containers out of a pod, init containers first.
 // containersOf reads the containers out of a pod, init containers first, in the
-// order they run. Unstructured, like every kind this package reads through the
+// order they run, then the ephemeral containers added to it since, in the order
+// they were added. Unstructured, like every kind this package reads through the
 // dynamic client.
 func containersOf(raw *unstructured.Unstructured, kind string) []Container {
 	if !strings.EqualFold(kind, "Pod") {
@@ -182,12 +191,18 @@ func containersOf(raw *unstructured.Unstructured, kind string) []Container {
 	}
 
 	reported := statusesOf(raw)
+	// Apart from the two lists above: health.go counts those for readiness and
+	// restarts, and an ephemeral container is in neither count. Its name is
+	// unique across all three lists (the API server refuses a clash), so the
+	// lookup cannot pick another container's status.
+	debugging := statusesIn(raw, "ephemeralContainerStatuses")
 
 	var out []Container
 	for _, path := range []struct {
-		field string
-		init  bool
-	}{{"initContainers", true}, {"containers", false}} {
+		field     string
+		init      bool
+		ephemeral bool
+	}{{"initContainers", true, false}, {"containers", false, false}, {"ephemeralContainers", false, true}} {
 		items, found, err := unstructured.NestedSlice(raw.Object, "spec", path.field)
 		if err != nil || !found {
 			continue
@@ -199,6 +214,13 @@ func containersOf(raw *unstructured.Unstructured, kind string) []Container {
 			}
 			c := containerOf(spec, path.init)
 			if c.Name == "" {
+				continue
+			}
+			if path.ephemeral {
+				c.Ephemeral = true
+				c.Target, _, _ = unstructured.NestedString(spec, "targetContainerName")
+				c.Status = statusOf(debugging[c.Name])
+				out = append(out, c)
 				continue
 			}
 			// Both status lists are indexed by name whichever spec list the container
