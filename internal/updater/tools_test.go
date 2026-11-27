@@ -39,6 +39,9 @@ func TestTheSystemToolsAreLookedForInTheSystemsFolders(t *testing.T) {
 	}{
 		{"windows", "powershell.exe", `D:\Win`, []string{`D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe`}},
 		{"windows", "explorer.exe", "", []string{`C:\Windows\explorer.exe`}},
+		{"windows", "explorer.exe", `Windows`, []string{`C:\Windows\explorer.exe`}},
+		{"windows", "explorer.exe", `.\w`, []string{`C:\Windows\explorer.exe`}},
+		{"windows", "explorer.exe", `\\srv\win`, []string{`\\srv\win\explorer.exe`}},
 		{"linux", "xdg-open", "", []string{"/usr/bin/xdg-open", "/bin/xdg-open", "/usr/sbin/xdg-open", "/sbin/xdg-open"}},
 		{"darwin", "open", "", []string{"/usr/bin/open", "/bin/open", "/usr/sbin/open", "/sbin/open"}},
 	} {

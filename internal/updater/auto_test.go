@@ -570,3 +570,32 @@ func waitSaved(t *testing.T, dir, want string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A release kept as manual from an earlier start does not hold back a newer
+// one: the automatic update downloads it as from Idle (#178), and the older
+// release is no longer said.
+func TestANewerReleasePassesTheOneKeptAsManual(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	notWritable := func(o *Options) { o.Writable = func() bool { return false } }
+	u := f.updater(dir, &recorder{}, notWritable)
+	if _, err := u.Download(); err != nil {
+		t.Fatal(err)
+	}
+	if s := settle(t, u); s.Phase != Manual || s.Version != "0.1.3" {
+		t.Fatalf("first start: %+v", s)
+	}
+	waitSaved(t, dir, `"manualVersion":"0.1.3"`)
+
+	next := f.updater(dir, &recorder{}, notWritable)
+	if s := next.Status(); s.Phase != Manual || s.Version != "0.1.3" {
+		t.Fatalf("next start: %+v", s)
+	}
+	f.mu.Lock()
+	f.tag, f.asset = "v0.1.9", "kubetower_0.1.9_linux_amd64.tar.gz"
+	f.mu.Unlock()
+	next.autoStep(context.Background(), func() string { return "0.1.9" }, nothingOpen)
+	if s := settle(t, next); s.Version != "0.1.9" {
+		t.Fatalf("0.1.9 published while 0.1.3 is kept as manual: %+v", s)
+	}
+}

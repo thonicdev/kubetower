@@ -89,8 +89,8 @@ dialog draws it first, as a New extra line.
   pkexec and the package tools from the system's own folders. The Windows
   zip's swap retries the move while the old executable is still held. Not
   writable has Retry, and is kept across a restart rather than downloaded
-  again at every start; a failure that only a restart clears offers no
-  Retry (#178).
+  again at every start, until a newer release comes; a failure that only a
+  restart clears offers no Retry (#178).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

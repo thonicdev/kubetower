@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // systemTool is the absolute path of a system program the updater starts
@@ -14,7 +15,7 @@ import (
 // session, some as root through pkexec, and a PATH entry the person or a
 // shell profile put first would choose what runs.
 func systemTool(name string) (string, error) {
-	for _, candidate := range toolCandidates(runtime.GOOS, name, os.Getenv("SystemRoot")) {
+	for _, candidate := range toolCandidates(runtime.GOOS, name, systemRoot()) {
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate, nil
 		}
@@ -23,11 +24,11 @@ func systemTool(name string) (string, error) {
 }
 
 // toolCandidates are the places name may be on goos, in order. On Windows
-// they are under systemRoot (`%SystemRoot%`, `C:\Windows` when it is unset);
-// elsewhere they are the system's bin folders.
+// they are under systemRoot, the Windows folder (`C:\Windows` when it is
+// unknown or not absolute); elsewhere they are the system's bin folders.
 func toolCandidates(goos, name, systemRoot string) []string {
 	if goos == "windows" {
-		if systemRoot == "" {
+		if !windowsAbs(systemRoot) {
 			systemRoot = `C:\Windows`
 		}
 		switch name {
@@ -43,4 +44,14 @@ func toolCandidates(goos, name, systemRoot string) []string {
 		out = append(out, filepath.Join(dir, name))
 	}
 	return out
+}
+
+// windowsAbs says whether p is an absolute Windows path, `C:\…` or `\\host\…`,
+// whatever the OS reading it.
+func windowsAbs(p string) bool {
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
+		c := p[0] | 0x20
+		return c >= 'a' && c <= 'z'
+	}
+	return strings.HasPrefix(p, `\\`)
 }
