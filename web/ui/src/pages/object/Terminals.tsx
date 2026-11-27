@@ -756,7 +756,9 @@ export function execChoices(containers: readonly PodContainer[] | undefined): {
   choices: PodContainer[];
   notRunning: string | undefined;
 } {
-  const declared = (containers ?? []).filter((one) => one.init !== true);
+  // Never a debug container: it is the console's own, and on a pod whose app
+  // container is down it would hide the note and stand as the only choice.
+  const declared = (containers ?? []).filter((one) => one.init !== true && one.ephemeral !== true);
   const choices = declared.some(isRunning) ? declared.filter((one) => !isStopped(one)) : declared;
   const notRunning =
     declared.length > 0 && declared.every(isStopped) ? notRunningNote(declared) : undefined;

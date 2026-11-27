@@ -79,7 +79,12 @@ function mount(): void {
 const POD = '/api/c/prod/r/pods/pay/api-0';
 const running = { state: 'running', ready: true, restarts: 0 };
 
-function routes(debug: unknown): StubRoutes {
+const APP = [
+  { name: 'web', image: 'shop/web:1', init: false, status: running },
+  { name: 'envoy', image: 'envoyproxy/envoy:v1.31.2', init: false, status: running },
+];
+
+function routes(debug: unknown, containers: unknown[] = APP): StubRoutes {
   return {
     '/api/capabilities': {
       body: {
@@ -102,10 +107,7 @@ function routes(debug: unknown): StubRoutes {
           title: 'Pod',
           tabs: [],
           sections: [],
-          containers: [
-            { name: 'web', image: 'shop/web:1', init: false, status: running },
-            { name: 'envoy', image: 'envoyproxy/envoy:v1.31.2', init: false, status: running },
-          ],
+          containers,
           ...(debug === undefined ? {} : { debug }),
         },
       },
@@ -260,6 +262,29 @@ describe('a pod shell that found no shell', () => {
     const url = new URL((await socket(1)).url);
     expect(url.pathname).toBe('/api/c/prod/ws/debug');
     expect(url.searchParams.get('target')).toBe('web');
+  });
+
+  it.each([
+    ['the container it joined', 'envoy', ['busybox', 'envoy']],
+    ['the first app container where it joined none', undefined, ['busybox', 'web']],
+  ])('from a debug container\'s own shell, preselects %s, never the debug container', async (_, joined, want) => {
+    const debugContainer = {
+      name: 'kt-debug-abcde', image: 'gcr.io/distroless/static-debian12:nonroot', init: false, ephemeral: true, status: running,
+      ...(joined === undefined ? {} : { target: joined }),
+    };
+    stubFetch(routes({ permitted: true }, [...APP, debugContainer]));
+    mount();
+    act(() => {
+      probe.api?.openShell({
+        kind: 'exec', cluster: 'prod', label: 'api-0/kt-debug-abcde', namespace: 'pay', name: 'api-0',
+        container: 'kt-debug-abcde', image: debugContainer.image,
+      });
+    });
+    refuse(await socket(0), 'no_shell', 'executable file not found in $PATH');
+    fireEvent.click(await screen.findByRole('button', { name: 'Debug' }));
+    const pressed = [...document.querySelectorAll('[data-debug-form] button[aria-pressed="true"]')].map((one) => one.textContent);
+    expect(pressed).toEqual(want);
+    expect(document.querySelector('[data-debug-form]')?.textContent).not.toContain('kt-debug-abcde');
   });
 
   it('grays Debug with the reason where the page refuses it', async () => {

@@ -771,6 +771,7 @@ const DEFINED: ReadonlySet<string> = new Set([
   'info',
   'plus',
   'check',
+  'debug',
 ])
 
 export function Icon({ name, className = '' }: { name: IconName; className?: string }): ReactNode {

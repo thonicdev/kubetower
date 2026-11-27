@@ -31,8 +31,12 @@ export function PaneDebug({ tab }: { tab: Tab }): ReactNode {
   const { namespace, name: pod } = tab;
   if (!at.drawn || namespace === undefined || pod === undefined) return null;
   // The pod's running containers, and the one this shell was asked for even
-  // where the page has not said it runs: it is the one the person meant.
-  const targets = [...new Set([...(tab.container === undefined ? [] : [tab.container]), ...debugTargets(page?.containers).map((one) => one.name)])];
+  // where the page has not said it runs: it is the one the person meant. A
+  // debug container's own shell names the container it joined instead, or
+  // none: Kubernetes refuses an ephemeral container as a target.
+  const mine = page?.containers?.find((one) => one.name === tab.container);
+  const asked = mine?.ephemeral === true ? mine.target : tab.container;
+  const targets = [...new Set([...(asked === undefined || asked === '' ? [] : [asked]), ...debugTargets(page?.containers).map((one) => one.name)])];
 
   return (
     <div className="flex min-w-0 flex-col items-start gap-1">
@@ -60,7 +64,7 @@ export function PaneDebug({ tab }: { tab: Tab }): ReactNode {
         >
           <DebugForm
             targets={targets}
-            initialTarget={tab.container}
+            initialTarget={asked}
             onStart={(choice) => {
               setOpen(false);
               openShell(debugRequest({ cluster: tab.cluster, namespace, pod }, choice));

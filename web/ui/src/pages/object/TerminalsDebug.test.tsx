@@ -175,6 +175,18 @@ describe('the Debug control beside Shell', () => {
     expect(debugButton()).toBeNull();
   });
 
+  it('leaves debug containers out of the Shell picker, so a crashing app container still says so', async () => {
+    const crashing = { ...NGINX, status: { state: 'waiting', ready: false, restarts: 4, reason: 'CrashLoopBackOff' } };
+    const debugContainer = { name: 'kt-debug-abcde', image: 'busybox:1.36', init: false, ephemeral: true, target: 'web', status: running };
+    stub(podPage([crashing, ENVOY, debugContainer]));
+    mountApp('/c/prod/pods/pay/api-0');
+    await ready();
+    fireEvent.click(shellMenu());
+    const listed = [...document.querySelectorAll('ul[aria-label="Container"] li')].map((one) => one.textContent ?? '');
+    expect(listed.some((one) => one.includes('envoy'))).toBe(true);
+    expect(listed.some((one) => one.includes('kt-debug-abcde'))).toBe(false);
+  });
+
   it('is drawn once a Shell on that container found no shell', async () => {
     rememberNoShell({ cluster: 'prod', namespace: 'pay', pod: 'api-0', container: 'web', image: NGINX.image });
     stub(podPage([NGINX]));
