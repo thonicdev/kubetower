@@ -55,6 +55,10 @@ var relaunchHelper struct {
 	pid int
 }
 
+// killGroup is syscall.Kill, held so a test can refuse it without killing a
+// process it does not own.
+var killGroup = syscall.Kill
+
 // stopRelaunch kills the waiting shell's process group (Setsid made it its
 // own), its sleep included. A group already gone is not an error.
 func stopRelaunch() error {
@@ -63,7 +67,7 @@ func stopRelaunch() error {
 	if relaunchHelper.pid == 0 {
 		return nil
 	}
-	err := syscall.Kill(-relaunchHelper.pid, syscall.SIGKILL)
+	err := killGroup(-relaunchHelper.pid, syscall.SIGKILL)
 	relaunchHelper.pid = 0
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
