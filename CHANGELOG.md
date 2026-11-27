@@ -93,6 +93,10 @@ dialog draws it first, as a New extra line.
   read-only cluster runs nothing and records no refusal; a switch is
   reviewed once, an old `jvm` grant that could not be reviewed answers 503
   and grants nothing, and a refusal is drawn on one line (#157).
+- **Storage and What's new polish.** A cluster with no claim no longer
+  shows a "fill unread" badge, a claim that backs two volumes of a pod is
+  listed once, and a Fixed entry is never shown ahead of a new extra in
+  What's new (#182).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

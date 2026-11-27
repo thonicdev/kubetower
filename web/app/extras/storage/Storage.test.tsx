@@ -294,6 +294,25 @@ describe('the Overview tile', () => {
     expect(document.querySelector('[data-filter="full"]')?.getAttribute('data-count')).toBe('-1');
   });
 
+  it('draws no fill badge on a cluster with no claim at all (#182)', async () => {
+    const counts = {
+      ...STORAGE_BARE.counts,
+      claims: 0,
+      volumes: 0,
+      orphans: 0,
+      orphanClaims: 0,
+      orphanVolumes: 0,
+      orphanClasses: 0,
+      measured: 0,
+      shared: 0,
+      unread: 0,
+    };
+    stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts, claims: [] } } });
+    const tile = await storageTile('prod', new AbortController().signal);
+    expect(tile.title).toBe('0 claims');
+    expect(tile.badges).not.toContain('fill unread');
+  });
+
   it('carries no grade, never a green OK, when no kubelet was read and nothing is orphaned', async () => {
     const counts = { ...STORAGE_BARE.counts, orphans: 0, orphanClaims: 0, orphanVolumes: 0, orphanClasses: 0 };
     stub({ [ROUTE]: { body: { ...STORAGE_BARE, counts } } });

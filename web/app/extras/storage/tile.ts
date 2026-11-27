@@ -27,7 +27,8 @@ export async function storageTile(cluster: string, signal: AbortSignal): Promise
             : undefined;
   const badges = [`${String(c.orphans)} orphans`, `${String(c.volumes)} volumes`];
   if (c.unread > 0) badges.push(`${String(c.unread)} unread`);
-  else if (!known) badges.push('fill unread');
+  // No claim, nothing to measure: no badge (#182).
+  else if (!known && c.claims > 0) badges.push('fill unread');
   if (data.snapshots.state === 'read') badges.push(`${String(c.snapshotted)}/${String(c.claims)} snapshotted`);
   const tile: ExtensionShortcutTarget = {
     title: `${String(c.claims)} claims`,

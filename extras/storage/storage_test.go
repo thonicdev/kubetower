@@ -671,3 +671,15 @@ func TestANarrowedBackendReadIsSaid(t *testing.T) {
 		t.Errorf("complete %v, notes %q", a.Complete, a.Notes)
 	}
 }
+
+// A claim that backs two volumes of one pod is one row on the pod's tab, and
+// the pod one consumer of it (#182).
+func TestAClaimInTwoVolumesIsListedOnce(t *testing.T) {
+	at(t)
+	h := shop(t)
+	h.add("pods", pod(t, "shop", "twice-0", "node-a", "", "data-db-0", "data-db-0"))
+	got := decode[PodAnswer](t, serve(t, h, "/x/prod/storage/pod/shop/twice-0"))
+	if len(got.Claims) != 1 || got.Claims[0].Name != "data-db-0" {
+		t.Errorf("pod tab = %+v, want data-db-0 once", got.Claims)
+	}
+}

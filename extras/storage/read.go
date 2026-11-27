@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -458,7 +459,10 @@ func readPods(r *http.Request, h extension.Host, cluster, ns string, a *Answer, 
 		for _, v := range p.Spec.Volumes {
 			switch {
 			case v.PersistentVolumeClaim != nil:
-				info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+				// One claim may back two volumes of a pod: listed once (#182).
+				if !slices.Contains(info.claims, v.PersistentVolumeClaim.ClaimName) {
+					info.claims = append(info.claims, v.PersistentVolumeClaim.ClaimName)
+				}
 			case v.Ephemeral != nil:
 				if info.ephemeral == nil {
 					info.ephemeral = map[string]bool{}
