@@ -13,7 +13,9 @@ package metrics_test
 //
 // KT_VM_TARGETS lists the targets, comma-separated, as KT_PROMETHEUS_SERVICE
 // writes them (default: vm-operator's vmsingle and vmselect named "main" in
-// namespace "vm").
+// namespace "vm"). KT_VM_REFERENCE names the cluster's Prometheus the same
+// way, where discovery does not choose it: since #149 it chooses nothing when
+// Prometheus and VictoriaMetrics Services are in different namespaces.
 
 import (
 	"context"
@@ -89,11 +91,19 @@ func open(ctx context.Context, t *testing.T, name, targets string) setup {
 	if !ok {
 		t.Fatalf("%q is not in %s", name, kubeconfig)
 	}
-	reference := metrics.New(metrics.Options{Clusters: clusters, Access: accesstest.Allow(), Logf: t.Logf})
+	options := metrics.Options{Clusters: clusters, Access: accesstest.Allow(), Logf: t.Logf}
+	if address := os.Getenv("KT_VM_REFERENCE"); address != "" {
+		target, err := metrics.ParseTarget(address)
+		if err != nil {
+			t.Fatalf("KT_VM_REFERENCE: %v", err)
+		}
+		options.Configured, options.Prometheus = true, target
+	}
+	reference := metrics.New(options)
 	t.Cleanup(reference.Close)
 	found := reference.Discover(ctx, resolved, true)
 	if found.Kind != metrics.KindPrometheus || found.Engine != metrics.EnginePrometheus {
-		t.Fatalf("discovery found %q engine %q (%s); this test needs the cluster's Prometheus as the reference", found.Kind, found.Engine, found.Detail)
+		t.Fatalf("discovery found %q engine %q (%s); this test needs the cluster's Prometheus as the reference (KT_VM_REFERENCE names it)", found.Kind, found.Engine, found.Detail)
 	}
 	t.Logf("reference: %s", found.Detail)
 	return setup{Kubeconfig: kubeconfig, Clusters: clusters, Cluster: resolved, Reference: reference, Targets: targets,
@@ -350,17 +360,24 @@ func TestVictoriaMetricsIntegrationAnswersEveryQuery(t *testing.T) {
 	t.Logf("VictoriaMetrics alone would be %s, via %s", address, via)
 
 	// A typo in the path is not a VictoriaMetrics reached, though vmselect
-	// answers health at its root.
+	// answers health at its root: through the service proxy, and through the
+	// front that refuses it, where only a port-forward reaches the Service to
+	// be told the path is not there (#176).
 	for _, typo := range []string{"vm/vmselect-main:8481/select/O/prometheus", "vm/vmsingle-main:8428/typo"} {
 		target, err := metrics.ParseTarget(typo)
 		if err != nil {
 			t.Fatal(err)
 		}
-		wrong := metrics.New(metrics.Options{Clusters: s.Clusters, Access: accesstest.Allow(), Logf: t.Logf, Configured: true, Prometheus: target})
-		found := wrong.Discover(ctx, s.Cluster, true)
-		wrong.Close()
-		if found.Kind != metrics.KindUnreachable || !strings.Contains(found.Detail, "not under "+target.Path) {
-			t.Errorf("%s: kind %q (%s), want unreachable under its own path", typo, found.Kind, found.Detail)
+		for _, way := range []struct {
+			transport string
+			clusters  *cluster.Manager
+		}{{metrics.TransportProxy, s.Clusters}, {metrics.TransportForward, s.Front}} {
+			wrong := metrics.New(metrics.Options{Clusters: way.clusters, Access: accesstest.Allow(), Logf: t.Logf, Configured: true, Prometheus: target})
+			found := wrong.Discover(ctx, s.Cluster, true)
+			wrong.Close()
+			if found.Kind != metrics.KindUnreachable || !strings.Contains(found.Detail, "not under "+target.Path) {
+				t.Errorf("%s by %s: kind %q (%s), want unreachable under its own path", typo, way.transport, found.Kind, found.Detail)
+			}
 		}
 	}
 
