@@ -181,6 +181,34 @@ describe("an extra's settings window", () => {
     });
   });
 
+  it('keeps the focus on Save while it saves, and saves once', async () => {
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'PUT') {
+        sent.push(String(typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url));
+        return new Promise<Response>(() => undefined);
+      }
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    });
+    draw([delivery]);
+    fireEvent.click(edit('argocd'));
+    fireEvent.change(url(), { target: { value: 'https://b.example' } });
+    save().focus();
+    fireEvent.click(save());
+    await waitFor(() => {
+      expect(save().getAttribute('aria-disabled')).toBe('true');
+    });
+    expect(save().disabled).toBe(false);
+    expect(document.activeElement).toBe(save());
+    expect(url().disabled).toBe(false);
+    expect(url().readOnly).toBe(true);
+    const toggle = modal().querySelector<HTMLButtonElement>('[role="switch"]');
+    expect(toggle?.disabled).toBe(false);
+    expect(toggle?.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(save());
+    expect(sent).toHaveLength(1);
+  });
+
   it("keeps the window open with the console's refusal on a 400", async () => {
     stubWrites(400, '"x" is not an http(s) URL');
     draw([delivery]);

@@ -1,6 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { KeyboardStack } from '../keyboard/KeyboardStack';
+import { resetKeyboardStack } from '../keyboard/stack';
 import { NoMetrics } from './NoMetrics';
 
 const UNREACHED = 'service monitoring/prometheus:9090 found, but neither the API service proxy nor a port-forward reached it';
@@ -52,15 +54,24 @@ describe('NoMetrics', () => {
   });
 
   it('puts its reason within a keyboard\'s and a touch screen\'s reach, with no retry to press', () => {
-    render(<NoMetrics state="forbidden" reason={{ code: 'verb_denied', message: 'You may not get pods in shop' }} />);
+    // In the app's keyboard stack, as every view is: Escape is claimed there.
+    resetKeyboardStack();
+    render(
+      <KeyboardStack>
+        <NoMetrics state="forbidden" reason={{ code: 'verb_denied', message: 'You may not get pods in shop' }} />
+      </KeyboardStack>,
+    );
     const why = screen.getByRole('button', { name: 'Why no metrics' });
     expect(document.querySelector('[data-detail-tip-text]')).toBeNull();
     why.focus();
     fireEvent.click(why);
     expect(why.getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById(why.getAttribute('aria-controls') ?? '')?.textContent).toBe('You may not get pods in shop');
-    fireEvent.keyDown(why, { key: 'Escape' });
+    act(() => {
+      fireEvent.keyDown(why, { key: 'Escape' });
+    });
     expect(document.querySelector('[data-detail-tip-text]')).toBeNull();
     expect(document.activeElement).toBe(why);
+    resetKeyboardStack();
   });
 });

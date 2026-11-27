@@ -93,7 +93,7 @@ export function ImageRef({
         <VersionBadge parts={parts} />
       </span>
       {copy ? (
-        <span className="flex shrink-0 items-center">
+        <span className="shrink-0 whitespace-nowrap">
           <VersionTip parts={parts} />
           <CopyButton value={parts.full} label={copyLabel(parts, of)} />
         </span>
@@ -196,7 +196,7 @@ export function ImageLine({ image, of }: { image: string | undefined; of?: strin
       </span>
       <span className="flex max-w-full min-w-0 flex-[0_1_auto] items-center gap-1">
         <VersionBadge parts={parts} />
-        <span className="flex shrink-0 items-center">
+        <span className="shrink-0 whitespace-nowrap">
           <VersionTip parts={parts} />
           <CopyButton value={parts.full} label={copyLabel(parts, of)} />
         </span>

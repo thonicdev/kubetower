@@ -145,7 +145,8 @@ export function ExtraSettingsModal({
             <ExtraSwitch
               on={enabled}
               label={`${item.label}, cluster ${cluster}`}
-              disabled={saving || !writable}
+              disabled={!writable}
+              pending={saving}
               onToggle={() => setEnabled((was) => !was)}
               describedBy={reason === undefined ? undefined : reasonId}
               focusFirst
@@ -191,7 +192,10 @@ export function ExtraSettingsModal({
                       className={`${field} font-mono`}
                       value={lines[one.key] ?? ''}
                       placeholder={one.placeholder ?? 'not set'}
-                      disabled={saving || !writable}
+                      // Read-only rather than disabled while saving: Enter in it
+                      // is what saves, and a disabled field drops the focus.
+                      disabled={!writable}
+                      readOnly={saving}
                       spellCheck={false}
                       autoComplete="off"
                       onChange={(event) => setLines({ ...lines, [one.key]: event.target.value })}
@@ -290,8 +294,11 @@ export function ExtraSettingsModal({
           </button>
           <button
             type="submit"
-            disabled={saving || (!writable && columns.length === 0)}
-            className={`rounded-md border border-accent/50 bg-accent/10 px-3 py-1 text-xs text-accent disabled:opacity-50 ${focusRingTight}`}
+            // Pending, not disabled, while it saves: the press keeps its focus,
+            // and the form's own guard refuses a second save.
+            disabled={!writable && columns.length === 0}
+            aria-disabled={saving || undefined}
+            className={`rounded-md border border-accent/50 bg-accent/10 px-3 py-1 text-xs text-accent disabled:opacity-50 aria-disabled:cursor-wait aria-disabled:opacity-50 ${focusRingTight}`}
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
