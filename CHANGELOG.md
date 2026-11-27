@@ -85,12 +85,14 @@ dialog draws it first, as a New extra line.
   after a newer one; and a context pointed at another server discovers its
   kinds there rather than reusing the old server's (#153).
 - **Runtime Inspector: the program left running names the runtime.** In a
-  shell chain only the last program, or the one exec'd, decides: `npx
-  wait-on … && /app/bin/start` with JAVA_HOME is Java, and `bash -ceo
-  pipefail` is read. Opening the tab on a read-only cluster runs nothing and
-  records no refusal; a switch is reviewed once, an old `jvm` grant that
-  could not be reviewed answers 503 and grants nothing, and a refusal is
-  drawn on one line (#157).
+  shell chain the program exec'd decides, or else the last one that is not
+  plumbing (`cd`, `wait`, `sleep`, `tail`, `echo`, `tee`, `cat`…) nor a
+  fallback after `||`: `npx wait-on … && /app/bin/start` with JAVA_HOME is
+  Java, `python app.py & wait` and `cat x | node` are read, and `bash -ceo
+  pipefail` is read. Opening the JVM, Go, Node.js or Python tab on a
+  read-only cluster runs nothing and records no refusal; a switch is
+  reviewed once, an old `jvm` grant that could not be reviewed answers 503
+  and grants nothing, and a refusal is drawn on one line (#157).
 
 ## 0.2.2 — Clearer What's new, automatic updates and VictoriaMetrics
 

@@ -189,8 +189,9 @@ type program struct {
 	// subcommand (the EBS CSI driver's `node`).
 	afterEntrypoint bool
 	// execd is a program the shell exec'd: it replaces the shell, and what
-	// follows it never runs. piped reads another program's output (`| tee`).
-	execd, piped bool
+	// follows it never runs. orElse follows `||`: it runs only when the
+	// program before it failed.
+	execd, orElse bool
 }
 
 // shells run the script after their -c; wrappers run the program after them.
@@ -208,20 +209,20 @@ func programs(c corev1.Container) []program {
 	start, wrapped, shell, optionArg := true, false, false, false
 	// script: the shell's options held a c, so its first word that is not an
 	// option, or the value of one, starts the script (`-ceo pipefail`).
-	// execd and piped describe the next program found.
-	script, execd, piped := false, false, false
+	// execd and orElse describe the next program found.
+	script, execd, orElse := false, false, false
 	reset := func() {
 		at, start, wrapped, shell, optionArg = -1, true, false, false, false
-		script, execd, piped = false, false, false
+		script, execd, orElse = false, false, false
 	}
 	for _, token := range commandLine(c) {
 		switch token {
-		case "&&", "||", "&":
+		case "&&", "&", "|", "|&":
 			reset()
 			continue
-		case "|":
+		case "||":
 			reset()
-			piped = true
+			orElse = true
 			continue
 		}
 		// A `;`, alone or ending a word, ends the command.
@@ -267,7 +268,7 @@ func programs(c corev1.Container) []program {
 				// An argument to an entrypoint the spec does not carry.
 				start = false
 			default:
-				out = append(out, program{words: []string{token}, afterEntrypoint: len(out) == 0 && len(c.Command) == 0, execd: execd, piped: piped})
+				out = append(out, program{words: []string{token}, afterEntrypoint: len(out) == 0 && len(c.Command) == 0, execd: execd, orElse: orElse})
 				at, start = len(out)-1, false
 			}
 		case at >= 0:
@@ -330,10 +331,24 @@ func counts(p program, base string) bool {
 	return !p.afterEntrypoint || !isInterpreter(base) || runsAScript(p)
 }
 
+// plumbing are programs a command line runs around its application: they
+// prepare (`cd`, `trap`), wait (`wait`, `sleep`, `tail -f`), say something
+// (`echo`) or read a pipe (`tee`, `grep`), and never name its runtime.
+var plumbing = map[string]bool{
+	"cd": true, "trap": true, "set": true, "export": true, "ulimit": true, "umask": true, "source": true, ".": true,
+	"wait": true, "sleep": true, "tail": true, "true": true, "false": true, ":": true, "test": true, "[": true,
+	"echo": true, "printf": true, "date": true, "kill": true, "exit": true,
+	"cat": true, "tee": true, "grep": true, "sed": true, "awk": true, "head": true, "cut": true, "tr": true,
+	"sort": true, "uniq": true, "logger": true,
+	"mkdir": true, "cp": true, "mv": true, "rm": true, "ln": true, "chmod": true, "chown": true, "touch": true,
+}
+
 // deciding is the program of c that names its runtime: the one a shell
-// exec'd, which replaces it; otherwise the last that does not read a pipe.
-// `npx wait-on … && /app/bin/start` is the start script's, not npx's, and
-// `node app.js | tee log` is node's (#157).
+// exec'd, which replaces it; otherwise the last that is not plumbing, and
+// not the fallback after `||` while one before it qualifies.
+// `npx wait-on … && /app/bin/start` is the start script's, not npx's;
+// `node app.js | tee log`, `cat x | node`, `python app.py & wait` and
+// `java -jar app.jar || echo failed` are the runtime's (#157).
 func deciding(c corev1.Container) []program {
 	all := programs(c)
 	for _, p := range all {
@@ -341,9 +356,11 @@ func deciding(c corev1.Container) []program {
 			return []program{p}
 		}
 	}
-	for i := len(all) - 1; i >= 0; i-- {
-		if !all[i].piped {
-			return all[i : i+1]
+	for _, fallback := range []bool{false, true} {
+		for i := len(all) - 1; i >= 0; i-- {
+			if !plumbing[path.Base(all[i].words[0])] && (fallback || !all[i].orElse) {
+				return all[i : i+1]
+			}
 		}
 	}
 	return nil

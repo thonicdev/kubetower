@@ -33,9 +33,9 @@ type Run =
   | { status: 'running'; what: string }
   | { status: 'failed'; error: unknown };
 
-export function NodeInspector({ cluster, namespace, name, container }: { cluster: string; namespace: string; name: string; container: string }): ReactNode {
+export function NodeInspector({ cluster, namespace, name, container, readOnly }: { cluster: string; namespace: string; name: string; container: string; readOnly: boolean }): ReactNode {
   const client = useQueryClient();
-  const query = nodeQuery(cluster, namespace, name, container);
+  const query = nodeQuery(cluster, namespace, name, container, readOnly);
   const state = useQuery(query);
   const [run, setRun] = useState<Run>({ status: 'idle' });
   const [seconds, setSeconds] = useState<number>(NODE_PROFILE_SECONDS[0]);

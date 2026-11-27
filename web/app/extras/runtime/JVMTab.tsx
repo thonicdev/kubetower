@@ -3,7 +3,6 @@ import { useState, type ReactNode } from 'react';
 import { Failure, Pending, Pill, ROW, TABLE, bodyCell, btnPrimary, btnSecondary, type ExtensionTabProps } from '@kubetower/ui';
 
 import {
-  markReadOnly,
   InspectProblem,
   inspect,
   blocksJcmd,
@@ -42,10 +41,8 @@ export default function JVMTab({ cluster, namespace, name, readOnly }: Extension
     return <p className="text-sm text-muted">A pod is namespaced; this one came without its namespace.</p>;
   }
   // The probes the panels run on their own ask nothing on a read-only
-  // cluster (#157): marked before any of them mounts. The console renders a
-  // tab only once it knows.
-  markReadOnly(cluster, readOnly === true);
-  return <OnPod cluster={cluster} namespace={namespace} name={name} />;
+  // cluster (#157). The console renders a tab only once it knows.
+  return <OnPod cluster={cluster} namespace={namespace} name={name} readOnly={readOnly === true} />;
 }
 
 type Run =
@@ -54,14 +51,14 @@ type Run =
   | { status: 'done'; answer: Inspection }
   | { status: 'failed'; error: unknown };
 
-function OnPod({ cluster, namespace, name }: { cluster: string; namespace: string; name: string }): ReactNode {
+function OnPod({ cluster, namespace, name, readOnly }: { cluster: string; namespace: string; name: string; readOnly: boolean }): ReactNode {
   const pod = useQuery(podQuery(cluster, namespace, name));
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [run, setRun] = useState<Run>({ status: 'idle' });
   // The container the tab shows, the same as below; empty until the pod is read.
   const shown = pod.data?.containers ?? [];
   const javaNow = shown.filter((c) => c.java);
-  const { noJdk, offTitle, attachOff, markNoJdk } = useJdkTools(cluster, namespace, name, picked ?? (javaNow.length > 0 ? javaNow : shown)[0]?.name ?? '');
+  const { noJdk, offTitle, attachOff, markNoJdk } = useJdkTools(cluster, namespace, name, picked ?? (javaNow.length > 0 ? javaNow : shown)[0]?.name ?? '', readOnly);
 
   if (pod.data === undefined) {
     return pod.isError ? (

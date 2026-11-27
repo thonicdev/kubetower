@@ -36,7 +36,7 @@ function stub(replies: Record<string, { status?: number; body: unknown }>): Aske
 function mount(): HTMLElement {
   const { container } = render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <PythonPanel cluster="kind" namespace="shop" name="py-0" container="app" />
+      <PythonPanel cluster="kind" namespace="shop" name="py-0" container="app" readOnly={false} />
     </QueryClientProvider>,
   );
   return container;
