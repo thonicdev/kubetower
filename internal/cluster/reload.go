@@ -85,24 +85,46 @@ func sameFiles(a, b []fileRead) bool {
 	return true
 }
 
-// read reads the files, then merges them. The files first: one changed during
-// the merge then differs from what is recorded, and the next ReloadIfChanged
-// reads it again.
+// errTorn is a read whose files changed while they were merged.
+var errTorn = errors.New("a kubeconfig file changed while it was read")
+
+// readAttempts bounds how often read tries for files that hold still.
+const readAttempts = 3
+
+// read reads the files, merges them, and reads them again: the merge is kept
+// only if the files did not change in between, so the merge applied is always
+// the merge of the bytes recorded (#153). client-go's loader reads the paths
+// itself, so the bytes cannot be handed to it; checking them on both sides is
+// what makes the merge theirs. A file truncated between two reads would
+// otherwise apply a merge without it, recorded under bytes that still held
+// it, and the next tick, seeing those bytes unchanged, would never put it
+// back.
 func (m *Manager) read() (kubeconfigRead, error) {
-	files := readFiles(m.kubeconfig)
-	raw, err := m.kubeconfig.Load()
-	if err != nil {
-		return kubeconfigRead{}, err
+	for attempt := 0; ; attempt++ {
+		files := readFiles(m.kubeconfig)
+		if m.betweenReads != nil {
+			m.betweenReads()
+		}
+		raw, err := m.kubeconfig.Load()
+		if err != nil {
+			return kubeconfigRead{}, err
+		}
+		if sameFiles(files, readFiles(m.kubeconfig)) {
+			return kubeconfigRead{files: files, raw: raw}, nil
+		}
+		if attempt+1 >= readAttempts {
+			return kubeconfigRead{}, errTorn
+		}
 	}
-	return kubeconfigRead{files: files, raw: raw}, nil
 }
 
 // halfway reports whether a read looks like a save caught halfway: a file that
-// held something and is now empty, or a kubeconfig that had contexts and now
-// has none.
+// held something and is now empty or gone (an editor that renames the
+// original away before writing the new one, #153), or a kubeconfig that had
+// contexts and now has none.
 func halfway(before []fileRead, previous *clientcmdapi.Config, after kubeconfigRead) bool {
 	for i, file := range after.files {
-		if i < len(before) && len(before[i].data) > 0 && !file.absent && file.problem == "" && len(file.data) == 0 {
+		if i < len(before) && len(before[i].data) > 0 && file.problem == "" && (file.absent || len(file.data) == 0) {
 			return true
 		}
 	}
@@ -136,6 +158,10 @@ func (m *Manager) ReloadIfChanged() (bool, error) {
 	if m.inCluster {
 		return false, nil
 	}
+	// One at a time: the watcher's tick and a cluster's Retry would otherwise
+	// apply an older read after a newer one, until the next tick (#153).
+	m.reloading.Lock()
+	defer m.reloading.Unlock()
 	files := readFiles(m.kubeconfig)
 	m.mu.RLock()
 	last, previous, pending := m.files, m.raw, m.pending
@@ -150,6 +176,10 @@ func (m *Manager) ReloadIfChanged() (bool, error) {
 	}
 
 	read, err := m.read()
+	if errors.Is(err, errTorn) {
+		// Still being written: the next tick reads it whole.
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -164,6 +194,9 @@ func (m *Manager) ReloadIfChanged() (bool, error) {
 		if now.Sub(pending.since) < settleFor {
 			return false, nil
 		}
+	}
+	if m.beforeApply != nil {
+		m.beforeApply()
 	}
 	m.apply(read)
 	return true, nil
