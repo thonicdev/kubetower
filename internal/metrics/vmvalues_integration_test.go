@@ -19,8 +19,12 @@ package metrics_test
 //
 // Two differences are expected, and neither is a query's:
 //   - a counter's rate or increase: Prometheus extrapolates the increase to the
-//     window's edges, VictoriaMetrics does not (RATE in the report, not failed
-//     on; see verdict.extrapolated);
+//     window's edges, VictoriaMetrics does not. Its values are not held to the
+//     5% tolerance but to rateBound (RATE in the report; BOUND, failed on,
+//     beyond it): the same series, the same order, within ×10. Each rate's
+//     `by` groupings are then dropped one label at a time on
+//     VictoriaMetrics's side, and every such mutant Prometheus tells apart
+//     from the query beyond the bound must fail it too (see mutantsCaught);
 //   - a container that restarted in the window: cAdvisor samples carry their
 //     own timestamps, for which Prometheus writes no staleness marker, so it
 //     counts the old container for its 5-minute lookback beside the new one,
@@ -81,7 +85,7 @@ func rangeOf(q query) time.Duration {
 }
 
 func TestVictoriaMetricsIntegrationValues(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 	s := open(ctx, t, os.Getenv("KT_VM_CLUSTER"), os.Getenv("KT_VM_TARGETS"))
 	// Not the console's clients: they refuse any write that did not go through
@@ -137,7 +141,7 @@ func TestVictoriaMetricsIntegrationValues(t *testing.T) {
 	t0 := time.Now().Truncate(time.Minute).Add(-time.Minute)
 	names := metricNames(ctx, t, prom, queries)
 	tenant := 1000 + time.Now().Unix()%1_000_000
-	vm := proxied{client: client, base: fmt.Sprintf("/api/v1/namespaces/%s/services/vmselect-%s:8481/proxy/select/%d/prometheus", namespace, prefix, tenant)}
+	vm := proxied{client: client, base: fmt.Sprintf("/api/v1/namespaces/%s/services/vmselect-%s:8481/proxy/select/%d/prometheus", namespace, prefix, tenant), nocache: true}
 	series := copySamples(ctx, t, prom, client, namespace, prefix, tenant, names, t0, copied)
 	waitForSeries(ctx, t, vm, series)
 	t.Logf("copied %d series of %d metrics into tenant %d, %s up to %s", series, len(names), tenant, copied, t0.Format(time.RFC3339))
@@ -147,9 +151,10 @@ func TestVictoriaMetricsIntegrationValues(t *testing.T) {
 
 	var report []verdict
 	for _, q := range queries {
-		report = append(report, compareValues(ctx, prom, vm, q, t0, compareFrom))
+		report = append(report, compareValues(ctx, prom, q.PromQL, vm, q.PromQL, q, t0, compareFrom))
 	}
 	writeReport(t, report)
+	mutantsCaught(ctx, t, prom, vm, report, t0, compareFrom)
 }
 
 // found is the reference Prometheus's proxy path, from its discovery.
@@ -162,14 +167,19 @@ func found(ctx context.Context, t *testing.T, s setup) string {
 	return fmt.Sprintf("/api/v1/namespaces/%s/services/%s:%d/proxy%s", d.Prometheus.Namespace, d.Prometheus.Service, d.Prometheus.Port, d.Prometheus.Path)
 }
 
-// proxied asks one Prometheus API through the API server's service proxy.
+// proxied asks one Prometheus API through the API server's service proxy;
+// nocache asks VictoriaMetrics not to answer from its cache.
 type proxied struct {
-	client kubernetes.Interface
-	base   string
+	client  kubernetes.Interface
+	base    string
+	nocache bool
 }
 
 func (p proxied) get(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
 	req := p.client.CoreV1().RESTClient().Get().AbsPath(p.base + endpoint)
+	if p.nocache {
+		req = req.Param("nocache", "1")
+	}
 	for key, values := range params {
 		for _, value := range values {
 			req = req.Param(key, value)
@@ -438,34 +448,76 @@ type verdict struct {
 	chart float64
 	// onlyProm and onlyVM are finite points one side has and the other not.
 	onlyProm, onlyVM int
-	err              string
+	// magnitude is the largest ratio between one series' scale (its largest
+	// absolute value) on either side, among the series that weigh in the
+	// answer (see rateBound); inverted counts the pairs of series one side
+	// puts more than rateBound apart and the other in the opposite order.
+	magnitude float64
+	inverted  int
+	// inner is the argument of histogram_quantile, topk or bottomk, compared
+	// on its own: the bound is held there (see rateBound). picks says the
+	// call is topk or bottomk.
+	inner *verdict
+	picks bool
+	err   string
 }
 
 func (v verdict) equal() bool {
 	return v.err == "" && v.differ == 0 && v.onlyProm == 0 && v.onlyVM == 0
 }
 
-// extrapolated says the query reads a counter's rate or increase, whose
-// value differs by design between the two engines, on the same samples:
-// Prometheus extrapolates the increase to the window's edges, VictoriaMetrics
-// takes it from the last sample before the window and does not extrapolate
-// (nor does its rate_prometheus). No query reads alike on both without
-// changing what Prometheus answers, so such a difference is reported, not
-// failed on; its size is the report's to say.
-func (v verdict) extrapolated() bool {
-	return v.err == "" && v.onlyProm == 0 && v.onlyVM == 0 &&
-		(strings.Contains(v.q.PromQL, "rate(") || strings.Contains(v.q.PromQL, "increase("))
+// rateBound is what a counter's rate or increase is held to instead of the
+// tolerance. Its value differs by design between the two engines, on the same
+// samples: Prometheus extrapolates the increase to the window's edges,
+// VictoriaMetrics takes it from the last sample before the window and does
+// not extrapolate (nor does its rate_prometheus), and on 2026-11-26 the gap
+// reached 98% of a point. What a wrong query changes is held instead: the
+// same series on both sides (a `by` label dropped or added changes them), in
+// the same order wherever one side puts two series more than rateBound apart,
+// and each series' scale within rateBound of the other side's (an aggregation
+// summing what it should average). A series under 1/rateBound of the
+// answer's largest is too small to weigh: a lone increment before the window
+// is all of it on one side and none of it on the other.
+//
+// histogram_quantile magnifies the gap past any bound - a 99th percentile
+// read one bucket higher is ×10 to ×50 on few requests - so a quantile is held
+// to the same series, and its argument, the buckets' rates, to the bound.
+// topk and bottomk turn the gap into another series picked where two are
+// close, so they are held to their argument alone.
+const rateBound = 10.0
+
+// readsRate says the query reads a counter's rate or increase.
+func readsRate(promQL string) bool {
+	return strings.Contains(promQL, "rate(") || strings.Contains(promQL, "increase(")
 }
 
-// compareValues asks q of both at the same instants: a range query over the
-// compared window at its own step (five minutes at most, so the window has
-// points), an instant query at its end.
-func compareValues(ctx context.Context, prom, vm proxied, q query, t0 time.Time, compareFrom time.Duration) verdict {
-	v := verdict{q: q}
+// withinRateBound says a query reading a rate differs only as rateBound
+// allows.
+func (v verdict) withinRateBound() bool {
+	if v.err != "" || !readsRate(v.q.PromQL) {
+		return false
+	}
+	if v.inner != nil && v.picks {
+		return v.inner.equal() || v.inner.withinRateBound()
+	}
+	if v.onlyProm != 0 || v.onlyVM != 0 {
+		return false
+	}
+	if v.inner != nil {
+		return v.inner.equal() || v.inner.withinRateBound()
+	}
+	return v.magnitude <= rateBound && v.inverted == 0
+}
+
+// compareValues asks promQL of Prometheus and vmQL of VictoriaMetrics at the
+// same instants, q saying how: a range query over the compared window at its
+// own step (five minutes at most, so the window has points), an instant query
+// at its end. The two are the same query but for mutantsCaught's.
+func compareValues(ctx context.Context, prom proxied, promQL string, vm proxied, vmQL string, q query, t0 time.Time, compareFrom time.Duration) verdict {
 	end := t0.Add(-compareUntil)
 	start := t0.Add(-compareFrom)
 	endpoint := "/api/v1/query"
-	params := url.Values{"query": {q.PromQL}, "time": {strconv.FormatInt(end.Unix(), 10)}}
+	params := url.Values{"time": {strconv.FormatInt(end.Unix(), 10)}}
 	if q.Range {
 		step := min(max(q.Step, 15*time.Second), 5*time.Minute)
 		// Both ends on the step, so both engines evaluate the same instants.
@@ -473,24 +525,40 @@ func compareValues(ctx context.Context, prom, vm proxied, q query, t0 time.Time,
 		end = end.Truncate(step)
 		endpoint = "/api/v1/query_range"
 		params = url.Values{
-			"query": {q.PromQL}, "start": {strconv.FormatInt(start.Unix(), 10)},
-			"end": {strconv.FormatInt(end.Unix(), 10)}, "step": {strconv.FormatInt(int64(step.Seconds()), 10)},
+			"start": {strconv.FormatInt(start.Unix(), 10)},
+			"end":   {strconv.FormatInt(end.Unix(), 10)}, "step": {strconv.FormatInt(int64(step.Seconds()), 10)},
 		}
 	}
-	pb, err := prom.get(ctx, endpoint, params)
+	with := func(promQL string) url.Values {
+		out := url.Values{"query": {promQL}}
+		for k, values := range params {
+			out[k] = values
+		}
+		return out
+	}
+	pb, err := prom.get(ctx, endpoint, with(promQL))
 	if err != nil {
-		v.err = "Prometheus: " + err.Error()
-		return v
+		return verdict{q: q, err: "Prometheus: " + err.Error()}
 	}
-	vmParams := url.Values{"nocache": {"1"}}
-	for k, values := range params {
-		vmParams[k] = values
-	}
-	vb, err := vm.get(ctx, endpoint, vmParams)
+	vb, err := vm.get(ctx, endpoint, with(vmQL))
 	if err != nil {
-		v.err = "VictoriaMetrics: " + err.Error()
-		return v
+		return verdict{q: q, err: "VictoriaMetrics: " + err.Error()}
 	}
+	v := compareAnswers(q, pb, vb)
+	pi, picks := argumentOf(promQL)
+	if vi, _ := argumentOf(vmQL); v.err == "" && pi != "" && vi != "" {
+		iq := q
+		iq.PromQL = pi
+		inner := compareValues(ctx, prom, pi, vm, vi, iq, t0, compareFrom)
+		v.inner, v.picks = &inner, picks
+	}
+	return v
+}
+
+// compareAnswers compares Prometheus's answer pb with VictoriaMetrics's vb,
+// point by point and series by series.
+func compareAnswers(q query, pb, vb []byte) verdict {
+	v := verdict{q: q}
 	ps, err := parse(pb)
 	if err != nil {
 		v.err = "Prometheus: " + err.Error()
@@ -505,16 +573,15 @@ func compareValues(ctx context.Context, prom, vm proxied, q query, t0 time.Time,
 	for _, one := range vs {
 		byLabels[one.labels] = one.points
 	}
+	// scales is each series' largest absolute value, Prometheus's then
+	// VictoriaMetrics's.
+	scales := map[string][2]float64{}
 	seen := map[string]bool{}
 	for _, one := range ps {
 		seen[one.labels] = true
 		other := byLabels[one.labels]
-		scale := 0.0
-		for _, a := range one.points {
-			if finiteValue(a) {
-				scale = math.Max(scale, math.Abs(a))
-			}
-		}
+		scales[one.labels] = [2]float64{scaleOf(one.points), scaleOf(other)}
+		scale := scales[one.labels][0]
 		for at, a := range one.points {
 			b, ok := other[at]
 			switch {
@@ -553,7 +620,199 @@ func compareValues(ctx context.Context, prom, vm proxied, q query, t0 time.Time,
 			}
 		}
 	}
+	v.magnitude, v.inverted = bound(scales)
 	return v
+}
+
+// scaleOf is a series' largest absolute finite value.
+func scaleOf(points map[int64]float64) float64 {
+	scale := 0.0
+	for _, a := range points {
+		if finiteValue(a) {
+			scale = math.Max(scale, math.Abs(a))
+		}
+	}
+	return scale
+}
+
+// bound is the largest ratio between a series' scales on the two sides, and
+// the pairs of series ordered more than rateBound apart on one side and the
+// other way on the other, among the series that weigh in the answer: at
+// least 1/rateBound of its largest scale, on either side.
+func bound(scales map[string][2]float64) (magnitude float64, inverted int) {
+	largest := 0.0
+	for _, s := range scales {
+		largest = math.Max(largest, math.Max(s[0], s[1]))
+	}
+	magnitude = 1
+	if largest <= absTolerance {
+		return magnitude, 0
+	}
+	var weigh []string
+	for labels, s := range scales {
+		if math.Max(s[0], s[1]) >= largest/rateBound {
+			weigh = append(weigh, labels)
+		}
+	}
+	sort.Strings(weigh)
+	for _, labels := range weigh {
+		s := scales[labels]
+		lo, hi := math.Min(s[0], s[1]), math.Max(s[0], s[1])
+		if lo <= absTolerance {
+			return math.Inf(1), inverted
+		}
+		magnitude = math.Max(magnitude, hi/lo)
+	}
+	for _, a := range weigh {
+		for _, b := range weigh {
+			sa, sb := scales[a], scales[b]
+			for side := range 2 {
+				if sa[side] > rateBound*sb[side] && sa[1-side] < sb[1-side] {
+					inverted++
+				}
+			}
+		}
+	}
+	return magnitude, inverted
+}
+
+// quoted marks the bytes of promQL inside a string literal, delimiters
+// included: a label matcher's regular expression may hold parentheses, commas
+// and the word "by".
+func quoted(promQL string) []bool {
+	in := make([]bool, len(promQL))
+	var quote byte
+	for i := 0; i < len(promQL); i++ {
+		c := promQL[i]
+		switch {
+		case quote == 0 && (c == '"' || c == '\'' || c == '`'):
+			quote = c
+			in[i] = true
+		case quote != 0:
+			in[i] = true
+			if c == '\\' && quote != '`' && i+1 < len(promQL) {
+				i++
+				in[i] = true
+			} else if c == quote {
+				quote = 0
+			}
+		}
+	}
+	return in
+}
+
+// argumentOf is the last argument of histogram_quantile, topk or bottomk
+// when the whole query is one call of it, or ""; picks says it is topk or
+// bottomk.
+func argumentOf(promQL string) (argument string, picks bool) {
+	s := strings.TrimSpace(promQL)
+	call := ""
+	for _, name := range []string{"histogram_quantile(", "topk(", "bottomk("} {
+		if strings.HasPrefix(s, name) {
+			call, picks = name, name != "histogram_quantile("
+		}
+	}
+	if call == "" {
+		return "", false
+	}
+	in := quoted(s)
+	depth, comma := 0, -1
+	for i := len(call) - 1; i < len(s); i++ {
+		if in[i] {
+			continue
+		}
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(s)-1 {
+				return "", false // histogram_quantile(…) or …
+			}
+		case ',':
+			if depth == 1 && comma < 0 {
+				comma = i
+			}
+		}
+	}
+	if comma < 0 || depth != 0 {
+		return "", false
+	}
+	return strings.TrimSpace(s[comma+1 : len(s)-1]), picks
+}
+
+var byGrouping = regexp.MustCompile(`\bby\s*\(([^()]*)\)`)
+
+// droppedBy is promQL once per label of each `by` grouping, that label left
+// out.
+func droppedBy(promQL string) []string {
+	in := quoted(promQL)
+	var out []string
+	for _, m := range byGrouping.FindAllStringSubmatchIndex(promQL, -1) {
+		if in[m[0]] {
+			continue
+		}
+		labels := strings.Split(promQL[m[2]:m[3]], ",")
+		for i := range labels {
+			if strings.TrimSpace(labels[i]) == "" {
+				continue
+			}
+			var kept []string
+			for j, label := range labels {
+				if j != i && strings.TrimSpace(label) != "" {
+					kept = append(kept, strings.TrimSpace(label))
+				}
+			}
+			out = append(out, promQL[:m[2]]+strings.Join(kept, ", ")+promQL[m[3]:])
+		}
+	}
+	return out
+}
+
+// mutantsCaught checks the bound live: each rate compared, its `by` groupings
+// dropped one label at a time, asked of VictoriaMetrics against the query
+// asked of Prometheus. A mutant Prometheus itself answers beyond the bound
+// (against the query) must fail the comparison too; one it answers within the
+// bound is a change the bound does not claim to see, and is counted. So is a
+// mutant the two engines read apart from each other: no console query, and
+// not a measure of the bound - `sum by () (…) / sum by (instance) (…)` matches
+// nothing on Prometheus, where VictoriaMetrics divides by the lone series.
+func mutantsCaught(ctx context.Context, t *testing.T, prom, vm proxied, report []verdict, t0 time.Time, compareFrom time.Duration) {
+	t.Helper()
+	told, caught, within, apartEngines := 0, 0, 0, 0
+	for _, v := range report {
+		if v.err != "" || !readsRate(v.q.PromQL) {
+			continue
+		}
+		for _, mutant := range droppedBy(v.q.PromQL) {
+			apart := compareValues(ctx, prom, v.q.PromQL, prom, mutant, v.q, t0, compareFrom)
+			switch {
+			case apart.err != "":
+				t.Logf("mutant not compared, Prometheus: %s: %s", apart.err, mutant)
+				continue
+			case apart.equal() || apart.withinRateBound():
+				within++
+				continue
+			}
+			if same := compareValues(ctx, prom, mutant, vm, mutant, v.q, t0, compareFrom); !same.equal() && !same.withinRateBound() {
+				t.Logf("mutant read apart by the two engines: %s", mutant)
+				apartEngines++
+				continue
+			}
+			told++
+			got := compareValues(ctx, prom, v.q.PromQL, vm, mutant, v.q, t0, compareFrom)
+			if got.err == "" && (got.equal() || got.withinRateBound()) {
+				t.Errorf("a mutant Prometheus tells apart passed the rate bound: %s", mutant)
+				continue
+			}
+			caught++
+		}
+	}
+	t.Logf("mutants dropping a by label: %d of %d told apart by Prometheus caught; %d within the bound on Prometheus itself; %d read apart by the two engines",
+		caught, told, within, apartEngines)
+	if told == 0 {
+		t.Error("no mutant was told apart by Prometheus, so the rate bound was not checked")
+	}
 }
 
 func finiteValue(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
@@ -566,8 +825,18 @@ func relative(a, b float64) float64 {
 	return math.Abs(a-b) / scale
 }
 
-// writeReport logs one line per query, fails the test on every difference,
-// and writes the report to KT_VM_REPORT when it is set.
+// boundOf is what the report says of a rate's bound: the magnitude and the
+// inversions it was held to, its argument's for a quantile.
+func boundOf(v verdict) string {
+	if v.inner != nil {
+		return "argument " + boundOf(*v.inner)
+	}
+	return fmt.Sprintf("×%.2f, %d inverted", v.magnitude, v.inverted)
+}
+
+// writeReport logs one line per query, fails the test on every difference
+// beyond the tolerance or, for a rate, beyond rateBound, and writes the
+// report to KT_VM_REPORT when it is set.
 func writeReport(t *testing.T, report []verdict) {
 	t.Helper()
 	var b strings.Builder
@@ -576,12 +845,12 @@ func writeReport(t *testing.T, report []verdict) {
 		switch {
 		case v.equal():
 			equal++
-		case v.extrapolated():
+		case v.withinRateBound():
 			rates++
 		}
 	}
-	fmt.Fprintf(&b, "%d of %d queries equal within %.0f%% (or %g absolute); %d differ by rate extrapolation (RATE); %d differ otherwise (DIFFER) or failed (ERROR)\n\n",
-		equal, len(report), relTolerance*100, absTolerance, rates, len(report)-equal-rates)
+	fmt.Fprintf(&b, "%d of %d queries equal within %.0f%% (or %g absolute); %d rates within the ×%g bound (RATE); %d differ otherwise (BOUND, DIFFER) or failed (ERROR)\n\n",
+		equal, len(report), relTolerance*100, absTolerance, rates, rateBound, len(report)-equal-rates)
 	for _, v := range report {
 		kind := "instant"
 		if v.q.Range {
@@ -593,12 +862,15 @@ func writeReport(t *testing.T, report []verdict) {
 		case v.equal():
 			fmt.Fprintf(&b, "equal  %s  %d points  %s\n", kind, v.compared, v.q.PromQL)
 		default:
-			label := "DIFFER"
-			if v.extrapolated() {
-				label = "RATE  "
+			label, bounded := "DIFFER", ""
+			if readsRate(v.q.PromQL) && (v.picks || v.onlyProm == 0 && v.onlyVM == 0) {
+				label, bounded = "BOUND ", ", "+boundOf(v)
+				if v.withinRateBound() {
+					label = "RATE  "
+				}
 			}
-			fmt.Fprintf(&b, "%s %s  %d of %d points, max %.2f%% of the point, %.2f%% of the chart, only Prometheus %d, only VictoriaMetrics %d  %s\n",
-				label, kind, v.differ, v.compared, v.worst*100, v.chart*100, v.onlyProm, v.onlyVM, v.q.PromQL)
+			fmt.Fprintf(&b, "%s %s  %d of %d points, max %.2f%% of the point, %.2f%% of the chart, only Prometheus %d, only VictoriaMetrics %d%s  %s\n",
+				label, kind, v.differ, v.compared, v.worst*100, v.chart*100, v.onlyProm, v.onlyVM, bounded, v.q.PromQL)
 			if v.differ > 0 {
 				fmt.Fprintf(&b, "       worst at %s %s: Prometheus %g, VictoriaMetrics %g\n",
 					time.UnixMilli(v.worstAt).UTC().Format(time.RFC3339), v.worstLabels, v.worstProm, v.worstVM)
@@ -614,7 +886,7 @@ func writeReport(t *testing.T, report []verdict) {
 	points := 0
 	for _, v := range report {
 		points += v.compared
-		if !v.equal() && !v.extrapolated() {
+		if !v.equal() && !v.withinRateBound() {
 			t.Errorf("not equal: %s", v.q.PromQL)
 		}
 	}
