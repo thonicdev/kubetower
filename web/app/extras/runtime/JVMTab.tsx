@@ -36,11 +36,13 @@ import { ThreadDumpSection, spans } from './ThreadDump';
  * The memory bar's geometry is the server's: the tab draws the percentages it
  * is given and never rescales.
  */
-export default function JVMTab({ cluster, namespace, name }: ExtensionTabProps): ReactNode {
+export default function JVMTab({ cluster, namespace, name, readOnly }: ExtensionTabProps): ReactNode {
   if (namespace === undefined || namespace === '') {
     return <p className="text-sm text-muted">A pod is namespaced; this one came without its namespace.</p>;
   }
-  return <OnPod cluster={cluster} namespace={namespace} name={name} />;
+  // The probes the panels run on their own ask nothing on a read-only
+  // cluster (#157). The console renders a tab only once it knows.
+  return <OnPod cluster={cluster} namespace={namespace} name={name} readOnly={readOnly === true} />;
 }
 
 type Run =
@@ -49,14 +51,14 @@ type Run =
   | { status: 'done'; answer: Inspection }
   | { status: 'failed'; error: unknown };
 
-function OnPod({ cluster, namespace, name }: { cluster: string; namespace: string; name: string }): ReactNode {
+function OnPod({ cluster, namespace, name, readOnly }: { cluster: string; namespace: string; name: string; readOnly: boolean }): ReactNode {
   const pod = useQuery(podQuery(cluster, namespace, name));
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const [run, setRun] = useState<Run>({ status: 'idle' });
   // The container the tab shows, the same as below; empty until the pod is read.
   const shown = pod.data?.containers ?? [];
   const javaNow = shown.filter((c) => c.java);
-  const { noJdk, offTitle, attachOff, markNoJdk } = useJdkTools(cluster, namespace, name, picked ?? (javaNow.length > 0 ? javaNow : shown)[0]?.name ?? '');
+  const { noJdk, offTitle, attachOff, markNoJdk } = useJdkTools(cluster, namespace, name, picked ?? (javaNow.length > 0 ? javaNow : shown)[0]?.name ?? '', readOnly);
 
   if (pod.data === undefined) {
     return pod.isError ? (

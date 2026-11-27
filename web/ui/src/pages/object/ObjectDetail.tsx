@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from 'react-router';
 import {
   isFailedState,
   isReasonOnlyState,
+  useClusters,
   useNav,
   useResourceDetail,
   type DetailField,
@@ -167,6 +168,16 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
     identity.namespace,
     identity.name,
   );
+  // An extension's tab is told the cluster is read-only, so it runs nothing
+  // on its own there (#157). Unknown until the clusters are read; a list that
+  // could not be read leaves it false, as before.
+  const clusters = useClusters();
+  const readOnly =
+    clusters.data?.state === 'ok'
+      ? clusters.data.items.find((c) => c.name === identity.cluster)?.readOnly === true
+      : clusters.isError || clusters.data !== undefined
+        ? false
+        : undefined;
 
   /*
     The chosen tab lives in the address, not in a `useState`.
@@ -520,7 +531,9 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
         // - `Shell.tsx` says why.
         className="relative min-h-0 flex-1 overflow-auto p-3"
       >
-        {activeContributed !== undefined ? (
+        {activeContributed !== undefined && readOnly === undefined ? (
+          <Pending what={activeContributed.label} />
+        ) : activeContributed !== undefined ? (
           <div data-extension-tab={activeContributed.id}>
             <Suspense fallback={<Pending what={activeContributed.label} />}>
               <activeContributed.Component
@@ -528,6 +541,7 @@ export function ObjectDetail({ identity, chrome, onClose }: ObjectDetailProps): 
                 kind={identity.kind}
                 namespace={identity.namespace}
                 name={identity.name}
+                readOnly={readOnly}
               />
             </Suspense>
           </div>

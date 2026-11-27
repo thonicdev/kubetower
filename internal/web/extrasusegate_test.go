@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thonicdev/kubetower/extension"
+	"github.com/thonicdev/kubetower/internal/access"
 	"github.com/thonicdev/kubetower/internal/access/accesstest"
 	"github.com/thonicdev/kubetower/internal/api"
+	"github.com/thonicdev/kubetower/internal/audit"
 	"github.com/thonicdev/kubetower/internal/extras"
 	"github.com/thonicdev/kubetower/internal/identity"
 )
@@ -387,5 +391,65 @@ func TestAnAddressUnderTheKeyAnExtraWasPublishedUnderIsRedirected(t *testing.T) 
 	}
 	if rec := reach(mux, alice, "/x/prod/"+fixtureKey+"/panel"); rec.Code != http.StatusOK {
 		t.Errorf("the address the redirect points to answered %d", rec.Code)
+	}
+}
+
+// **An old key whose review could not be made grants nothing** (#157):
+// alice's `use` on the new key is denied and the one on the key the extra was
+// published under could not be reviewed. Whether she may use it is unknown,
+// so the page answers 503, never 403 and never the page, the menu leaves it
+// out, and her switch is refused as unreviewable.
+func TestAnUnreviewableOldKeyAnswers503AndGrantsNothing(t *testing.T) {
+	s, mux, reviews := turnedOn(t, []string{fixtureKey})
+	reviews.Answer = func(q accesstest.Question) (bool, error) {
+		if q.Attributes.Group != UseGroup {
+			return true, nil
+		}
+		if q.Attributes.Resource == fixtureLegacyKey {
+			return false, errors.New("the authorizer is unreachable")
+		}
+		return false, nil
+	}
+
+	rec := reach(mux, alice, extraRoutes(fixtureKey)["the page"])
+	if rec.Code != http.StatusServiceUnavailable || problemCode(rec) != string(api.ProblemAccessUnreviewable) ||
+		strings.Contains(rec.Body.String(), "reached") {
+		t.Errorf("an unreviewable old key answered %d %q, want 503 access_unreviewable", rec.Code, firstLine(rec.Body.String()))
+	}
+	if menuHas(t, s, alice, fixtureKey) {
+		t.Error("the menu draws an extra whose old key could not be reviewed")
+	}
+	if err := (apiClusters{s}).SetExtension(as(alice), "prod", fixtureKey, false); !errors.Is(err, api.ErrUnreviewable) {
+		t.Errorf("turning it off: %v, want ErrUnreviewable (503)", err)
+	}
+}
+
+// **A write is reviewed once** (#157): turning an extra off asks the `use`
+// question once, and the old key's only when the new one is denied.
+func TestAnExtensionSwitchIsReviewedOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		granted string
+		want    int
+	}{
+		{"granted on its key", fixtureKey, 1},
+		{"granted on the key it was published under", fixtureLegacyKey, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, reviews := turnedOn(t, []string{fixtureKey}, tc.granted)
+			// A clock past the TTL at every read: no answer is held, so a
+			// second review would reach the authorizer and be counted.
+			var clock atomic.Int64
+			clock.Store(time.Now().UnixNano())
+			s.gate = access.New(access.Options{Reviews: reviews.For, InCluster: true, Audit: audit.New(&lockedBuffer{}),
+				Now: func() time.Time { return time.Unix(0, clock.Add(int64(2*access.TTL))) }})
+			before := useQuestions(reviews)
+			if err := (apiClusters{s}).SetExtension(as(alice), "prod", fixtureKey, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := useQuestions(reviews) - before; got != tc.want {
+				t.Errorf("%d use questions for one switch, want %d", got, tc.want)
+			}
+		})
 	}
 }
