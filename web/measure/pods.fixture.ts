@@ -168,6 +168,9 @@ const DETAILS = Object.fromEntries(
         tabs: [],
         sections: [],
         containers: (CONTAINERS[row.name] ?? ['app']).map(running),
+        // Offered, so the drawer is measured with the Shell menu control,
+        // its widest pod row (#147).
+        debug: { permitted: true },
         actions: [
           { verb: 'evict', label: 'Evict', permitted: true, destructive: true },
           { verb: 'restart', label: 'Restart', permitted: true, destructive: true },
@@ -389,6 +392,9 @@ const DRAWER_OBJECTS = {
     name: 'kube-prometheus-stack-prometheus-node-exporter-x7k2p',
     title: 'Pod',
     containers: ['node-exporter'].map(running),
+    // Offered, so the drawer is measured on a pod's widest control row, with
+    // the Shell menu (#147).
+    debug: { permitted: true },
     // `verbsFor("pods")`, in its order.
     actions: [
       { verb: 'restart', label: 'Restart', permitted: true, destructive: true },
@@ -460,6 +466,66 @@ export function drawerAnswers(): Readonly<Record<string, unknown>> {
   // read-only, as `internal/web` tokenizes it. What it holds is what wrapped
   // mid-word at 390px - a timestamp and a masked value.
   answers[`/api/c/${CLUSTER}/manifest`] = { state: 'ok', data: { lines: SECRET_MANIFEST, editable: false } };
+  return answers;
+}
+
+/**
+ * A pod whose app has no shell, for the debug container (#147): a distroless
+ * app and its sidecar; the same pod once a debug container joined the app; and
+ * the same pod with a shell in its app image, where Debug is in the Shell menu
+ * only. Debug is offered (`debug.permitted`), as on the desktop. Fake names.
+ */
+const DEBUG_POD = {
+  namespace: 'payments',
+  name: 'checkout-api-7d9f8b6c4-x2kq4',
+};
+
+export function debugPath(): string {
+  return `/c/${CLUSTER}/pods?open=${encodeURIComponent(`${DEBUG_POD.namespace}/${DEBUG_POD.name}`)}`;
+}
+
+export function debugAnswers(after: boolean, withShell = false): Readonly<Record<string, unknown>> {
+  const answers: Record<string, unknown> = { ...drawerAnswers() };
+  const columns = [column('Name', 0), column('Namespace', 1), column('Age', 2, END)];
+  const [nameKey, namespaceKey, ageKey] = columns.map((one) => one.key as string);
+  const { namespace, name } = DEBUG_POD;
+  answers[`/api/c/${CLUSTER}/r/pods`] = {
+    state: 'ok',
+    data: {
+      kind: 'pods',
+      label: 'Pods',
+      namespaced: true,
+      columns,
+      rows: [
+        {
+          id: `${namespace}/${name}`,
+          name,
+          namespace,
+          cells: { [nameKey ?? '']: { text: name }, [namespaceKey ?? '']: { text: namespace }, [ageKey ?? '']: { text: '2d' } },
+        },
+      ],
+    },
+  };
+  const app = {
+    ...running('api'),
+    image: withShell ? 'docker.io/library/nginx:1.27.2' : 'gcr.io/distroless/static-debian12:nonroot',
+  };
+  const envoy = { ...running('envoy'), image: 'docker.io/envoyproxy/envoy:v1.31.2' };
+  const debug = { ...running('kt-debug-9q4mz'), image: 'docker.io/library/busybox:1.36', ephemeral: true, target: 'api' };
+  answers[`/api/c/${CLUSTER}/r/pods/${namespace}/${name}`] = {
+    state: 'ok',
+    data: {
+      kind: 'pods',
+      namespace,
+      name,
+      title: 'Pod',
+      tabs: FULL_TABS,
+      sections: [],
+      containers: after ? [app, envoy, debug] : [app, envoy],
+      actions: DRAWER_OBJECTS.pods.actions,
+      debug: { permitted: true },
+    },
+  };
   return answers;
 }
 

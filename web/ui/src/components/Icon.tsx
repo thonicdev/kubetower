@@ -113,7 +113,11 @@ export type IconName =
   // About an extra: a circled i.
   | 'info'
   // What's new: a release's Added and Fixed entries (#107).
-  | 'plus' | 'check';
+  | 'plus' | 'check'
+  // A debug container (#147): the drawer's Debug control, its Start, a debug
+  // tab's mark and an ephemeral container's badge. A bug, which is what a
+  // debugger is drawn as everywhere else, so it is recognized, not learned.
+  | 'debug';
 
 /**
  * The sheet itself. Mounted **once**, by the Shell, above everything that draws
@@ -657,6 +661,18 @@ export function IconSprite(): ReactNode {
       <symbol id="i-check" viewBox="0 0 24 24">
         <polyline points="5,12.5 10,17.5 19,7"/>
       </symbol>
+
+      <symbol id="i-debug" viewBox="0 0 24 24">
+        <path d="M8 6.5a4 4 0 0 1 8 0"/>
+        <rect x="7" y="7" width="10" height="12" rx="5"/>
+        <line x1="12" y1="11" x2="12" y2="19"/>
+        <line x1="3" y1="13" x2="7" y2="13"/>
+        <line x1="17" y1="13" x2="21" y2="13"/>
+        <line x1="4" y1="7" x2="7" y2="9"/>
+        <line x1="20" y1="7" x2="17" y2="9"/>
+        <line x1="4" y1="19" x2="7" y2="17"/>
+        <line x1="20" y1="19" x2="17" y2="17"/>
+      </symbol>
       </defs>
     </svg>
   );
@@ -755,6 +771,7 @@ const DEFINED: ReadonlySet<string> = new Set([
   'info',
   'plus',
   'check',
+  'debug',
 ])
 
 export function Icon({ name, className = '' }: { name: IconName; className?: string }): ReactNode {

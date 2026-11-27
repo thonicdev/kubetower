@@ -53,8 +53,8 @@ import type { Reason, State } from './types';
  */
 const API_PREFIX = '/api/';
 
-/** Which channel to open. The four `x-channels` advertises. */
-export type Channel = 'terminal' | 'exec' | 'nodeshell' | 'assistant';
+/** Which channel to open. The five `x-channels` advertises. */
+export type Channel = 'terminal' | 'exec' | 'debug' | 'nodeshell' | 'assistant';
 
 export interface TerminalSocketQuery {
   readonly channel: Channel;
@@ -76,6 +76,11 @@ export interface TerminalSocketQuery {
    *  `--session-id` and `--resume` - this side never says which
    *  (`api/websocket.md`). */
   readonly session?: string;
+  /** On `debug` only: the image the debug container runs, and the container
+   *  whose processes it joins. `target` absent is "none", never the server's
+   *  pick - the debug channel picks nothing. */
+  readonly image?: string;
+  readonly target?: string;
 }
 
 export interface TerminalSocketHandlers {
@@ -120,6 +125,10 @@ export function channelPath(query: TerminalSocketQuery): string {
     params.set('container', query.container);
   }
   if (query.token !== undefined && query.token !== '') params.set('token', query.token);
+  if (query.channel === 'debug') {
+    if (query.image !== undefined && query.image !== '') params.set('image', query.image);
+    if (query.target !== undefined && query.target !== '') params.set('target', query.target);
+  }
 
   if (query.channel === 'assistant') {
     /*

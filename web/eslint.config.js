@@ -243,6 +243,9 @@ export default tseslint.config(
     //                           where the server keeps none
     //   whatsnew/seenMemory.ts  the last release whose What's new was seen,
     //                           where the server keeps none
+    //   debug/noShellMemory.ts  which containers a Shell found no shell in,
+    //                           by cluster, namespace, pod, container and
+    //                           image, in `sessionStorage`
     //
     // Apart from the dock's tab list, each holds names or numbers the address
     // or the menu already carry. None of them holds the session.
@@ -260,6 +263,7 @@ export default tseslint.config(
       'ui/src/shell/suggestionMemory.ts',
       'ui/src/shell/kindsMemory.ts',
       'ui/src/whatsnew/seenMemory.ts',
+      'ui/src/debug/noShellMemory.ts',
     ],
     rules: {
       // Off here: the bare storage globals, and nothing else. The network half

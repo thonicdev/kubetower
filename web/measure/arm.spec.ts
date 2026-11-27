@@ -65,21 +65,27 @@ test('the drawer puts the watching controls before the spacer and the verbs afte
 
   expect(
     pod.watching.map((control) => control.name),
-    'a Pod offers Logs, Shell and Claude, in that order, before the spacer',
-  ).toEqual(['Logs', 'Shell', 'Claude']);
+    'a Pod offers Logs, Shell, the Shell menu and Claude, in that order, before the spacer',
+  ).toEqual(['Logs', 'Shell', 'Shell menu', 'Claude']);
   expect(pod.verbs.length, 'a Pod offers verbs').toBeGreaterThan(0);
   expect(pod.spacer, 'a Pod with verbs has the spacer between the two kinds of control').not.toBeNull();
 
-  // The three watching controls are one set, so each pair stands the same
-  // distance apart. Logs is a child of the row and Shell and Claude are
-  // children of `Terminals`' group, so two gaps decide this one spacing, and
-  // they can drift apart. Measured here because jsdom
-  // lays nothing out: `ObjectDetail.test.tsx` pins the classes, this the pixels.
+  // The watching controls are one set, so each pair stands the same distance
+  // apart. Logs is a child of the row, Shell and Claude are children of
+  // `Terminals`' group, so two gaps decide this one spacing, and they can drift
+  // apart. The Shell menu is not a third: it is joined to Shell as one split
+  // control, sharing its border, so that pair is held to touching instead.
+  // Measured here because jsdom lays nothing out: `ObjectDetail.test.tsx` pins
+  // the classes, this the pixels.
   const gaps: number[] = [];
   for (let index = 1; index < pod.watching.length; index += 1) {
     const before = pod.watching[index - 1];
     const after = pod.watching[index];
     if (before === undefined || after === undefined) continue;
+    if (after.name === 'Shell menu') {
+      expect(after.left - before.right, 'the Shell menu is not joined to Shell').toBeCloseTo(-1, 0);
+      continue;
+    }
     gaps.push(after.left - before.right);
   }
   expect(

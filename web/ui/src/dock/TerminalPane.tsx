@@ -4,6 +4,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 
 import { openTerminalSocket, type Channel, type Reason, type State, type TerminalSocket } from '../api';
 import { btnPrimary, btnSecondary } from '../components/buttons';
+import { Icon } from '../components/Icon';
+import { PaneDebug } from '../debug/PaneDebug';
+import { rememberNoShell } from '../debug/noShellMemory';
 import { KeyLayer } from '../keyboard/layers';
 import { useEscape } from '../keyboard/useKeyLayer';
 import { useLiveHandle } from '../live/useLiveHandle';
@@ -114,6 +117,28 @@ export function TerminalPane({ tab }: { tab: Tab }): ReactNode {
  */
 function Dormant({ tab }: { tab: Tab }): ReactNode {
   const { dispatch } = useDock();
+  if (tab.kind === 'debug') {
+    /*
+      **A debug tab asks again, and says what asking costs.** Its session
+      added a container to the pod; a new one adds another, and neither can be
+      removed. So the state, and Start with that on its tooltip - the same
+      gesture as the form's, never a reconnect.
+    */
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col items-start gap-2 px-3 py-2 text-xs">
+        <p className="text-muted">— ended with the reload —</p>
+        <button
+          type="button"
+          className={btnSecondary}
+          title={`Add another debug container to ${tab.name ?? 'the pod'}${tab.image === undefined ? '' : ` from ${tab.image}`}`}
+          onClick={() => dispatch({ type: 'wake', id: tab.id })}
+        >
+          <Icon name="debug" />
+          Start again
+        </button>
+      </div>
+    );
+  }
   const what =
     tab.kind === 'claude'
       ? 'This Claude session'
@@ -143,7 +168,13 @@ function Dormant({ tab }: { tab: Tab }): ReactNode {
 function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
   const { dispatch } = useDock();
   const host = useRef<HTMLDivElement>(null);
-  const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null);
+  const [note, setNote] = useState<{ text: string; bad: boolean; title?: string } | null>(null);
+  // A pod shell refused with `no_shell`: the pane offers Debug (`PaneDebug`).
+  const [noShell, setNoShell] = useState(false);
+  // Whether the server said anything at all - a byte or a frame. A debug
+  // session closed before either was refused before the upgrade (a read-only
+  // cluster answers 403 there), which a close cannot say but this can narrow.
+  const heard = useRef(false);
   // What a copy or a paste had to say - a refusal, or "paste by key" over plain
   // HTTP. Its own line and not `note`, which says how the session ended and
   // must not be overwritten by a remark about the clipboard.
@@ -223,15 +254,36 @@ function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
   // the session - taking a second of the server's sixteen slots each time. The
   // key is the dependency, because the key is the identity.
   const onState = useCallback((state: State, reason: Reason | undefined) => {
+    heard.current = true;
     // The server's own sentence, drawn rather than paraphrased. This is the
     // whole reason the framed wire exists: as a line inside the terminal
     // output, a client could not tell the session cap from the read-only
     // fence.
-    setNote({ text: reason?.message ?? `the session stopped: ${state}`, bad: true });
+    //
+    // **A debug session's refusals are told apart by their code** (#146),
+    // each in a few words, with the sentence on the tooltip: each has a
+    // different owner - RBAC, the namespace's Pod Security level, a policy
+    // webhook, the cluster's version, the image - and the word is what says
+    // which. A pod shell's `no_shell` is said the same way, and offers Debug.
+    const word = tab.kind === 'debug' || reason?.code === 'no_shell' ? refusalWord(reason?.code) : undefined;
+    const message = reason?.message ?? `the session stopped: ${state}`;
+    setNote(word === undefined ? { text: message, bad: true } : { text: word, bad: true, title: message });
+    if (tab.kind === 'exec' && reason?.code === 'no_shell') {
+      setNoShell(true);
+      if (tab.namespace !== undefined && tab.name !== undefined && tab.container !== undefined && tab.image !== undefined) {
+        rememberNoShell({
+          cluster: tab.cluster,
+          namespace: tab.namespace,
+          pod: tab.name,
+          container: tab.container,
+          image: tab.image,
+        });
+      }
+    }
     // A paste waiting for an answer has nowhere to go any more.
     hold(null);
     dispatch({ type: 'ended', id: tab.id });
-  }, [dispatch, hold, tab.id]);
+  }, [dispatch, hold, tab.id, tab.kind, tab.cluster, tab.namespace, tab.name, tab.container, tab.image]);
 
   const onExit = useCallback((code: number | undefined) => {
     // No code is the ordinary case and is said as such. The pseudo-terminal seam
@@ -250,17 +302,28 @@ function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
     // whether the server was reached - so the sentence names what is knowable and
     // claims no cause. A refusal would have arrived as a frame or as an HTTP
     // status before the upgrade; this is neither.
-    setNote((was) => was ?? { text: 'The connection to the session went away.', bad: true });
+    setNote(
+      (was) =>
+        was ??
+        (tab.kind === 'debug' && !heard.current
+          ? {
+              text: 'not opened',
+              bad: true,
+              title:
+                'Closed before any answer: refused before the session opened (a read-only cluster, a request the server could not read), or not reached',
+            }
+          : { text: 'The connection to the session went away.', bad: true }),
+    );
     hold(null);
     dispatch({ type: 'ended', id: tab.id });
-  }, [dispatch, hold, tab.id]);
+  }, [dispatch, hold, tab.id, tab.kind]);
 
   const latest = useRef({ onState, onExit, onClosed });
   useEffect(() => {
     latest.current = { onState, onExit, onClosed };
   });
 
-  const key = `term:${tab.seq}:${channel}:${tab.cluster}/${tab.namespace ?? ''}/${tab.name ?? ''}:${tab.container ?? ''}:${tab.objectKind ?? ''}`;
+  const key = `term:${tab.seq}:${channel}:${tab.cluster}/${tab.namespace ?? ''}/${tab.name ?? ''}:${tab.container ?? ''}:${tab.objectKind ?? ''}:${tab.image ?? ''}:${tab.target ?? ''}`;
 
   /** Put an opened session on this pane's host element. The body of the old
    *  synchronous `attach`, unchanged; only when it runs has moved. */
@@ -402,9 +465,16 @@ function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
             ...(tab.name === undefined ? {} : { name: tab.name }),
             ...(tab.token === undefined ? {} : { token: tab.token }),
             ...(tab.session === undefined ? {} : { session: tab.session }),
+            // A debug session's image and target; `channelPath` sends them on
+            // `debug` only, so an exec tab's image stays in the browser.
+            ...(tab.image === undefined ? {} : { image: tab.image }),
+            ...(tab.target === undefined ? {} : { target: tab.target }),
           },
           {
-            onData: (bytes) => term.write(bytes),
+            onData: (bytes) => {
+              heard.current = true;
+              term.write(bytes);
+            },
             onState: (state, reason) => latest.current.onState(state, reason),
             onExit: (code) => latest.current.onExit(code),
             onClosed: () => latest.current.onClosed(),
@@ -482,9 +552,16 @@ function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div ref={host} className="min-h-0 flex-1 px-1" />
       {note !== null && (
-        <p className={`px-2 py-1 text-xs ${note.bad ? 'text-warn' : 'text-muted'}`} role="status">
-          — {note.text} —
-        </p>
+        <div className="flex flex-wrap items-start gap-x-2 gap-y-1 px-2 py-1">
+          <p
+            className={`text-xs ${note.bad ? 'text-warn' : 'text-muted'}`}
+            role="status"
+            {...(note.title === undefined ? {} : { title: note.title })}
+          >
+            — {note.text} —
+          </p>
+          {noShell ? <PaneDebug tab={tab} /> : null}
+        </div>
       )}
       {held !== null && (
         // A dialog in the pane's own line, not a live region holding buttons:
@@ -547,6 +624,34 @@ function LiveTerminal({ tab }: { tab: Tab }): ReactNode {
       </p>
     </div>
   );
+}
+
+/**
+ * A refusal's few words, by its code, where the code is one a debug session
+ * meets. Undefined for any other: the server's sentence is drawn whole, as on
+ * every other session.
+ */
+function refusalWord(code: string | undefined): string | undefined {
+  switch (code) {
+    case 'verb_denied':
+      return 'not permitted';
+    case 'pod_security':
+      return 'Refused by Pod Security';
+    case 'admission_denied':
+      return 'refused by an admission policy';
+    case 'not_supported_here':
+      return 'no ephemeral containers on this cluster';
+    case 'container_not_started':
+      return 'debug container did not start';
+    case 'timeout':
+      return 'debug container not running after 2 min';
+    case 'no_such_object':
+      return 'pod or container not found';
+    case 'no_shell':
+      return 'no shell in this image';
+    default:
+      return undefined;
+  }
 }
 
 /** How long "Copied" stays: long enough to be read after the click, short
@@ -612,6 +717,8 @@ function channelFor(kind: Tab['kind']): Channel {
   switch (kind) {
     case 'exec':
       return 'exec';
+    case 'debug':
+      return 'debug';
     case 'nodeshell':
       return 'nodeshell';
     case 'claude':

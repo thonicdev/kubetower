@@ -103,6 +103,8 @@ export function detailPage(kind: string, name: string, namespace: string | undef
       tabs: [],
       sections: [],
       actions: kind === 'pods' ? POD_ACTIONS : [],
+      // A pod offers a debug container, so its arm carries the Shell menu (#147).
+      ...(kind === 'pods' ? { debug: { permitted: true } } : {}),
     },
   };
 }

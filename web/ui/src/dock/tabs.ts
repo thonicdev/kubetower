@@ -31,7 +31,7 @@
 /** What a tab is a view of. The mark is passed rather than derived, because a
  *  Claude session and a pod shell are the same kind of thing - a PTY on a
  *  WebSocket - and only the mark tells them apart in a row of them. */
-export type TabKind = 'terminal' | 'exec' | 'claude' | 'nodeshell' | 'logs';
+export type TabKind = 'terminal' | 'exec' | 'debug' | 'claude' | 'nodeshell' | 'logs';
 
 export interface Tab {
   /** `<kind>:<seq>`. **A counter, not a content hash**, so opening a second
@@ -74,6 +74,13 @@ export interface Tab {
    *  node is not here**, deliberately - the server reads it out of the plan, so
    *  there is nothing in the browser that could name a different one. */
   readonly token?: string;
+  /** A debug tab's image, and the container whose processes it joins (absent:
+   *  none). The tab's address, as `container` is an exec tab's - and unlike an
+   *  exec tab's, **opening it again is a change to the pod**: every session on
+   *  `debug` adds one more ephemeral container, which nothing can remove. So a
+   *  debug tab is opened by a gesture and by nothing else; see `restore`. */
+  readonly image?: string;
+  readonly target?: string;
   /** Put back by a reload and **not reopened**: a shell, a pod shell or a
    *  Claude tab whose session died with the page, drawn as an offer to open a
    *  new one rather than as one.
@@ -173,6 +180,9 @@ export interface StoredTab {
    *  what a reopened Claude tab resumes. Not a credential - it names a
    *  transcript on the console's own machine and opens nothing by itself. */
   readonly session?: string;
+  /** See `Tab.image` and `Tab.target`: a debug tab's address. */
+  readonly image?: string;
+  readonly target?: string;
 }
 
 /** The shape `crypto.randomUUID()` produces and the server accepts; anything
@@ -186,7 +196,7 @@ export interface StoredDock {
   readonly active: number | null;
 }
 
-const KINDS: ReadonlySet<string> = new Set<TabKind>(['terminal', 'exec', 'claude', 'nodeshell', 'logs']);
+const KINDS: ReadonlySet<string> = new Set<TabKind>(['terminal', 'exec', 'debug', 'claude', 'nodeshell', 'logs']);
 
 /** The state, as it is written. Every tab, node shells included - see `restore`
  *  for what becomes of those. */
@@ -200,6 +210,8 @@ export function storable(state: DockState): StoredDock {
     ...(tab.container === undefined ? {} : { container: tab.container }),
     ...(tab.objectKind === undefined ? {} : { objectKind: tab.objectKind }),
     ...(tab.session === undefined ? {} : { session: tab.session }),
+    ...(tab.image === undefined ? {} : { image: tab.image }),
+    ...(tab.target === undefined ? {} : { target: tab.target }),
   }));
   const active = state.tabs.findIndex((tab) => tab.id === state.active);
   return { tabs, active: active < 0 ? null : active };
@@ -222,7 +234,7 @@ export function parseStored(raw: unknown): StoredDock | null {
     const { kind, cluster, label } = tab;
     if (typeof kind !== 'string' || !KINDS.has(kind)) return null;
     if (typeof cluster !== 'string' || cluster === '' || typeof label !== 'string') return null;
-    const optional = (key: 'namespace' | 'name' | 'container' | 'objectKind'): { [k: string]: string } => {
+    const optional = (key: 'namespace' | 'name' | 'container' | 'objectKind' | 'image' | 'target'): { [k: string]: string } => {
       const value = tab[key];
       return typeof value === 'string' && value !== '' ? { [key]: value } : {};
     };
@@ -235,6 +247,8 @@ export function parseStored(raw: unknown): StoredDock | null {
       ...optional('name'),
       ...optional('container'),
       ...optional('objectKind'),
+      ...optional('image'),
+      ...optional('target'),
       ...session,
     });
   }
@@ -498,6 +512,10 @@ export function dockReducer(state: DockState, action: DockAction): DockState {
         // being drawn would open one on every reload, each holding one of the
         // server's sixteen slots. The tab keeps its place, its address
         // and a Claude tab's conversation; `wake` is the operator asking.
+        //
+        // **On a debug tab this is the difference between a reload and a
+        // change to the pod.** Reopened live, every F5 would add another
+        // ephemeral container to the pod, and none of them can be removed.
         if (reopened !== undefined && tab.kind !== 'logs') {
           next = mapTab(next, reopened.id, (was) => ({ ...was, live: false, dormant: true }));
         }

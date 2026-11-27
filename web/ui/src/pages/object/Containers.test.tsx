@@ -1602,3 +1602,47 @@ describe('a long list is folded behind its count', () => {
     return { container: view.container, redraw: (next) => view.rerender(panel(next)) };
   }
 });
+
+/**
+ * A pod's debug containers (#147): after the pod's own, marked as what they
+ * are, and said to stay - on each tile and at the heading.
+ */
+describe('ephemeral containers', () => {
+  const running = { state: 'running', ready: true, restarts: 0 } as NonNullable<PodContainer['status']>;
+
+  function draw(list: PodContainer[]): HTMLElement {
+    const view = render(
+      <QueryClientProvider client={createQueryClient()}>
+        <Containers cluster="prod" kind="pods" namespace="pay" name="api-0" containers={list} />
+      </QueryClientProvider>,
+    );
+    return view.container;
+  }
+
+  it('draws them after the others, with their target and the kept badge, and counts them at the heading', () => {
+    const container = draw([
+      { name: 'kt-debug-9q4mz', image: 'busybox:1.36', init: false, ephemeral: true, target: 'api', status: running },
+      { name: 'api', image: 'gcr.io/distroless/static', init: false, status: running },
+      { name: 'kt-debug-x1y2z', image: 'nicolaka/netshoot:v0.13', init: false, ephemeral: true, status: running },
+    ]);
+    const tiles = [...container.querySelectorAll('article[data-container]')];
+    expect(tiles.map((one) => one.getAttribute('data-container'))).toEqual(['api', 'kt-debug-9q4mz', 'kt-debug-x1y2z']);
+    expect(tiles[0]?.querySelector('[data-ephemeral-badges]')).toBeNull();
+
+    const targeted = tiles[1]?.querySelector('[data-ephemeral-badges]');
+    expect(targeted?.textContent).toContain('debug → api');
+    expect(targeted?.querySelector('[data-tone="info"] use')?.getAttribute('href')).toBe('#i-debug');
+    expect(targeted?.querySelector('[data-kept]')?.textContent).toBe('stays in pod');
+    expect(targeted?.querySelector('[data-kept] [title]')?.getAttribute('title')).toContain('until the pod is deleted');
+
+    const free = tiles[2]?.querySelector('[data-ephemeral-badges] [data-tone="info"]');
+    expect(free?.textContent).toBe('debug');
+
+    expect(container.querySelector('[data-ephemeral-count]')?.textContent).toBe('2 debug');
+  });
+
+  it('says nothing at the heading of a pod that has none', () => {
+    const container = draw([{ name: 'api', image: 'shop/api:1', init: false, status: running }]);
+    expect(container.querySelector('[data-ephemeral-count]')).toBeNull();
+  });
+});
